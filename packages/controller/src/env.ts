@@ -1,4 +1,5 @@
-import { chmodSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,6 +63,7 @@ export async function envReset(options: { project: string; count?: number; hard?
   await removeProfileVolumes(docker, options.project);
   if (options.hard) {
     await removeNetwork(docker, options.project);
+    rebuildImages();
   }
   const status = await envUp(options);
   return { ...status, durationMs: Date.now() - started, idempotent: true };
@@ -247,6 +249,30 @@ function writeMeasured(table: Record<string, unknown>): void {
     } catch {
       // The command still records the home copy when it is not run from the repo.
     }
+  }
+}
+
+function repoRoot(): string {
+  const fromPackage = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+  for (const root of [process.cwd(), fromPackage]) {
+    if (existsSync(join(root, 'scripts/build-image.sh'))) return root;
+  }
+  throw new Error('Cannot find scripts/build-image.sh. Run this command from the Aegis repo.');
+}
+
+function rebuildImages(): void {
+  const root = repoRoot();
+  try {
+    execFileSync('bash', [join(root, 'scripts/build-image.sh')], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 600_000,
+    });
+  } catch (error) {
+    const stderr = error && typeof error === 'object' && 'stderr' in error ? String((error as { stderr?: unknown }).stderr ?? '') : '';
+    const stdout = error && typeof error === 'object' && 'stdout' in error ? String((error as { stdout?: unknown }).stdout ?? '') : '';
+    throw new Error(`Image rebuild failed. ${(stderr || stdout).slice(-2000)}`);
   }
 }
 

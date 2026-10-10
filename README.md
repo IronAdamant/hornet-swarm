@@ -52,7 +52,7 @@ Reports land in `~/.aegis/runs/<run id>/`. `summary.md` is the short version for
 ## Everyday commands
 
 - `aegis env up --count 10` starts the default fleet.
-- `aegis env reset` recreates it.
+- `aegis env reset` recreates the containers. `aegis env reset --hard` also rebuilds the runner and proxy images and the project network.
 - `aegis env status` shows health.
 - `aegis kill` stops a live run. `aegis kill --release` lets new runs start.
 - `aegis creds serve` opens the private login page on `127.0.0.1`.

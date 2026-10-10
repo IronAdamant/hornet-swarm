@@ -59,7 +59,7 @@ env
   .command('reset')
   .option('--project <id>', 'project id')
   .option('--count <n>', 'how many runners to recreate')
-  .option('--hard', 'also remove the project network')
+  .option('--hard', 'rebuild the runner and proxy images and the project network')
   .option('--json', 'print machine-readable JSON')
   .action(async (opts: { project?: string; count?: string; hard?: boolean; json?: boolean }) => {
     try {
