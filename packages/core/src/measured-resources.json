@@ -1,0 +1,47 @@
+{
+  "measured": false,
+  "host": null,
+  "replacedSection": "6.3",
+  "estimates": [
+    {
+      "runners": 1,
+      "containerRamIdle": "150 MB",
+      "containerRamActive": "500-800 MB",
+      "cpuActive": "0.5-1",
+      "vmMemory": "4 GB",
+      "notes": "spec estimate"
+    },
+    {
+      "runners": 5,
+      "containerRamIdle": "0.8 GB",
+      "containerRamActive": "3-4 GB",
+      "cpuActive": "3-5",
+      "vmMemory": "6 GB",
+      "notes": "spec estimate"
+    },
+    {
+      "runners": 10,
+      "containerRamIdle": "1.5 GB",
+      "containerRamActive": "5-8 GB",
+      "cpuActive": "6-8",
+      "vmMemory": "10 GB",
+      "notes": "spec estimate, default"
+    },
+    {
+      "runners": 20,
+      "containerRamIdle": "3 GB",
+      "containerRamActive": "10-16 GB",
+      "cpuActive": "CPU-bound",
+      "vmMemory": "18 GB",
+      "notes": "spec estimate"
+    },
+    {
+      "runners": 30,
+      "containerRamIdle": "not recommended",
+      "containerRamActive": "not recommended",
+      "cpuActive": "not recommended",
+      "vmMemory": "not recommended",
+      "notes": "spec estimate"
+    }
+  ]
+}

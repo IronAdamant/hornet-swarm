@@ -1,0 +1,22 @@
+# Example of a CLIENT authorisation (contract basis)
+id: acme-staging-2026q4
+basis: contract
+client: ACME Pty Ltd
+authoriser:
+  name: Dana Example
+  role: CTO, ACME Pty Ltd
+  email: dana@acme.example
+granted_to: Aron Amos (Iron Adamant)
+scope:
+  domains: [staging.acme.example]
+  environments: [staging]
+activities: [signin_smoke, functional_e2e, access_control_checks]
+exclusions:
+  - No production environment
+  - No PII extraction
+valid_from: "2026-11-01"
+valid_until: "2026-12-15"
+document:
+  path: "~/.aegis/authorisations/docs/acme-engagement-signed.pdf"
+  sha256: "<sha256 of the signed PDF>"
+notes: Scope limited to the gap-analysis engagement window.

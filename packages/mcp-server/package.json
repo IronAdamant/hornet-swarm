@@ -1,0 +1,18 @@
+{
+  "name": "@aegis/mcp-server",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "aegis-mcp": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aegis/controller": "workspace:*",
+    "@aegis/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "3.25.76"
+  }
+}

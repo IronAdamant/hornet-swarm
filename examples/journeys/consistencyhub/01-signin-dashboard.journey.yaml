@@ -1,0 +1,25 @@
+# Phase 2 example A: basic sign-in + dashboard click-through
+version: 1
+id: signin-dashboard
+name: Sign in and view dashboard
+description: Confirms a user can sign in, land on the dashboard, open a project and sign out.
+users: [qa-user-1]
+requires_phase1: true
+tags: [smoke, basic]
+vars:
+  project_name: "QA Smoke Project"
+steps:
+  - navigate:   { url: "/login" }
+  - fill:       { selector: "#email", credential: "qa-user-1.username" }
+  - fill:       { selector: "#password", credential: "qa-user-1.password" }
+  - click:      { selector: "role=button[name='Sign in']" }
+  - wait:       { for: navigation }
+  - assert:     { type: url_contains, value: "/dashboard" }
+  - assert:     { type: selector_visible, value: "[data-testid='user-menu']" }
+  - screenshot: { name: "dashboard-landing", full_page: true }
+  - click:      { selector: "role=link[name='Projects']" }
+  - assert:     { type: text_visible, value: "{{vars.project_name}}" }
+  - screenshot: { name: "projects-list" }
+  - click:      { selector: "[data-testid='user-menu']" }
+  - click:      { selector: "role=menuitem[name='Sign out']" }
+  - assert:     { type: url_contains, value: "/login" }

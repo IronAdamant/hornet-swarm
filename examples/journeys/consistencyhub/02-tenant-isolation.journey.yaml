@@ -1,0 +1,36 @@
+# Phase 2 example B: multi-tenant data-isolation / access-control test
+# qa-user-1 (tenant A1) signs in, then requests a resource URL owned by qa-user-2 (tenant B1)
+# and asserts access is denied.
+version: 1
+id: tenant-isolation
+name: Cross-tenant access is denied
+description: >
+  Logged in as qa-user-1 (tenant A1), attempt to open a resource belonging to
+  qa-user-2 (tenant B1). The app must deny access (401/403, redirect to login,
+  or a not-authorised/not-found marker). A success here is a CRITICAL finding.
+users: [qa-user-1]
+requires_phase1: true
+tags: [security, access-control, multi-tenant]
+steps:
+  # Sign in as qa-user-1
+  - navigate: { url: "/login" }
+  - fill:     { selector: "#email", credential: "qa-user-1.username" }
+  - fill:     { selector: "#password", credential: "qa-user-1.password" }
+  - click:    { selector: "role=button[name='Sign in']" }
+  - wait:     { for: navigation }
+  - assert:   { type: url_contains, value: "/dashboard" }
+
+  # Positive control: own resource is reachable
+  - navigate: { url: "/t/{{users.qa-user-1.vars.tenant_slug}}/resource/{{users.qa-user-1.vars.owned_resource_id}}" }
+  - assert:   { type: selector_visible, value: "[data-testid='resource-view']" }
+  - screenshot: { name: "own-resource-ok" }
+
+  # Cross-tenant attempt: qa-user-2's resource must be denied
+  - navigate: { url: "/t/{{users.qa-user-2.vars.tenant_slug}}/resource/{{users.qa-user-2.vars.owned_resource_id}}" }
+  - assert:   { type: access_denied }     # passes on 401/403, login redirect, or access_denied_markers
+  - assert:   { type: selector_absent, value: "[data-testid='resource-view']" }
+  - screenshot: { name: "cross-tenant-denied" }
+
+  # Also probe the API directly through the browser context
+  - navigate: { url: "/api/resources/{{users.qa-user-2.vars.owned_resource_id}}" }
+  - assert:   { type: http_status, value: "403" }

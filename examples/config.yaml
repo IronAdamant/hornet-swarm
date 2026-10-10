@@ -1,0 +1,6 @@
+# ~/.aegis/config.yaml  (global)
+runtime: auto                 # auto | orbstack | colima
+default_project: consistencyhub
+results_retention_days: 30
+ocr_screenshot_check: true    # OCR screenshots for leaked secrets
+log_level: info

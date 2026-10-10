@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.DS_Store
+*.log
+images/runner/build
+.vitest
+*.tsbuildinfo
+.env
+.pnpm-store

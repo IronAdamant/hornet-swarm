@@ -1,0 +1,18 @@
+{
+  "name": "@aegis/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "aegis": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aegis/controller": "workspace:*",
+    "@aegis/core": "workspace:*",
+    "commander": "13.1.0",
+    "zod": "3.25.76"
+  }
+}
