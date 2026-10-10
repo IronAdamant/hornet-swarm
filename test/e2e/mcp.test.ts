@@ -10,6 +10,7 @@ beforeAll(() => {
   mkdirSync(dir, { recursive: true });
   cpSync(join(root, 'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml'), join(dir, '01-signin-dashboard.journey.yaml'));
   cpSync(join(root, 'examples/journeys/consistencyhub/02-tenant-isolation.journey.yaml'), join(dir, '02-tenant-isolation.journey.yaml'));
+  cpSync(join(root, 'test/e2e/journeys/flag.journey.yaml'), join(dir, 'flag.journey.yaml'));
   mkdirSync(join(home, 'authorisations'), { recursive: true });
   mkdirSync(join(home, 'projects/unauth'), { recursive: true });
   writeFileSync(join(home, 'authorisations/unauth.yaml'), `id: unauth
@@ -67,12 +68,13 @@ describe('MCP server', () => {
     const stdout = execFileSync(process.execPath, [join(root, 'test/e2e/mcp-client.mjs')], {
       cwd: root,
       encoding: 'utf8',
-      timeout: 180_000,
+      timeout: 240_000,
     });
     expect(stdout).not.toContain(secret);
     const body = JSON.parse(stdout) as {
       users: { users: { label: string }[] };
       invalid: { valid: boolean };
+      byId: { valid: boolean; errors: string[] };
       lease: { ok: boolean };
       second: { ok: boolean; reason?: string };
       released: { ok: boolean };
@@ -80,13 +82,17 @@ describe('MCP server', () => {
       signin: { status: string; run_id: string };
       summary: { detail?: string; text?: string };
       full: { schema_version?: string };
+      journey: { status: string; users: { journeys: { id: string; status: string }[] }[] };
       suite: { status: string };
+      reset: { idempotent?: boolean; healthy?: number; expected?: number; durationMs?: number };
       blocked: { ok?: boolean; error?: string };
       killed: { killed?: boolean };
       afterKill: { ok?: boolean; error?: string };
     };
     expect(body.users.users.some((user) => user.label === 'qa-user-1')).toBe(true);
     expect(body.invalid.valid).toBe(false);
+    expect(body.byId.valid).toBe(true);
+    expect(body.byId.errors).toEqual([]);
     expect(body.lease.ok).toBe(true);
     expect(body.second.ok).toBe(false);
     expect(body.released.ok).toBe(true);
@@ -94,9 +100,16 @@ describe('MCP server', () => {
     expect(body.passwordRejected.error ?? '').not.toContain('should-not-stick');
     expect(body.signin.status).toBe('passed');
     expect(body.summary.text ?? '').toContain('Findings');
+    expect(body.summary.text ?? '').toContain('[REDACTED:qa-user-1.password]');
     expect(body.summary.text ?? '').not.toContain(secret);
     expect(body.full.schema_version).toBe('1.0.0');
+    expect(body.journey.status).toBe('passed');
+    expect(body.journey.users[0]?.journeys.some((journey) => journey.id === 'flag-check' && journey.status === 'pass')).toBe(true);
+    expect(JSON.stringify(body.journey)).not.toContain(secret);
     expect(body.suite.status).toBe('passed');
+    expect(body.reset.idempotent).toBe(true);
+    expect(body.reset.healthy).toBe(body.reset.expected);
+    expect(body.reset.durationMs ?? 0).toBeGreaterThan(0);
     expect(body.blocked.error ?? JSON.stringify(body.blocked)).toMatch(/domain_not_authorised|authorisation/);
     expect(body.killed.killed).toBe(true);
     expect(body.afterKill.error ?? '').toContain('kill switch');

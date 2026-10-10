@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { requestCredentials } from '../../packages/controller/dist/index.js';
@@ -49,7 +49,13 @@ describe('credential requests', () => {
     const reused = await fetch(`${url.origin}${url.pathname}?token=${token}`, { method: 'POST', body: 'decision=save' });
     expect(reused.status).toBe(403);
     if (touch.status === 401) {
-      expect(readFileSync(log, 'utf8').length).toBeGreaterThan(0);
+      const captured = readFileSync(log, 'utf8');
+      expect(captured).toMatch(/Authentication canceled|Touch ID|not available|not confirmed|ETIMEDOUT/i);
+      const evidence = process.env.AEGIS_EVIDENCE_DIR;
+      if (evidence) {
+        mkdirSync(evidence, { recursive: true });
+        writeFileSync(join(evidence, 'touchid.log'), captured);
+      }
     }
     const stored = aegis(['creds', 'add', 'fixture', 'qa-user-1', '--json'], `qa1@example.test\n${secret}\n`);
     expect(stored.status, stored.stdout + stored.stderr).toBe(0);

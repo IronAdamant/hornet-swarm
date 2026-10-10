@@ -11,8 +11,8 @@ import {
   credentialStatus,
   engageKill,
   envReset,
-  envStatus,
   listProjectUsers,
+  readJourneyYaml,
   registerProjectSecrets,
   releaseStoredLease,
   requestCredentials,
@@ -89,10 +89,11 @@ server.registerTool(
   },
   async ({ run_id, format, detail }) => {
     const dir = join(home(), 'runs', run_id);
+    const stored = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')) as { project?: string };
     const kind = detail === 'summary' || format === 'summary' ? 'summary' : detail === 'full' ? 'full' : format ?? 'json';
     const file = kind === 'summary' ? 'summary.md' : kind === 'junit' ? 'junit.xml' : kind === 'full' ? 'analysis.json' : 'run.json';
     const text = readFileSync(join(dir, file), 'utf8');
-    return pack(undefined, kind === 'summary' || kind === 'junit' ? { detail: kind, text } : JSON.parse(text));
+    return pack(stored.project, kind === 'summary' || kind === 'junit' ? { detail: kind, text } : JSON.parse(text));
   },
 );
 
@@ -109,11 +110,8 @@ server.registerTool(
       await stopRunners(id);
       return pack(id, { ok: true, killed: true });
     }
-    if (hard) {
-      const status = await envReset({ project: id, hard: true });
-      return pack(id, status);
-    }
-    return pack(id, await envStatus(id));
+    const status = await envReset({ project: id, hard: Boolean(hard) });
+    return pack(id, status);
   },
 );
 
@@ -123,10 +121,20 @@ server.registerTool(
     description: 'Validate a journey without running it',
     inputSchema: z.object({ project: z.string().optional(), journey_yaml: z.string().optional(), journey_id: z.string().optional() }),
   },
-  async ({ project, journey_yaml }) => {
+  async ({ project, journey_yaml, journey_id }) => {
     const id = project ?? 'fixture';
     const loaded = projectSchema.parse(parse(readFileSync(join(home(), 'projects', id, 'project.yaml'), 'utf8')));
-    const checked = validateJourneyYaml(journey_yaml ?? '', loaded);
+    let source = journey_yaml ?? '';
+    if (journey_id) {
+      try {
+        source = readJourneyYaml(id, journey_id, home());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown journey.';
+        return pack(id, { valid: false, errors: [message] });
+      }
+    }
+    if (!source.trim()) return pack(id, { valid: false, errors: ['Provide a journey file or journey YAML.'] });
+    const checked = validateJourneyYaml(source, loaded);
     return pack(id, { valid: checked.valid, errors: checked.errors });
   },
 );

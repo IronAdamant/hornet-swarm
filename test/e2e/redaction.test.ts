@@ -57,6 +57,12 @@ describe('redaction against the fixture', () => {
     const scanned = await rescanRun(dir, 'fixture', home);
     expect(scanned.status).toBe('redaction_failure');
     expect(readFileSync(join(dir, 'run.json'), 'utf8')).toContain('redaction_failure');
+    const analysis = readFileSync(join(dir, 'analysis.json'), 'utf8');
+    expect(analysis).toContain('"status": "redaction_failure"');
+    expect(analysis).toContain('"redaction": "fail"');
+    expect(readFileSync(join(dir, 'analysis.md'), 'utf8')).toContain('Selectors:');
+    expect(readFileSync(join(dir, 'report.html'), 'utf8')).toContain('Redaction: FAIL');
+    expect(readFileSync(join(dir, 'summary.md'), 'utf8')).toContain('hidden');
     expect(readFileSync(join(dir, 'planted-leak.txt.quarantined'), 'utf8')).toContain('quarantined');
     const audit = readFileSync(join(home, 'audit.log'), 'utf8');
     expect(audit).toContain('redaction_failure');

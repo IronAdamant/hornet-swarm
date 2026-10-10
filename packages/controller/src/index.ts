@@ -5,7 +5,7 @@ export type { RuntimeName } from './docker.js';
 export { envReset, envStatus, envUp, measureResources, defaultProjectFromHome, stopRunners } from './env.js';
 export { injectSecrets, injectTotp, listFields, listLabels, registerProjectSecrets, setSecret } from './broker.js';
 export { acquireLease, heartbeatStoredLease, releaseStoredLease } from './leases-store.js';
-export { acceptBaseline, cleanupRetention, exportEvidence, listProjectUsers, rescanRun, runSuite } from './suite.js';
+export { acceptBaseline, cleanupRetention, exportEvidence, listProjectUsers, readJourneyYaml, rescanRun, runSuite } from './suite.js';
 export { credentialStatus, requestCredentials, startCredentialPage, storeOwnerLogin } from './credentials.js';
 export { engageKill, releaseKill } from './kill.js';
 export { AegisError } from './errors.js';

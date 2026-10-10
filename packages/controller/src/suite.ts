@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, readFileSync, readdirSync, rmSync, st
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import {
+  analysisSchema,
   authorisationSchema,
   chaosPermitted,
   chaosSequence,
@@ -11,6 +12,7 @@ import {
   projectSchema,
   Redactor,
   runResultSchema,
+  type Analysis,
   signinBudget,
   validateJourneyYaml,
   type Journey,
@@ -19,6 +21,7 @@ import {
   type StepResult,
 } from '@aegis/core';
 import {
+  analysisMarkdown,
   buildAnalysis,
   compareScreenshots,
   htmlReport,
@@ -192,21 +195,19 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
     next: status === 'passed' ? ['No change is needed.'] : ['Fix the first failed check and run it again.'],
   });
   const summary = summaryMarkdown(rich, status);
-  writeFileSync(join(runDir, 'run.json'), `${JSON.stringify(result, null, 2)}\n`);
-  writeFileSync(join(runDir, 'summary.md'), summary);
-  writeFileSync(join(runDir, 'analysis.json'), `${JSON.stringify(analysis, null, 2)}\n`);
-  writeFileSync(join(runDir, 'analysis.md'), analysisMarkdown(analysis));
+  writeRunReports(runDir, result, analysis, summary);
   writeFileSync(join(runDir, 'junit.xml'), junitXml(result));
-  writeFileSync(join(runDir, 'report.html'), htmlReport(result, summary));
   const redactor = new Redactor();
   registerProjectSecrets(project.id, redactor, home);
   await redactTree(runDir, redactor);
   const hits = await scanTree(runDir, redactor);
   if (hits.length > 0) {
     for (const hit of hits) quarantineHit(hit);
+    const failedSummary = summaryMarkdown(rich, 'redaction_failure');
+    const failedAnalysis = failAnalysis(analysis);
     result.status = 'redaction_failure';
     result.redaction = 'fail';
-    writeFileSync(join(runDir, 'run.json'), `${JSON.stringify(result, null, 2)}\n`);
+    writeRunReports(runDir, result, failedAnalysis, failedSummary, redactor);
     writeAudit({ interface: request.via ?? 'cli', agent: agentId, action: 'redaction_failure', project: project.id, run_id: runId, result: 'quarantined' }, redactor, home);
   }
   writeAudit({ interface: request.via ?? 'cli', agent: agentId, action: 'run_suite', project: project.id, run_id: runId, labels, result: result.status }, redactor, home);
@@ -602,8 +603,28 @@ function totals(users: RichUser[]): RunResult['totals'] {
   };
 }
 
-function analysisMarkdown(analysis: { suspected_cause: string; suggested_next_actions: string[] }): string {
-  return `# Analysis\n\n${analysis.suspected_cause}\n\n${analysis.suggested_next_actions.map((line) => `- ${line}`).join('\n')}\n`;
+function writeRunReports(runDir: string, result: RunResult, analysis: Analysis, summary: string, redactor?: Redactor): void {
+  const emit = (text: string) => (redactor ? redactor.redact(text) : text);
+  writeFileSync(join(runDir, 'run.json'), emit(`${JSON.stringify(result, null, 2)}\n`));
+  writeFileSync(join(runDir, 'summary.md'), emit(summary));
+  writeFileSync(join(runDir, 'analysis.json'), emit(`${JSON.stringify(analysis, null, 2)}\n`));
+  writeFileSync(join(runDir, 'analysis.md'), emit(analysisMarkdown(analysis)));
+  writeFileSync(join(runDir, 'report.html'), emit(htmlReport(result, summary)));
+}
+
+function failAnalysis(analysis: Analysis): Analysis {
+  return analysisSchema.parse({
+    ...analysis,
+    status: 'redaction_failure',
+    redaction: 'fail',
+    suspected_cause: 'A saved file still contained something that should have stayed hidden.',
+    suggested_next_actions: ['Do not share these results.', 'Remove the hidden text and run the check again.'],
+  });
+}
+
+export function readJourneyYaml(projectId: string, journeyId: string, home = aegisHome()): string {
+  const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
+  return readFileSync(resolveJourneyArg(home, project, journeyId), 'utf8');
 }
 
 function makeRunId(): string {
@@ -631,11 +652,18 @@ export async function rescanRun(runDir: string, project: string, home = aegisHom
   const file = join(runDir, 'run.json');
   const result = runResultSchema.parse(JSON.parse(readFileSync(file, 'utf8')));
   if (hits.length === 0) return { ok: true, status: result.status };
+  const analysisFile = join(runDir, 'analysis.json');
+  const analysis = existsSync(analysisFile) ? analysisSchema.parse(JSON.parse(readFileSync(analysisFile, 'utf8'))) : undefined;
   for (const hit of hits) quarantineHit(hit);
   result.status = 'redaction_failure';
   result.redaction = 'fail';
-  writeFileSync(file, `${JSON.stringify(result, null, 2)}\n`);
-  writeFileSync(join(runDir, 'summary.md'), summaryMarkdown([], 'redaction_failure'));
+  const summary = summaryMarkdown([], 'redaction_failure');
+  if (analysis) writeRunReports(runDir, result, failAnalysis(analysis), summary, redactor);
+  else {
+    writeFileSync(file, redactor.redact(`${JSON.stringify(result, null, 2)}\n`));
+    writeFileSync(join(runDir, 'summary.md'), redactor.redact(summary));
+    writeFileSync(join(runDir, 'report.html'), redactor.redact(htmlReport(result, summary)));
+  }
   writeAudit({ interface: 'cli', action: 'redaction_failure', project, run_id: result.run_id, result: 'quarantined' }, redactor, home);
   return { ok: false, status: 'redaction_failure' };
 }

@@ -126,6 +126,53 @@ export function buildAnalysis(input: {
   return analysisSchema.parse(analysis);
 }
 
+export function analysisMarkdown(analysis: Analysis): string {
+  const lines = [
+    '# Analysis',
+    '',
+    `Status: ${analysis.status}`,
+    `Redaction: ${analysis.redaction}`,
+    `Gate: ${analysis.gate} (${analysis.gate_passed ? 'passed' : 'not passed'})`,
+    `Confidence: ${analysis.confidence}`,
+    '',
+    '## Suspected cause',
+    analysis.suspected_cause,
+    '',
+    '## Chaos',
+  ];
+  if (analysis.chaos) {
+    lines.push(`Profile: ${analysis.chaos.profile}`, `Seed: ${analysis.chaos.seed}`, `Actions: ${analysis.chaos.actions.join(', ') || 'none'}`);
+  } else {
+    lines.push('No chaos actions.');
+  }
+  lines.push('', '## Steps');
+  for (const user of analysis.users) {
+    lines.push(`### ${user.label}`, `Sign-in: ${user.phase1.status} (${user.phase1.duration_ms} ms)`);
+    for (const journey of user.journeys) {
+      lines.push(`#### ${journey.id} ${journey.name}`, `Journey status: ${journey.status} (${journey.duration_ms} ms)`);
+      for (const step of journey.steps) {
+        lines.push(
+          `- Step ${step.index} ${step.type} ${step.status}`,
+          `  Timings: ${step.timings.started_at} to ${step.timings.finished_at} (${step.timings.duration_ms} ms)`,
+          `  Selectors: ${step.selectors.join(', ') || 'none'}`,
+          `  Assertions: ${step.assertions.join(', ') || 'none'}`,
+          `  Console: ${step.console_logs.join(' | ') || 'none'}`,
+          `  Network: ${step.network_failures.map((failure) => `${failure.method} ${failure.url} ${failure.status}`).join(' | ') || 'none'}`,
+          `  Trace: ${step.trace_path ?? 'none'}`,
+          `  Screenshots: ${step.screenshot_paths.join(', ') || 'none'}`,
+          step.diff
+            ? `  Diff: visual ${step.diff.visual}, timing ${step.diff.timing}, text ${step.diff.text}, console ${step.diff.console}, network ${step.diff.network}`
+            : '  Diff: none',
+        );
+      }
+    }
+  }
+  lines.push('', '## Reproduction', ...analysis.repro_steps.map((step) => `- ${step}`));
+  lines.push('', '## Regressions', analysis.related_regressions.length > 0 ? analysis.related_regressions.map((item) => `- ${item}`).join('\n') : 'none');
+  lines.push('', '## Next actions', ...analysis.suggested_next_actions.map((step) => `- ${step}`), '');
+  return `${lines.join('\n')}\n`;
+}
+
 export function junitXml(result: RunResult): string {
   const suites = result.users
     .map((user) => {

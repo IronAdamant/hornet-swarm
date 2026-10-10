@@ -36,6 +36,10 @@ describe('example journeys and reports', () => {
       expect(report.summary).not.toMatch(/run_\d/);
       expect(report.summary).not.toMatch(/at\s+\S+\s+\(/);
       analysisSchema.parse(report.analysis);
+      const analysisMd = readFileSync(join(report.dir, 'analysis.md'), 'utf8');
+      for (const heading of ['Timings:', 'Selectors:', 'Assertions:', 'Console:', 'Network:', 'Trace:', 'Screenshots:', 'Diff:', 'Confidence:', '## Chaos', '## Reproduction', '## Regressions', '## Next actions']) {
+        expect(analysisMd).toContain(heading);
+      }
       const junit = readFileSync(join(report.dir, 'junit.xml'), 'utf8');
       expect(junit.startsWith('<?xml')).toBe(true);
       expect(junit).toContain('<testsuite');
