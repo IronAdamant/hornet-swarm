@@ -97,18 +97,26 @@ async function forwardHttp(
   }
   log({ event: 'allow', host: target.hostname, port: target.port || '80', proto: 'http' });
   const headers = { ...req.headers };
-  delete headers['proxy-connection'];
-  const upstream = netConnect(Number(target.port || 80), target.hostname, () => {
-    const head = `${req.method ?? 'GET'} ${target.pathname}${target.search} HTTP/1.1\r\nHost: ${target.host}\r\nConnection: close\r\n\r\n`;
-    upstream.write(head);
-    req.pipe(upstream);
-  });
-  upstream.on('data', (chunk) => res.write(chunk));
-  upstream.on('end', () => res.end());
+  for (const hop of ['proxy-connection', 'proxy-authorization', 'connection']) delete headers[hop];
+  headers.host = target.host;
+  const upstream = httpRequest(
+    {
+      host: target.hostname,
+      port: Number(target.port || 80),
+      method: req.method,
+      path: `${target.pathname}${target.search}`,
+      headers,
+    },
+    (response) => {
+      res.writeHead(response.statusCode ?? 502, response.headers);
+      response.pipe(res);
+    },
+  );
   upstream.on('error', () => {
     if (!res.headersSent) res.writeHead(502);
     res.end();
   });
+  req.pipe(upstream);
 }
 
 class TokenBucket {

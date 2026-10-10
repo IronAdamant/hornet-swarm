@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@aegis/core": "workspace:*",
+    "@aegis/report": "workspace:*",
     "dockerode": "4.0.4",
     "pino": "9.6.0",
     "yaml": "2.7.1",

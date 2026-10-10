@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { defaultProjectFromHome, envReset, envStatus, envUp, measureResources, runDoctor } from '@aegis/controller';
+import { createInterface } from 'node:readline';
+import { AegisError, acceptBaseline, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, releaseKill, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin } from '@aegis/controller';
 import { Command } from 'commander';
 
 const program = new Command();
@@ -106,9 +107,188 @@ env
     }
   });
 
+program
+  .command('suite')
+  .option('--project <id>', 'project id')
+  .option('--journey <file...>', 'journey files')
+  .option('--gate <mode>', 'all or per_user')
+  .option('--confirm-production', 'allow a production-looking target')
+  .option('--chaos <profile>', 'chaos profile')
+  .option('--seed <seed>', 'chaos seed')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (opts: { project?: string; journey?: string[]; gate?: string; confirmProduction?: boolean; chaos?: string; seed?: string; json?: boolean }) => {
+    try {
+      const result = await runSuite({
+        project: opts.project ?? defaultProjectFromHome(),
+        journeyFiles: opts.journey,
+        ...(opts.gate === 'all' || opts.gate === 'per_user' ? { gate: opts.gate } : {}),
+        confirmProduction: Boolean(opts.confirmProduction),
+        ...(opts.chaos ? { chaos: { profile: opts.chaos, seed: opts.seed ?? 'seed' } } : {}),
+      });
+      if (opts.json) writeJson(result);
+      else process.stdout.write(`${result.status}\n`);
+      process.exit(result.status === 'passed' ? 0 : result.status === 'blocked' || result.status === 'rate_limited' ? 2 : result.status === 'error' ? 4 : 1);
+    } catch (error) {
+      const code = error instanceof AegisError ? error.exitCode : 4;
+      fail(opts.json, messageOf(error), code);
+    }
+  });
+
+program
+  .command('kill')
+  .option('--release', 'allow new runs')
+  .option('--project <id>', 'project whose runners to stop')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (opts: { release?: boolean; project?: string; json?: boolean }) => {
+    try {
+      if (opts.release) {
+        releaseKill();
+        if (opts.json) writeJson({ ok: true, released: true });
+        else process.stdout.write('Kill switch released.\n');
+        return;
+      }
+      engageKill();
+      await stopRunners(opts.project ?? defaultProjectFromHome());
+      if (opts.json) writeJson({ ok: true, killed: true });
+      else process.stdout.write('Kill switch is on. Runners were stopped.\n');
+    } catch (error) {
+      fail(opts.json, messageOf(error), 4);
+    }
+  });
+
+program
+  .command('request-credentials')
+  .requiredOption('--project <id>', 'project id')
+  .requiredOption('--label <label>', 'qa-user label')
+  .requiredOption('--reason <text>', 'why the login is needed')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (opts: { project: string; label: string; reason: string; json?: boolean }) => {
+    try {
+      const result = await requestCredentials({ project: opts.project, label: opts.label, reason: opts.reason });
+      if (opts.json) writeJson(result);
+      else process.stdout.write('waiting\n');
+    } catch (error) {
+      const code = error instanceof AegisError ? error.exitCode : 3;
+      fail(opts.json, messageOf(error), code);
+    }
+  });
+
+program
+  .command('credential-status')
+  .requiredOption('--id <id>', 'request id')
+  .option('--json', 'print machine-readable JSON')
+  .action((opts: { id: string; json?: boolean }) => {
+    const result = credentialStatus(opts.id);
+    if (opts.json) writeJson(result);
+    else process.stdout.write(`${result.status ?? 'waiting'}\n`);
+  });
+
+const creds = program.command('creds').description('Owner-only login entry');
+creds
+  .command('serve')
+  .option('--port <n>', 'loopback port', process.env.AEGIS_CREDENTIAL_PORT ?? '7781')
+  .action(async (opts: { port?: string }) => {
+    const port = Number(opts.port ?? 7781);
+    await startCredentialPage(undefined, port);
+    await new Promise(() => undefined);
+  });
+creds
+  .command('add')
+  .argument('<project>', 'project id')
+  .argument('<label>', 'qa-user label')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (project: string, label: string, opts: { json?: boolean }) => {
+    try {
+      const lines = (await readHidden()).split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+      const username = lines[0];
+      const password = lines[1];
+      const totp = lines[2];
+      if (!username || !password) fail(opts.json, 'Type the username, then the password.', 3);
+      const stored = storeOwnerLogin(project, label, username, password, totp);
+      if (opts.json) writeJson(stored);
+      else process.stdout.write(`Stored a login for ${label}.\n`);
+    } catch (error) {
+      fail(opts.json, messageOf(error), 3);
+    }
+  });
+
+program
+  .command('export-evidence')
+  .argument('<runId>', 'run id')
+  .requiredOption('--project <id>', 'project id')
+  .requiredOption('--out <file>', 'zip path')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (runId: string, opts: { project: string; out: string; json?: boolean }) => {
+    try {
+      const result = await exportEvidence(opts.project, runId, opts.out);
+      if (opts.json) writeJson(result);
+      else process.stdout.write(`${result.path}\n`);
+    } catch (error) {
+      fail(opts.json, messageOf(error), 1);
+    }
+  });
+
+program
+  .command('accept-baseline')
+  .argument('<runId>', 'run id')
+  .requiredOption('--project <id>', 'project id')
+  .option('--json', 'print machine-readable JSON')
+  .action((runId: string, opts: { project: string; json?: boolean }) => {
+    try {
+      const result = acceptBaseline(opts.project, runId);
+      if (opts.json) writeJson(result);
+      else process.stdout.write('Baseline saved.\n');
+    } catch (error) {
+      fail(opts.json, messageOf(error), 3);
+    }
+  });
+
+program
+  .command('cleanup')
+  .option('--days <n>', 'delete runs older than this many days')
+  .option('--json', 'print machine-readable JSON')
+  .action((opts: { days?: string; json?: boolean }) => {
+    const days = opts.days === undefined ? undefined : Number(opts.days);
+    const removed = cleanupRetention(undefined, days);
+    if (opts.json) writeJson({ ok: true, removed });
+    else process.stdout.write(`${removed.length} old runs removed.\n`);
+  });
+
 program.parseAsync(process.argv).catch((error: unknown) => {
   fail(false, messageOf(error), 4);
 });
+
+function readHidden(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!process.stdin.isTTY) {
+      const chunks: Buffer[] = [];
+      process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
+      process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      process.stdin.on('error', reject);
+      return;
+    }
+    const ask = (prompt: string) =>
+      new Promise<string>((done) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+        const writer = rl as unknown as { _writeToOutput: (text: string) => void };
+        const original = writer._writeToOutput.bind(rl);
+        process.stdout.write(prompt);
+        writer._writeToOutput = (text: string) => {
+          if (text.includes('\n')) original(text);
+        };
+        rl.once('line', (line) => {
+          rl.close();
+          done(line);
+        });
+      });
+    void (async () => {
+      const username = await ask('Username: ');
+      const password = await ask('Password: ');
+      const totp = await ask('TOTP secret (blank to skip): ');
+      resolve(`${username}\n${password}\n${totp}\n`);
+    })().catch(reject);
+  });
+}
 
 function parseCount(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;

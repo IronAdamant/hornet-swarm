@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { executeJob, type JobRequest } from './job.js';
 
 const port = Number(process.env.AEGIS_PORT ?? 8787);
 let abortRequested = false;
+const secrets = new Map<string, string>();
 
 const server = createServer((req, res) => {
   void handle(req, res);
@@ -24,6 +26,29 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     if (req.method === 'GET' && req.url === '/v1/abort-state') {
       send(res, 200, { abortRequested });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/secrets') {
+      const body = (await readJson(req)) as { credentials?: { handle?: string; value?: string }[] };
+      const handles: string[] = [];
+      for (const entry of body.credentials ?? []) {
+        if (!entry.handle || typeof entry.value !== 'string') continue;
+        secrets.set(entry.handle, entry.value);
+        handles.push(entry.handle);
+        entry.value = '';
+      }
+      send(res, 200, { ok: true, handles });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/jobs') {
+      const body = (await readJson(req)) as unknown as JobRequest;
+      abortRequested = false;
+      let clientGone = false;
+      res.on('close', () => {
+        if (!res.writableEnded) clientGone = true;
+      });
+      const report = await executeJob(body, secrets, () => abortRequested || clientGone);
+      if (!res.writableEnded) send(res, 200, report);
       return;
     }
     if (req.method === 'POST' && (req.url === '/v1/probe' || req.url?.startsWith('/v1/probe?'))) {

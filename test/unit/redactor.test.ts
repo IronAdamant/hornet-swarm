@@ -25,6 +25,23 @@ describe('redactor', () => {
     expect(redactor.redact(password)).toBe('[REDACTED:qa-user-1.password]');
   });
 
+  it('removes a secret nested in a HAR file and a DOM snapshot', () => {
+    const redactor = new Redactor();
+    redactor.register('qa-user-1.password', password);
+    const once = JSON.stringify(password).slice(1, -1);
+    const har = JSON.stringify({ post: `{"echo":"${once}"}` });
+    const textNode = password.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const snapshot = JSON.stringify(`<div id="dom">${textNode}</div>`);
+    expect(redactor.contains(har)).toBe(true);
+    expect(redactor.contains(snapshot)).toBe(true);
+    const cleanedHar = redactor.redact(har);
+    const cleanedSnapshot = redactor.redact(snapshot);
+    expect(cleanedHar).not.toContain('s3cret');
+    expect(cleanedSnapshot).not.toContain('s3cret');
+    expect(redactor.contains(cleanedHar)).toBe(false);
+    expect(redactor.contains(cleanedSnapshot)).toBe(false);
+  });
+
   it('masks credential headers and drops value fields from objects', () => {
     const redactor = new Redactor();
     redactor.register('qa-user-1.password', password);

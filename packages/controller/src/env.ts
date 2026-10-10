@@ -67,6 +67,24 @@ export async function envReset(options: { project: string; count?: number; hard?
   return { ...status, durationMs: Date.now() - started, idempotent: true };
 }
 
+export async function stopRunners(project: string): Promise<void> {
+  const docker = createDocker();
+  const listed = await docker.listContainers({
+    all: true,
+    filters: { label: [`aegis.project=${project}`, 'aegis.role=runner'] },
+  });
+  await Promise.all(
+    listed.map(async (entry) => {
+      const container = docker.getContainer(entry.Id);
+      try {
+        await container.stop({ t: 1 });
+      } catch {
+        await container.kill().catch(() => undefined);
+      }
+    }),
+  );
+}
+
 export async function envStatus(project: string): Promise<EnvStatus> {
   const docker = createDocker();
   const settings = loadSettings(project);
@@ -353,11 +371,20 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   const existing = await findContainer(docker, name);
   if (existing) {
     const inspected = await existing.inspect();
-    if (!inspected.State.Running) await existing.start();
-    const endpoint = await waitForEndpoint(docker, project, label);
-    const healthy = await waitHealthy(endpoint, 20_000);
-    if (!healthy) throw new Error(await failureText(existing, name));
-    return;
+    let wanted = '';
+    try {
+      wanted = (await docker.getImage(RUNNER_IMAGE).inspect()).Id;
+    } catch {
+      wanted = '';
+    }
+    const sameImage = wanted === '' || inspected.Image === wanted;
+    if (sameImage) {
+      if (!inspected.State.Running) await existing.start();
+      const endpoint = await waitForEndpoint(docker, project, label);
+      const healthy = await waitHealthy(endpoint, 20_000);
+      if (healthy) return;
+    }
+    await existing.remove({ force: true });
   }
   const volume = profileVolume(project, label);
   try {

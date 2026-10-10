@@ -8,10 +8,9 @@ export class Redactor {
   register(label: string, value: string): void {
     if (!value) return;
     const token = `[REDACTED:${label}]`;
-    const forms = new Set<string>([value, encodeURIComponent(value), Buffer.from(value, 'utf8').toString('base64')]);
-    forms.add(JSON.stringify(value).slice(1, -1));
-    forms.add(htmlEscape(value));
-    if (label.endsWith('.username')) forms.add(value.toLowerCase());
+    const forms = new Set<string>();
+    addDerived(forms, value);
+    if (label.endsWith('.username')) addDerived(forms, value.toLowerCase());
     for (const form of forms) {
       if (form.length < 4) continue;
       this.forms.push({ form, token });
@@ -67,6 +66,29 @@ export function htmlEscape(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function textNodeEscape(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function addDerived(forms: Set<string>, value: string): void {
+  forms.add(value);
+  forms.add(encodeURIComponent(value));
+  forms.add(Buffer.from(value, 'utf8').toString('base64'));
+  forms.add(htmlEscape(value));
+  forms.add(textNodeEscape(value));
+  for (const base of [value, htmlEscape(value), textNodeEscape(value), encodeURIComponent(value)]) addJsonEscapes(forms, base);
+}
+
+function addJsonEscapes(forms: Set<string>, value: string): void {
+  let encoded = value;
+  for (let level = 0; level < 3; level += 1) {
+    const next = JSON.stringify(encoded).slice(1, -1);
+    if (next === encoded || next.length < 4) break;
+    forms.add(next);
+    encoded = next;
+  }
 }
 
 export function maskHeader(name: string, value: string, redactor: Redactor): string {

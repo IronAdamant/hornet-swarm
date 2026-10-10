@@ -20,6 +20,7 @@
     "@types/node": "22.15.3",
     "@vitest/coverage-v8": "2.1.9",
     "esbuild": "0.25.4",
+    "jszip": "3.10.1",
     "typescript": "5.8.3",
     "vitest": "2.1.9",
     "yaml": "2.7.1"
