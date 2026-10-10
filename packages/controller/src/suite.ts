@@ -93,40 +93,51 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
   const runDir = ensureDir(join(home, 'runs', runId));
   const rich: RichUser[] = [];
   let killed = false;
+  const phaseResults: { label: string; report: JobReport }[] = [];
+  const hold = (label: string, work: () => Promise<void>): Promise<void> => {
+    const lease = acquireLease({
+      project: project.id,
+      label,
+      agentId,
+      runId,
+      candidates: project.users.map((user) => user.label),
+      home,
+      via: request.via ?? 'cli',
+    });
+    if (!lease.ok) throw new AegisError(lease.reason === 'busy' ? `busy until ${lease.busyUntil ?? 'later'}` : 'agent already holds a login', 3);
+    return work().finally(() => releaseStoredLease(project.id, agentId, home, request.via ?? 'cli'));
+  };
   try {
     for (const label of labels) {
-      const lease = acquireLease({
-        project: project.id,
-        label,
-        agentId,
-        runId,
-        candidates: project.users.map((user) => user.label),
-        home,
-        via: request.via ?? 'cli',
+      await hold(label, async () => {
+        const phase1 = await runPhase1(project, label, runId, home, agentId);
+        phaseResults.push({ label, report: phase1.report });
+        if (phase1.killed) killed = true;
       });
-      if (!lease.ok) throw new AegisError(lease.reason === 'busy' ? `busy until ${lease.busyUntil ?? 'later'}` : 'agent already holds a login', 3);
-      const phase1 = await runPhase1(project, label, runId, home, agentId);
-      if (phase1.killed) killed = true;
-      const userJourneys: RichJourney[] = [];
-      const phaseOk = phase1.report.status === 'passed';
-      const othersFailed = false;
-      if (!killed && phaseOk && !(gate === 'all' && othersFailed)) {
-        for (const entry of journeys.filter((item) => item.journey?.users.includes(label))) {
-          if (killed) break;
-          if (gate === 'all' && rich.some((user) => user.phase1.status !== 'pass')) break;
-          const played = await runJourney(project, label, entry.journey as Journey, runId, home, request.chaos);
-          if (played.killed) killed = true;
-          userJourneys.push(played.journey);
-          rememberRegression(home, project.id, entry, played.journey);
-        }
-      } else {
-        for (const entry of journeys.filter((item) => item.journey?.users.includes(label))) {
-          userJourneys.push({ id: entry.journey?.id ?? 'journey', name: entry.journey?.name ?? 'Check', status: 'skipped', duration_ms: 0, steps: [] });
-        }
-      }
-      rich.push({ label, phase1: phaseRecord(phase1.report), journeys: userJourneys });
-      releaseStoredLease(project.id, agentId, home, request.via ?? 'cli');
       if (killed) break;
+    }
+    const everyPhasePassed = phaseResults.length === labels.length && phaseResults.every((item) => item.report.status === 'passed');
+    for (const item of phaseResults) {
+      const entries = journeys.filter((entry) => entry.journey?.users.includes(item.label));
+      const phaseOk = item.report.status === 'passed';
+      const blockedByGate = gate === 'all' && !everyPhasePassed;
+      const userJourneys: RichJourney[] = [];
+      if (!killed && phaseOk && !blockedByGate && entries.length > 0) {
+        await hold(item.label, async () => {
+          for (const entry of entries) {
+            if (killed) break;
+            const played = await runJourney(project, item.label, entry.journey as Journey, runId, home, request.chaos);
+            if (played.killed) killed = true;
+            userJourneys.push(played.journey);
+            rememberRegression(home, project.id, entry, played.journey);
+          }
+        });
+      }
+      for (const entry of entries) {
+        if (userJourneys.some((journey) => journey.id === entry.journey?.id)) continue;
+        userJourneys.push({ id: entry.journey?.id ?? 'journey', name: entry.journey?.name ?? 'Check', status: 'skipped', duration_ms: 0, steps: [] });
+      }
+      rich.push({ label: item.label, phase1: phaseRecord(item.report), journeys: userJourneys });
     }
   } catch (error) {
     releaseStoredLease(project.id, agentId, home, request.via ?? 'cli');

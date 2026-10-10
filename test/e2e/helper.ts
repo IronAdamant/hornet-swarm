@@ -10,6 +10,7 @@ export const root = join(import.meta.dirname, '..', '..');
 export const cli = join(root, 'packages/cli/dist/main.js');
 export const home = join(homedir(), '.aegis');
 export const secret = 'FixtureOnly-s3cret"<&value>';
+export const otherSecret = 'FixtureOnly-other"<&value>';
 export const journeys = join(root, 'test/e2e/journeys');
 
 export function aegis(args: string[], input?: string, timeout = 180_000): { status: number; stdout: string; stderr: string } {
