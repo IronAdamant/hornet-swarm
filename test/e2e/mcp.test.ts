@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { aegis, clearSignins, home, root, secret } from './helper.js';
+import { hornet, clearSignins, home, root, secret } from './helper.js';
 
 beforeAll(() => {
   clearSignins();
@@ -58,9 +58,9 @@ users:
 });
 
 afterAll(() => {
-  aegis(['kill', '--release', '--json']);
+  hornet(['kill', '--release', '--json']);
   clearSignins();
-  aegis(['env', 'up', '--project', 'fixture', '--count', '1', '--json']);
+  hornet(['env', 'up', '--project', 'fixture', '--count', '1', '--json']);
 });
 
 describe('MCP server', () => {

@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { executeJob, type JobRequest } from './job.js';
+import { browserLaunchOptions } from './launch.js';
 
 const port = Number(process.env.AEGIS_PORT ?? 8787);
 let abortRequested = false;
@@ -10,7 +11,7 @@ const server = createServer((req, res) => {
 });
 
 server.listen(port, '0.0.0.0', () => {
-  process.stderr.write(`aegis-runner listening on ${port}\n`);
+  process.stderr.write(`hornet-swarm-runner listening on ${port}\n`);
 });
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -67,10 +68,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 async function probe(holdMs: number): Promise<{ ok: true; launchMs: number }> {
   const { chromium } = await import('playwright');
   const started = Date.now();
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-  });
+  const browser = await chromium.launch(browserLaunchOptions);
   try {
     const page = await browser.newPage();
     await page.goto('about:blank');

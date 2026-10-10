@@ -28,7 +28,7 @@ export function loadResourceTable(): MeasuredResources {
   const packagedPath = join(dirname(fileURLToPath(import.meta.url)), 'measured-resources.json');
   const packaged = JSON.parse(readFileSync(packagedPath, 'utf8')) as MeasuredResources;
   try {
-    const homePath = join(process.env.AEGIS_HOME ?? join(homedir(), '.aegis'), 'measured-resources.json');
+    const homePath = join(process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm'), 'measured-resources.json');
     const home = JSON.parse(readFileSync(homePath, 'utf8')) as MeasuredResources;
     if (home.measured) {
       return {

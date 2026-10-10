@@ -1,5 +1,5 @@
 {
-  "name": "@aegis/controller",
+  "name": "@hornet-swarm/controller",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,8 +15,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aegis/core": "workspace:*",
-    "@aegis/report": "workspace:*",
+    "@hornet-swarm/core": "workspace:*",
+    "@hornet-swarm/report": "workspace:*",
     "dockerode": "4.0.4",
     "pino": "9.6.0",
     "yaml": "2.7.1",

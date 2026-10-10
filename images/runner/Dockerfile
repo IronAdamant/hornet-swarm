@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fonts-liberation \
       tini \
       tesseract-ocr \
+      xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
@@ -20,9 +21,11 @@ RUN npm install --omit=dev \
     && rm -rf /root/.npm
 
 COPY images/runner/build/main.js /opt/runner/main.js
+COPY images/runner/entrypoint.sh /opt/runner/entrypoint.sh
 
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin runner \
     && mkdir -p /home/runner/profile \
+    && chmod 755 /opt/runner/entrypoint.sh \
     && chown -R runner:runner /home/runner /opt/runner
 
 USER runner
@@ -31,4 +34,4 @@ ENV HOME=/home/runner \
     XDG_CONFIG_HOME=/tmp/config
 
 EXPOSE 8787
-ENTRYPOINT ["/usr/bin/tini", "--", "node", "/opt/runner/main.js"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/runner/entrypoint.sh"]

@@ -1,5 +1,5 @@
 {
-  "name": "@aegis/runner",
+  "name": "@hornet-swarm/runner",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/main.js",
@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aegis/core": "workspace:*",
+    "@hornet-swarm/core": "workspace:*",
     "playwright": "1.64.0",
     "zod": "3.25.76"
   }

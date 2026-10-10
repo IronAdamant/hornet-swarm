@@ -14,17 +14,17 @@ export function labelsForCount(count: number, projectLabels: string[] = []): str
 }
 
 export function containerName(project: string, label: string): string {
-  return `aegis-${project}-${label}`;
+  return `hornet-swarm-${project}-${label}`;
 }
 
 export function proxyName(project: string): string {
-  return `aegis-proxy-${project}`;
+  return `hornet-swarm-proxy-${project}`;
 }
 
 export function networkName(project: string): string {
-  return `aegis-net-${project}`;
+  return `hornet-swarm-net-${project}`;
 }
 
 export function profileVolume(project: string, label: string): string {
-  return `aegis-profile-${project}-${label}`;
+  return `hornet-swarm-profile-${project}-${label}`;
 }

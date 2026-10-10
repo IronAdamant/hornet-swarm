@@ -10,7 +10,7 @@ const transport = new StdioClientTransport({
   args: [join(root, 'packages/mcp-server/dist/main.js')],
   cwd: root,
 });
-const client = new Client({ name: 'aegis-e2e', version: '0.1.0' });
+const client = new Client({ name: 'hornet-swarm-e2e', version: '0.1.0' });
 await client.connect(transport);
 const output = {};
 output.users = await call('list_test_users', { project: 'fixture' });
@@ -24,7 +24,7 @@ output.second = await call('acquire_test_user', { project: 'fixture', label: 'qa
 output.released = await call('release_test_user', { project: 'fixture', agent_id: 'mcp-e2e' });
 output.passwordRejected = await call('request_credentials', { project: 'fixture', label: 'qa-user-1', reason: 'mcp check', password: 'should-not-stick' });
 output.signin = await call('run_signin_check', { project: 'fixture', users: ['qa-user-1'], wait: true });
-const summaryPath = join(homedir(), '.aegis', 'runs', output.signin.run_id, 'summary.md');
+const summaryPath = join(homedir(), '.hornet-swarm', 'runs', output.signin.run_id, 'summary.md');
 const originalSummary = readFileSync(summaryPath, 'utf8');
 writeFileSync(summaryPath, `${originalSummary}\nFixtureOnly-s3cret"<&value>\n`);
 try {

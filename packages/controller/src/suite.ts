@@ -19,7 +19,7 @@ import {
   type Project,
   type RunResult,
   type StepResult,
-} from '@aegis/core';
+} from '@hornet-swarm/core';
 import {
   analysisMarkdown,
   buildAnalysis,
@@ -35,16 +35,16 @@ import {
   type RichJourney,
   type RichStep,
   type RichUser,
-} from '@aegis/report';
+} from '@hornet-swarm/report';
 import { writeAudit } from './audit.js';
 import { injectSecrets, injectTotp, registerProjectSecrets } from './broker.js';
-import { AegisError } from './errors.js';
+import { HornetError } from './errors.js';
 import { envStatus, stopRunners } from './env.js';
 import { aegisHome, ensureDir } from './home.js';
 import { acquireLease, releaseStoredLease } from './leases-store.js';
 
 
-export { AegisError } from './errors.js';
+export { HornetError } from './errors.js';
 
 type JobReport = {
   ok: boolean;
@@ -73,19 +73,19 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
   const auth = authorisationSchema.parse(parse(readFileSync(join(home, 'authorisations', `${project.authorisation_id}.yaml`), 'utf8')));
   const gate = request.gate ?? project.phase2.gate;
   const agentId = request.agentId ?? process.env.AEGIS_AGENT_ID ?? `cli-${process.pid}`;
-  if (existsSync(join(home, 'KILL'))) throw new AegisError('The kill switch is on.', 2);
+  if (existsSync(join(home, 'KILL'))) throw new HornetError('The kill switch is on.', 2);
   const domains = projectDomainsAuthorised(project, auth);
-  if (!domains.ok) throw new AegisError(domains.reason, 3);
+  if (!domains.ok) throw new HornetError(domains.reason, 3);
   const production = productionDecision(project, auth, Boolean(request.confirmProduction));
-  if (!production.ok) throw new AegisError(production.reason, 3);
+  if (!production.ok) throw new HornetError(production.reason, 3);
   if (request.chaos) {
     const allowed = chaosPermitted(auth, project);
-    if (!allowed.ok) throw new AegisError(allowed.reason, 3);
+    if (!allowed.ok) throw new HornetError(allowed.reason, 3);
   }
   const journeys = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? []);
   for (const journey of journeys) {
     const checked = validateJourneyYaml(journey.text, project);
-    if (!checked.valid || !checked.journey) throw new AegisError(checked.errors.join('; '), 3);
+    if (!checked.valid || !checked.journey) throw new HornetError(checked.errors.join('; '), 3);
     journey.journey = checked.journey;
   }
   const labels = request.phase1Only
@@ -107,7 +107,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
       home,
       via: request.via ?? 'cli',
     });
-    if (!lease.ok) throw new AegisError(lease.reason === 'busy' ? `busy until ${lease.busyUntil ?? 'later'}` : 'agent already holds a login', 3);
+    if (!lease.ok) throw new HornetError(lease.reason === 'busy' ? `busy until ${lease.busyUntil ?? 'later'}` : 'agent already holds a login', 3);
     return work().finally(() => releaseStoredLease(project.id, agentId, home, request.via ?? 'cli'));
   };
   try {
@@ -144,8 +144,8 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
     }
   } catch (error) {
     releaseStoredLease(project.id, agentId, home, request.via ?? 'cli');
-    if (error instanceof AegisError) throw error;
-    throw new AegisError(error instanceof Error ? error.message : 'The run failed.', 4);
+    if (error instanceof HornetError) throw error;
+    throw new HornetError(error instanceof Error ? error.message : 'The run failed.', 4);
   }
   const gatePassed = rich.every((user) => user.phase1.status === 'pass');
   const phaseProblem = rich.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
@@ -285,7 +285,7 @@ async function execute(
 ): Promise<{ report: JobReport; killed: boolean }> {
   const status = await envStatus(project.id);
   const runner = status.runners.find((entry) => entry.label === label && entry.endpoint);
-  if (!runner?.endpoint) throw new AegisError(`No healthy runner for ${label}.`, 4);
+  if (!runner?.endpoint) throw new HornetError(`No healthy runner for ${label}.`, 4);
   const injected = await injectSecrets(project.id, label, runner.endpoint, home);
   if (project.auth.totp.enabled) await injectTotp(project.id, label, runner.endpoint, home);
   const target = containerTarget(project);
@@ -466,14 +466,14 @@ function resolveJourneyArg(home: string, project: Project, file: string): string
   const dir = resolveJourneys(home, project);
   const direct = join(dir, `${file}.journey.yaml`);
   if (existsSync(direct)) return direct;
-  if (!existsSync(dir)) throw new AegisError(`Unknown journey ${file}.`, 3);
+  if (!existsSync(dir)) throw new HornetError(`Unknown journey ${file}.`, 3);
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.yaml')) continue;
     const path = join(dir, name);
     const parsed = parse(readFileSync(path, 'utf8')) as { id?: string };
     if (parsed.id === file) return path;
   }
-  throw new AegisError(`Unknown journey ${file}.`, 3);
+  throw new HornetError(`Unknown journey ${file}.`, 3);
 }
 
 function resolveJourneys(home: string, project: Project): string {

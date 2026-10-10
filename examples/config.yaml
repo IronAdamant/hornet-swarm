@@ -1,4 +1,4 @@
-# ~/.aegis/config.yaml  (global)
+# ~/.hornet-swarm/config.yaml  (global)
 runtime: auto                 # auto | orbstack | colima
 default_project: consistencyhub
 results_retention_days: 30

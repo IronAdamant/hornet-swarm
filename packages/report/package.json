@@ -1,5 +1,5 @@
 {
-  "name": "@aegis/report",
+  "name": "@hornet-swarm/report",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,7 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aegis/core": "workspace:*",
+    "@hornet-swarm/core": "workspace:*",
     "jszip": "3.10.1",
     "pixelmatch": "7.1.0",
     "pngjs": "7.0.0",

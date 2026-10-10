@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Redactor } from '@aegis/core';
+import { Redactor } from '@hornet-swarm/core';
 import { aegisHome, ensureDir } from './home.js';
 
 export type AuditEvent = {

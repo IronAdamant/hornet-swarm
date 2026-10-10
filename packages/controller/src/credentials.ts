@@ -7,11 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { authorisationSchema, credentialRequestSchema, domainCovered, projectDomainsAuthorised, projectSchema, authorisationStatus } from '@aegis/core';
+import { authorisationSchema, credentialRequestSchema, domainCovered, projectDomainsAuthorised, projectSchema, authorisationStatus } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
 import { setSecret } from './broker.js';
-import { AegisError } from './errors.js';
+import { HornetError } from './errors.js';
 import { aegisHome, ensureDir } from './home.js';
+import { cardsFromForm, saveSwarmBoard, swarmBoardHtml } from './swarm.js';
 
 type CredentialRequest = {
   id: string;
@@ -29,7 +30,7 @@ let page: { port: number; close: () => Promise<void> } | undefined;
 
 export async function requestCredentials(input: unknown, home = aegisHome()): Promise<{ id: string; waiting: true }> {
   const parsed = credentialRequestSchema.safeParse(input);
-  if (!parsed.success) throw new AegisError('A credential request only accepts a project, a label, and a reason.', 3);
+  if (!parsed.success) throw new HornetError('A credential request only accepts a project, a label, and a reason.', 3);
   const { project, label, reason } = parsed.data;
   assertProjectAuthorised(project, home);
   const port = await ensureCredentialPage(home);
@@ -97,7 +98,7 @@ export async function ensureCredentialPage(home = aegisHome()): Promise<number> 
     if (await listening(port)) return port;
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new AegisError('The login page did not start.', 4);
+  throw new HornetError('The login page did not start.', 4);
 }
 
 function listening(port: number): Promise<boolean> {
@@ -135,6 +136,10 @@ export function startCredentialPage(home = aegisHome(), port = 7781): Promise<{ 
 
 async function handlePage(req: IncomingMessage, res: ServerResponse, home: string): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  if (url.pathname === '/setup') {
+    await handleSetup(req, res, home, url);
+    return;
+  }
   if (url.pathname !== '/requests') {
     send(res, 404, 'Not found.');
     return;
@@ -189,8 +194,35 @@ async function handlePage(req: IncomingMessage, res: ServerResponse, home: strin
   send(res, 200, 'Saved. You can close this page.');
 }
 
+async function handleSetup(req: IncomingMessage, res: ServerResponse, home: string, url: URL): Promise<void> {
+  if (req.method === 'GET') {
+    send(res, 200, swarmBoardHtml(url.searchParams.get('project') ?? 'fixture', home), 'text/html; charset=utf-8');
+    return;
+  }
+  if (req.method !== 'POST') {
+    send(res, 405, 'Method not allowed.');
+    return;
+  }
+  const body = new URLSearchParams(await readBody(req));
+  const confirmed = attemptTouchId(touchLog(home));
+  if (!confirmed) {
+    send(res, 401, 'Touch ID was not confirmed. Nothing was saved.');
+    return;
+  }
+  try {
+    const view = saveSwarmBoard(
+      { project: body.get('project') ?? '', website: body.get('website') ?? '', cards: cardsFromForm(body) },
+      home,
+    );
+    send(res, 200, `Ready. ${view.agents.length} login${view.agents.length === 1 ? '' : 's'} stored for ${view.website}. Agents can see the site and the personalities.`);
+  } catch (error) {
+    const message = error instanceof HornetError ? error.message : 'The board could not be saved.';
+    send(res, 400, message);
+  }
+}
+
 function form(record: CredentialRequest): string {
-  return `<!doctype html><html><head><title>Aegis login</title></head><body>
+  return `<!doctype html><html><head><title>Hornet Swarm login</title></head><body>
 <h1>Enter a test login</h1>
 <p>${escapeText(record.project)} · ${escapeText(record.label)}</p>
 <p>${escapeText(record.reason)}</p>
@@ -219,7 +251,7 @@ guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error:
 }
 let sem = DispatchSemaphore(value: 0)
 var ok = false
-context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Confirm Aegis credential entry") { success, evalError in
+context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Confirm Hornet Swarm credential entry") { success, evalError in
   ok = success
   if let evalError { fputs(evalError.localizedDescription + "\\n", stderr) }
   sem.signal()
@@ -227,7 +259,7 @@ context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason
 sem.wait()
 exit(ok ? 0 : 1)
 `;
-  const file = join(tmpdir(), `aegis-touch-${process.pid}.swift`);
+  const file = join(tmpdir(), `hornet-swarm-touch-${process.pid}.swift`);
   writeFileSync(file, source);
   try {
     execFileSync('swift', [file], { timeout: 45_000, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -250,7 +282,7 @@ function touchLog(home: string): string {
 function notifyOwner(home: string, project: string, label: string, reason: string, port: number, token: string): void {
   const notice = { project, label, reason, url: `http://127.0.0.1:${port}/requests?token=${token}`, at: new Date().toISOString() };
   appendFileSync(join(ensureDir(home), 'notifications.log'), `${JSON.stringify(notice)}\n`);
-  const script = `display notification ${JSON.stringify(reason)} with title ${JSON.stringify(`Aegis ${project}`)} subtitle ${JSON.stringify(label)}`;
+  const script = `display notification ${JSON.stringify(reason)} with title ${JSON.stringify(`Hornet Swarm ${project}`)} subtitle ${JSON.stringify(label)}`;
   try {
     execFileSync('osascript', ['-e', script], { stdio: 'ignore', timeout: 5_000 });
   } catch {
@@ -262,7 +294,7 @@ function assertProjectAuthorised(projectId: string, home: string): void {
   const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
   const auth = authorisationSchema.parse(parse(readFileSync(join(home, 'authorisations', `${project.authorisation_id}.yaml`), 'utf8')));
   const decision = projectDomainsAuthorised(project, auth);
-  if (!decision.ok) throw new AegisError(decision.reason, 3);
+  if (!decision.ok) throw new HornetError(decision.reason, 3);
 }
 
 function hostAuthorised(projectId: string, hostname: string, home: string): boolean {

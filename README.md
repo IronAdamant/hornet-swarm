@@ -1,8 +1,8 @@
-# Aegis
+# Hornet Swarm
 
-Aegis is a local tool for checking websites you own, or websites someone has authorised you in writing to test. It runs a small browser inside one container per test account. You talk to it from the `aegis` command, or from an AI agent through the MCP server.
+Hornet Swarm is a local tool for checking websites you own, or websites someone has authorised you in writing to test. It runs a small browser inside one container per test account. You talk to it from the `hornet-swarm` command, or from an AI agent through the MCP server.
 
-It is not a load tester, and it does not try to break into sites. If a page asks for a human check or a second code, Aegis stops and tells you.
+It is not a load tester, and it does not try to break into sites. If a page asks for a human check or a second code, Hornet Swarm stops and tells you.
 
 ## What you need
 
@@ -26,45 +26,49 @@ pnpm image
 2. Check the machine:
 
 ```bash
-pnpm aegis doctor
+pnpm hornet-swarm doctor
 ```
 
-The age private key is created in the macOS Keychain the first time Aegis stores a password. The Keychain item is named `aegis-age-key`. The private key is not written into the project. On Linux CI, set `SOPS_AGE_KEY` for that job only.
+The age private key is created in the macOS Keychain the first time Hornet Swarm stores a password. The Keychain item is named `hornet-swarm-age-key`. An existing item named `aegis-age-key` still unlocks the store. The private key is not written into the project. On Linux CI, set `SOPS_AGE_KEY` for that job only.
 
 3. Add an authorisation file that names the domains you are allowed to test, then point a project at your local fixture or your own site. The checked-in examples are templates. Do not run them against a live site from this repo's tests. The offline fixture is `test/fixture-app`:
 
 ```bash
-pnpm --filter @aegis/fixture-app start
+pnpm --filter @hornet-swarm/fixture-app start
 node test/e2e/prepare-fixture.mjs
-pnpm aegis env up --project fixture --count 1
+pnpm hornet-swarm env up --project fixture --count 1
 ```
 
 4. Run the sample checks:
 
 ```bash
-pnpm aegis suite --project fixture \
+pnpm hornet-swarm suite --project fixture \
   --journey examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml \
   --journey examples/journeys/consistencyhub/02-tenant-isolation.journey.yaml
 ```
 
-Reports land in `~/.aegis/runs/<run id>/`. `summary.md` is the short version for a person. `analysis.json` is the detailed version for an agent.
+Reports land in `~/.hornet-swarm/runs/<run id>/`. `summary.md` is the short version for a person. `analysis.json` is the detailed version for an agent.
 
 ## Everyday commands
 
-- `aegis env up --count 10` starts the default fleet.
-- `aegis env reset` recreates the containers. `aegis env reset --hard` also rebuilds the runner and proxy images and the project network.
-- `aegis env status` shows health.
-- `aegis kill` stops a live run. `aegis kill --release` lets new runs start.
-- `aegis creds serve` opens the private login page on `127.0.0.1`.
-- `aegis creds add <project> <label>` asks for a username and password without showing the password.
-- `aegis export-evidence <run id> --project <id> --out proof.zip` packs the proof for one run.
-- `aegis accept-baseline <run id> --project <id>` saves the current screenshots as the comparison point.
+- `hornet-swarm env up --count 10` starts the default fleet.
+- `hornet-swarm env reset` recreates the containers. `hornet-swarm env reset --hard` also rebuilds the runner and proxy images and the project network.
+- `hornet-swarm env status` shows health.
+- `hornet-swarm kill` stops a live run. `hornet-swarm kill --release` lets new runs start.
+- `hornet-swarm creds serve` opens the private login page on `127.0.0.1`.
+- `hornet-swarm creds add <project> <label>` asks for a username and password without showing the password.
+- `hornet-swarm export-evidence <run id> --project <id> --out proof.zip` packs the proof for one run.
+- `hornet-swarm accept-baseline <run id> --project <id>` saves the current screenshots as the comparison point.
 
-A macOS Shortcut can run `aegis kill` if you want a keyboard stop. Aegis does not register a global hotkey itself.
+A macOS Shortcut can run `hornet-swarm kill` if you want a keyboard stop. Hornet Swarm does not register a global hotkey itself.
 
 ## Agents
 
-Start the MCP server with `aegis-mcp` (the built file is `packages/mcp-server/dist/main.js`). Agents see labels such as `qa-user-1`. They never receive passwords. When a login is missing, the agent calls `request_credentials` and you type it on the local page or with `aegis creds add`.
+Open `http://127.0.0.1:7781/setup` to keep the website and up to ten logins. Start that page with `hornet-swarm creds serve` if it is not already open. Fill the website first, then the cards in order: username, password, and a personality for that sub-agent. Press Ready and confirm with Touch ID. The passwords stay in the encrypted store.
+
+After Ready, `hornet-swarm swarm --json` and the MCP tool `get_swarm` show the website, the labels, and the personalities. They do not show passwords. Each label is one sub-agent and one browser. The browser inside the container is full Chromium on a virtual screen, the same browser a person would use, rather than headless Chromium.
+
+Start the MCP server with `hornet-swarm-mcp` (the built file is `packages/mcp-server/dist/main.js`). Agents see labels such as `qa-user-1`. They never receive passwords. When a login is missing, the agent calls `request_credentials` and you type it on the local page or with `hornet-swarm creds add`.
 
 One agent holds one test login at a time.
 

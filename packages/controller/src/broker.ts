@@ -3,11 +3,12 @@ import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
-import { Redactor } from '@aegis/core';
+import { Redactor } from '@hornet-swarm/core';
 import { aegisHome, ensureDir } from './home.js';
 import { totpCode } from './totp.js';
 
-const SERVICE = 'aegis-age-key';
+const SERVICE = 'hornet-swarm-age-key';
+const LEGACY_SERVICE = 'aegis-age-key';
 const FIELDS = ['username', 'password', 'totp_secret'] as const;
 export type SecretField = (typeof FIELDS)[number];
 
@@ -105,7 +106,7 @@ function writeUsers(home: string, project: string, users: Record<string, SecretU
   const destination = join(directory, 'secrets.sops.yaml');
   const identity = ageIdentity(home);
   const plain = stringify({ users });
-  const tempDir = mkdtempSync(join(tmpdir(), 'aegis-sops-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'hornet-swarm-sops-'));
   const tempFile = join(tempDir, 'plain.yaml');
   try {
     writeFileSync(tempFile, plain, { mode: 0o600 });
@@ -158,36 +159,31 @@ function loadAgeSecret(): string {
     return fromEnv;
   }
   const account = process.env.USER || userInfo().username;
-  try {
-    return unpackAgeSecret(
-      execFileSync('security', ['find-generic-password', '-s', SERVICE, '-a', account, '-w'], {
-        encoding: 'utf8',
-        timeout: 15_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }),
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    if (message.includes('not an age key') || message.includes('could not be found') || message.includes('The specified item')) {
-      try {
-        execFileSync('security', ['delete-generic-password', '-s', SERVICE, '-a', account], {
+  for (const service of [SERVICE, LEGACY_SERVICE]) {
+    try {
+      return unpackAgeSecret(
+        execFileSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
+          encoding: 'utf8',
           timeout: 15_000,
           stdio: ['ignore', 'pipe', 'pipe'],
-        });
-      } catch {
-        // Nothing to replace.
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (service === LEGACY_SERVICE) break;
+      if (/item.*not be found|could not be found|SecKeychainSearch/i.test(message)) continue;
+      if (!(message.includes('not an age key') || message.includes('could not be found') || message.includes('The specified item'))) {
+        if (message.includes('AGE-SECRET-KEY-')) throw new Error('Could not read the age key.');
       }
-    } else if (!/item.*not be found|could not be found|SecKeychainSearch/i.test(message)) {
-      if (message.includes('AGE-SECRET-KEY-')) throw new Error('Could not read the age key.');
     }
-    const generated = execFileSync('age-keygen', { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
-    const packed = Buffer.from(generated, 'utf8').toString('base64');
-    execFileSync('security', ['add-generic-password', '-U', '-A', '-s', SERVICE, '-a', account, '-w', packed], {
-      timeout: 15_000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return generated.endsWith('\n') ? generated.slice(0, -1) : generated;
   }
+  const generated = execFileSync('age-keygen', { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const packed = Buffer.from(generated, 'utf8').toString('base64');
+  execFileSync('security', ['add-generic-password', '-U', '-A', '-s', SERVICE, '-a', account, '-w', packed], {
+    timeout: 15_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return generated.endsWith('\n') ? generated.slice(0, -1) : generated;
 }
 
 function unpackAgeSecret(stored: string): string {

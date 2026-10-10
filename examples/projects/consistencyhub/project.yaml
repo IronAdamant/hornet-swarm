@@ -1,4 +1,4 @@
-# ~/.aegis/projects/consistencyhub/project.yaml
+# ~/.hornet-swarm/projects/consistencyhub/project.yaml
 id: consistencyhub
 name: ConsistencyHub (staging)
 authorisation_id: consistencyhub-owner

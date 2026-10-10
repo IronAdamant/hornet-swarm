@@ -1,5 +1,5 @@
 {
-  "name": "aegis-runner-image",
+  "name": "hornet-swarm-runner-image",
   "private": true,
   "type": "module",
   "dependencies": {

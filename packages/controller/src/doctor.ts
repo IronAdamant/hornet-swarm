@@ -1,4 +1,4 @@
-import { estimatesFor } from '@aegis/core';
+import { estimatesFor } from '@hornet-swarm/core';
 import { createDocker, detectRuntime, type RuntimeName } from './docker.js';
 
 export type DoctorReport = {

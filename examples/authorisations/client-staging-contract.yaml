@@ -17,6 +17,6 @@ exclusions:
 valid_from: "2026-11-01"
 valid_until: "2026-12-15"
 document:
-  path: "~/.aegis/authorisations/docs/acme-engagement-signed.pdf"
+  path: "~/.hornet-swarm/authorisations/docs/acme-engagement-signed.pdf"
   sha256: "<sha256 of the signed PDF>"
 notes: Scope limited to the gap-analysis engagement window.

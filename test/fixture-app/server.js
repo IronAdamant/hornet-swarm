@@ -143,7 +143,7 @@ export function createFixture() {
 
   app.get('/layout', async (_req, res) => {
     if (state.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, state.delayMs));
-    const extra = state.layout === 'changed' ? '<div id="banner" style="background:#111;color:#fff;height:160px;font-size:48px">New banner</div>' : '';
+    const extra = state.layout === 'changed' ? '<div id="banner" style="background:#f4f4f4;color:#111;height:160px;font-size:48px">New banner</div>' : '';
     res.type('html').send(page('Layout', `<main id="stage">steady</main>${extra}`));
   });
 
@@ -164,7 +164,11 @@ function accountChrome() {
 }
 
 function page(title, body) {
-  return `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
+  return `<!doctype html><html><head><title>${title}</title><style>
+    body { background:#111; color:#f4f4f4; font-family:sans-serif; }
+    a { color:#9ecbff; }
+    input, button { background:#f4f4f4; color:#111; }
+  </style></head><body><h1>${title}</h1>${body}</body></html>`;
 }
 
 if (process.argv[1] && process.argv[1].endsWith('server.js')) {

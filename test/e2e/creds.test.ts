@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { requestCredentials } from '../../packages/controller/dist/index.js';
-import { aegis, clearSignins, home, readRun, secret } from './helper.js';
+import { hornet, clearSignins, home, readRun, secret } from './helper.js';
 
 beforeAll(() => {
   clearSignins();
@@ -57,13 +57,13 @@ describe('credential requests', () => {
         writeFileSync(join(evidence, 'touchid.log'), captured);
       }
     }
-    const stored = aegis(['creds', 'add', 'fixture', 'qa-user-1', '--json'], `qa1@example.test\n${secret}\n`);
+    const stored = hornet(['creds', 'add', 'fixture', 'qa-user-1', '--json'], `qa1@example.test\n${secret}\n`);
     expect(stored.status, stored.stdout + stored.stderr).toBe(0);
     expect(stored.stdout).not.toContain(secret);
-    const status = aegis(['credential-status', '--id', pending.id, '--json']);
+    const status = hornet(['credential-status', '--id', pending.id, '--json']);
     const body = JSON.parse(status.stdout) as { status?: string; waiting?: boolean };
     expect(body.status).toBe('ready');
-    const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', 'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml']);
+    const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', 'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml']);
     expect(run.status, run.stdout).toBe(0);
     expect(readRun().result.users).toBeTruthy();
     const phase = (readRun().result.users as { phase1: { status: string } }[])[0]?.phase1.status;

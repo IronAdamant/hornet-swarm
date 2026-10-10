@@ -1,5 +1,5 @@
 {
-  "name": "aegis-qa",
+  "name": "hornet-swarm",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -14,7 +14,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "image": "bash scripts/build-image.sh",
-    "aegis": "node packages/cli/dist/main.js"
+    "hornet-swarm": "node packages/cli/dist/main.js"
   },
   "devDependencies": {
     "@types/node": "22.15.3",

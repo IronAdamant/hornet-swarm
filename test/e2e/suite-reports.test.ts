@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { analysisSchema } from '../../packages/core/dist/index.js';
-import { aegis, clearSignins, readRun, resetFixture, secret } from './helper.js';
+import { hornet, clearSignins, readRun, resetFixture, secret } from './helper.js';
 
 const examples = [
   'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml',
@@ -53,7 +53,7 @@ describe('example journeys and reports', () => {
 });
 
 function runExamples(): ReturnType<typeof readRun> {
-  const run = aegis(['suite', '--project', 'fixture', '--json', ...examples.flatMap((file) => ['--journey', file])]);
+  const run = hornet(['suite', '--project', 'fixture', '--json', ...examples.flatMap((file) => ['--journey', file])]);
   expect(run.status, run.stdout + run.stderr).toBe(0);
   return readRun();
 }

@@ -10,7 +10,7 @@ const username = 'QA1@Example.TEST';
 
 describe('secret broker', () => {
   it('stores with sops, injects over HTTP, and never returns a secret value', async () => {
-    const home = mkdtempSync(join(homedir(), '.aegis', 'work-broker-'));
+    const home = mkdtempSync(join(homedir(), '.hornet-swarm', 'work-broker-'));
     const stored = setSecret('fixture', 'qa-user-1', 'password', secret, home);
     setSecret('fixture', 'qa-user-1', 'username', username, home);
     expect(JSON.stringify(stored)).not.toContain(secret);

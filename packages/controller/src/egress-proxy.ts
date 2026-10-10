@@ -152,11 +152,11 @@ export function startControlGateway(options: { port: number; project: string }):
     const suffix = `${match[2] && match[2].length > 0 ? match[2] : '/'}${requested.includes('?') ? `?${requested.split('?')[1]}` : ''}`;
     const upstream = httpRequest(
       {
-        host: `aegis-${options.project}-${label}`,
+        host: `hornet-swarm-${options.project}-${label}`,
         port: 8787,
         path: suffix,
         method: req.method,
-        headers: { ...req.headers, host: `aegis-${options.project}-${label}:8787` },
+        headers: { ...req.headers, host: `hornet-swarm-${options.project}-${label}:8787` },
       },
       (response) => {
         res.writeHead(response.statusCode ?? 502, response.headers);

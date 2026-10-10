@@ -32,10 +32,10 @@ importers:
 
   packages/cli:
     dependencies:
-      '@aegis/controller':
+      '@hornet-swarm/controller':
         specifier: workspace:*
         version: link:../controller
-      '@aegis/core':
+      '@hornet-swarm/core':
         specifier: workspace:*
         version: link:../core
       commander:
@@ -47,10 +47,10 @@ importers:
 
   packages/controller:
     dependencies:
-      '@aegis/core':
+      '@hornet-swarm/core':
         specifier: workspace:*
         version: link:../core
-      '@aegis/report':
+      '@hornet-swarm/report':
         specifier: workspace:*
         version: link:../report
       dockerode:
@@ -81,10 +81,10 @@ importers:
 
   packages/mcp-server:
     dependencies:
-      '@aegis/controller':
+      '@hornet-swarm/controller':
         specifier: workspace:*
         version: link:../controller
-      '@aegis/core':
+      '@hornet-swarm/core':
         specifier: workspace:*
         version: link:../core
       '@modelcontextprotocol/sdk':
@@ -99,7 +99,7 @@ importers:
 
   packages/report:
     dependencies:
-      '@aegis/core':
+      '@hornet-swarm/core':
         specifier: workspace:*
         version: link:../core
       jszip:
@@ -124,7 +124,7 @@ importers:
 
   packages/runner:
     dependencies:
-      '@aegis/core':
+      '@hornet-swarm/core':
         specifier: workspace:*
         version: link:../core
       playwright:

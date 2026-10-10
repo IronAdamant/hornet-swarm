@@ -7,7 +7,7 @@ pnpm exec esbuild packages/runner/src/main.ts \
   --external:playwright --external:playwright-core \
   --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" \
   --outfile=images/runner/build/main.js
-docker build -f images/runner/Dockerfile -t aegis-runner:local .
-pnpm --filter @aegis/controller build
-docker build -f images/proxy/Dockerfile -t aegis-proxy:local .
-echo "images ready: aegis-runner:local aegis-proxy:local"
+docker build -f images/runner/Dockerfile -t hornet-swarm-runner:local .
+pnpm --filter @hornet-swarm/controller build
+docker build -f images/proxy/Dockerfile -t hornet-swarm-proxy:local .
+echo "images ready: hornet-swarm-runner:local hornet-swarm-proxy:local"

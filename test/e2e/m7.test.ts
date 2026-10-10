@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 import { analysisSchema } from '../../packages/core/dist/index.js';
 import { cleanupRetention } from '../../packages/controller/dist/index.js';
-import { aegis, clearSignins, containsSecret, home, journeys, latestRun, readRun, resetFixture, secret } from './helper.js';
+import { hornet, clearSignins, containsSecret, home, journeys, latestRun, readRun, resetFixture, secret } from './helper.js';
 
 beforeAll(() => {
   clearSignins();
@@ -14,7 +14,7 @@ beforeAll(() => {
 describe('regressions, chaos, baselines, evidence, and flaky results', () => {
   it('keeps a failed check until it passes three times', async () => {
     await resetFixture({ failFlag: true });
-    const failed = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    const failed = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
     expect(failed.status).toBe(1);
     expect(readFileSync(join(home, 'regressions/fixture/flag-check.journey.yaml'), 'utf8')).toContain('flag-check');
     const failedReport = readRun();
@@ -25,13 +25,13 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
     expect(failedReport.summary).not.toMatch(/run_\d/);
     await resetFixture({ failFlag: false });
     for (let pass = 1; pass <= 3; pass += 1) {
-      const ok = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+      const ok = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
       expect(ok.status, `pass ${pass} ${ok.stdout}`).toBe(0);
     }
     const ledger = JSON.parse(readFileSync(join(home, 'regressions/fixture/flag-check.json'), 'utf8')) as { state: string; consecutive: number };
     expect(ledger.state).toBe('fixed');
     expect(ledger.consecutive).toBe(3);
-    const again = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'chaos.journey.yaml')]);
+    const again = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'chaos.journey.yaml')]);
     expect(again.status).toBe(0);
     const ids = (readRun().result.users as { journeys: { id: string }[] }[])[0]?.journeys.map((journey) => journey.id);
     expect(ids).toContain('flag-check');
@@ -46,7 +46,7 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
     const original = readFileSync(authPath, 'utf8');
     writeFileSync(authPath, original.replace(', chaos', ''));
     try {
-      const refused = aegis(['suite', '--project', 'fixture', '--chaos', 'latency', '--seed', 'same', '--json', '--journey', join(journeys, 'chaos.journey.yaml')]);
+      const refused = hornet(['suite', '--project', 'fixture', '--chaos', 'latency', '--seed', 'same', '--json', '--journey', join(journeys, 'chaos.journey.yaml')]);
       expect(refused.status).toBe(3);
       expect(refused.stdout + refused.stderr).toContain('chaos_not_authorised');
     } finally {
@@ -56,20 +56,20 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
 
   it('flags a layout change and leaves the baseline alone until it is accepted', async () => {
     await resetFixture({ layout: 'steady', delayMs: 0 });
-    const first = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'layout.journey.yaml')]);
+    const first = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'layout.journey.yaml')]);
     expect(first.status).toBe(0);
     const runId = (readRun().result.run_id as string);
     const baselinePng = join(home, 'baselines/fixture/layout-check/1.png');
-    expect(aegis(['accept-baseline', runId, '--project', 'fixture', '--json']).status).toBe(0);
+    expect(hornet(['accept-baseline', runId, '--project', 'fixture', '--json']).status).toBe(0);
     const hash = createHash('sha256').update(readFileSync(baselinePng)).digest('hex');
-    const same = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'layout.journey.yaml')]);
+    const same = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'layout.journey.yaml')]);
     expect(same.status).toBe(0);
     const sameDiff = diffFor(readRun(), 'layout-check');
     expect(sameDiff?.visual).toBe('same');
     expect(sameDiff?.timing).not.toBe('slower');
     expect(createHash('sha256').update(readFileSync(baselinePng)).digest('hex')).toBe(hash);
     await resetFixture({ layout: 'changed' });
-    const changed = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'layout.journey.yaml')]);
+    const changed = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'layout.journey.yaml')]);
     expect(changed.status).toBe(0);
     expect(diffFor(readRun(), 'layout-check')?.visual).toBe('changed');
     expect(createHash('sha256').update(readFileSync(baselinePng)).digest('hex')).toBe(hash);
@@ -79,7 +79,7 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
   it('exports an evidence zip whose hashes match and which has no secret', async () => {
     const run = readRun();
     const destination = join(home, 'evidence-test.zip');
-    const exported = aegis(['export-evidence', String(run.result.run_id), '--project', 'fixture', '--out', destination, '--json']);
+    const exported = hornet(['export-evidence', String(run.result.run_id), '--project', 'fixture', '--out', destination, '--json']);
     expect(exported.status, exported.stdout + exported.stderr).toBe(0);
     const zip = await JSZip.loadAsync(readFileSync(destination));
     const manifest = JSON.parse(await zip.file('manifest.json')!.async('string')) as { files: { path: string; sha256: string }[] };
@@ -94,7 +94,7 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
 
   it('keeps a flaky retry visible as a failure', async () => {
     await resetFixture({ flakyLeft: 1 });
-    const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flaky.journey.yaml')]);
+    const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flaky.journey.yaml')]);
     expect(run.status).toBe(1);
     const report = readRun();
     expect(JSON.stringify(report.result)).toContain('flaky');
@@ -113,7 +113,7 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
 });
 
 function chaos(): string[] {
-  const run = aegis(['suite', '--project', 'fixture', '--chaos', 'latency', '--seed', 'same-seed', '--json', '--journey', join(journeys, 'chaos.journey.yaml')]);
+  const run = hornet(['suite', '--project', 'fixture', '--chaos', 'latency', '--seed', 'same-seed', '--json', '--journey', join(journeys, 'chaos.journey.yaml')]);
   expect(run.status, run.stdout + run.stderr).toBe(0);
   const analysis = readRun().analysis as { chaos: { actions: string[] } };
   return analysis.chaos.actions;

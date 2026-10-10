@@ -4,27 +4,28 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { projectSchema, Redactor, validateJourneyYaml } from '@aegis/core';
+import { projectSchema, Redactor, validateJourneyYaml } from '@hornet-swarm/core';
 import {
   acquireLease,
-  AegisError,
+  HornetError,
   credentialStatus,
   engageKill,
   envReset,
   listProjectUsers,
   readJourneyYaml,
+  readSwarm,
   registerProjectSecrets,
   releaseStoredLease,
   requestCredentials,
   runSuite,
   stopRunners,
-} from '@aegis/controller';
+} from '@hornet-swarm/controller';
 import { parse } from 'yaml';
 import { homedir } from 'node:os';
 
-const home = () => process.env.AEGIS_HOME ?? join(homedir(), '.aegis');
+const home = () => process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm');
 
-const server = new McpServer({ name: 'aegis', version: '0.1.0' });
+const server = new McpServer({ name: 'hornet-swarm', version: '0.1.0' });
 
 server.registerTool(
   'list_test_users',
@@ -172,6 +173,15 @@ server.registerTool(
 );
 
 server.registerTool(
+  'get_swarm',
+  {
+    description: 'Read the website, account labels, and personalities after the owner presses Ready. Passwords are not included.',
+    inputSchema: z.object({ project: z.string() }),
+  },
+  async ({ project }) => pack(project, readSwarm(project, home())),
+);
+
+server.registerTool(
   'request_credentials',
   {
     description: 'Ask the owner to enter a test login',
@@ -184,7 +194,7 @@ server.registerTool(
       const result = await requestCredentials({ project: args.project, label: args.label, reason: args.reason }, home());
       return pack(args.project, result);
     } catch (error) {
-      const message = error instanceof AegisError ? error.message : 'The request was refused.';
+      const message = error instanceof HornetError ? error.message : 'The request was refused.';
       return pack(args.project, { ok: false, error: message });
     }
   },
@@ -207,7 +217,7 @@ async function guard(project: string, fn: () => Promise<unknown>): Promise<{ con
   try {
     return pack(project, await fn());
   } catch (error) {
-    const message = error instanceof AegisError ? error.message : 'The run failed.';
+    const message = error instanceof HornetError ? error.message : 'The run failed.';
     return pack(project, { ok: false, error: message });
   }
 }

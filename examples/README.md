@@ -1,6 +1,6 @@
-# Example files for the Aegis QA Harness spec
+# Example files for the Hornet Swarm QA Harness spec
 
-- `config.yaml` — global `~/.aegis/config.yaml`.
+- `config.yaml` — global `~/.hornet-swarm/config.yaml`.
 - `projects/consistencyhub/project.yaml` — a project config (targets, auth, runners, limits, users with non-secret vars).
 - `projects/consistencyhub/secrets.sops.example.yaml` — the DECRYPTED view of the per-project encrypted secret store (labels only ever leave the broker; values never do).
 - `authorisations/consistencyhub-owner.yaml` — owner-basis authorisation record (self-owned app).

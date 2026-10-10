@@ -7,8 +7,9 @@ export { injectSecrets, injectTotp, listFields, listLabels, registerProjectSecre
 export { acquireLease, heartbeatStoredLease, releaseStoredLease } from './leases-store.js';
 export { acceptBaseline, cleanupRetention, exportEvidence, listProjectUsers, readJourneyYaml, rescanRun, runSuite } from './suite.js';
 export { credentialStatus, requestCredentials, startCredentialPage, storeOwnerLogin } from './credentials.js';
+export { readSwarm, saveSwarmBoard } from './swarm.js';
 export { engageKill, releaseKill } from './kill.js';
-export { AegisError } from './errors.js';
+export { HornetError } from './errors.js';
 export { writeAudit } from './audit.js';
 export type { EnvStatus, ResetResult } from './env.js';
 export { hostAllowed, startEgressProxy } from './egress-proxy.js';

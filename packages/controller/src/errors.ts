@@ -1,4 +1,4 @@
-export class AegisError extends Error {
+export class HornetError extends Error {
   constructor(
     message: string,
     readonly exitCode: number,

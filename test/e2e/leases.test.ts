@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { acquireLease, releaseStoredLease } from '../../packages/controller/dist/index.js';
-import { aegis, clearSignins, cli, home, journeys, root, secret } from './helper.js';
+import { hornet, clearSignins, cli, home, journeys, root, secret } from './helper.js';
 
 beforeAll(() => {
   clearSignins();
@@ -46,10 +46,10 @@ describe('exclusive logins', () => {
 
     const child = spawn(process.execPath, [cli, 'suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'kill-wait.journey.yaml')], { cwd: root });
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    const overlap = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    const overlap = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
     expect(overlap.status).toBe(3);
     expect(overlap.stdout + overlap.stderr).toMatch(/busy until|already holds/);
-    const status = JSON.parse(aegis(['env', 'status', '--project', 'fixture', '--json']).stdout) as { runners: { label: string }[] };
+    const status = JSON.parse(hornet(['env', 'status', '--project', 'fixture', '--json']).stdout) as { runners: { label: string }[] };
     const labels = status.runners.map((runner) => runner.label);
     expect(new Set(labels).size).toBe(labels.length);
     child.kill();

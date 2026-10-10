@@ -1,4 +1,4 @@
-# ~/.aegis/authorisations/consistencyhub-owner.yaml
+# ~/.hornet-swarm/authorisations/consistencyhub-owner.yaml
 id: consistencyhub-owner
 basis: owner                  # owner | contract
 client: Iron Adamant (self-owned)
@@ -19,6 +19,6 @@ exclusions:
 valid_from: "2026-10-10"
 valid_until: "2027-10-10"
 document:
-  path: "~/.aegis/authorisations/docs/consistencyhub-self-auth.pdf"
-  sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # filled by `aegis auth add`
+  path: "~/.hornet-swarm/authorisations/docs/consistencyhub-self-auth.pdf"
+  sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # filled by `hornet-swarm auth add`
 notes: Self-owned application; authorisation recorded for audit completeness.

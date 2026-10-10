@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { decideAcquire, heartbeatLease, releaseLease, type AcquireDecision, type Lease } from '@aegis/core';
+import { decideAcquire, heartbeatLease, releaseLease, type AcquireDecision, type Lease } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
 import { aegisHome, ensureDir } from './home.js';
 

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 import { rescanRun } from '../../packages/controller/dist/index.js';
-import { aegis, clearSignins, containsSecret, home, journeys, latestRun, readRun, secret } from './helper.js';
+import { hornet, clearSignins, containsSecret, home, journeys, latestRun, readRun, secret } from './helper.js';
 
 const prefix = 'FixtureOnly-s3cret';
 
@@ -36,7 +36,7 @@ beforeAll(() => {
 
 describe('redaction against the fixture', () => {
   it('removes a seeded secret from the run, including trace and HAR zips', async () => {
-    const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'echo-secret.journey.yaml')]);
+    const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'echo-secret.journey.yaml')]);
     expect(run.stdout).not.toContain(secret);
     expect(run.status).toBe(0);
     const dir = latestRun();

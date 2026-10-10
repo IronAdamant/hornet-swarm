@@ -1,7 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
-import { Redactor, renderTemplate, type Step, type StepResult, type TemplateContext } from '@aegis/core';
+import { browserLaunchOptions } from './launch.js';
+import { Redactor, renderTemplate, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
 
 export type ChaosAction = { step: number; kind: string; detail: string };
 
@@ -60,10 +61,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   const bucket = createBucket(job.rps);
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-    });
+    browser = await chromium.launch(browserLaunchOptions);
     context = await browser.newContext({
       ...(process.env.AEGIS_PROXY ? { proxy: { server: process.env.AEGIS_PROXY } } : {}),
       recordHar: { path: harPath, content: 'embed' },
@@ -308,7 +306,7 @@ async function runStep(
     await page.screenshot({
       path,
       fullPage: Boolean(step.screenshot.full_page),
-      mask: [page.locator('input[type="password"], [data-aegis-secret]')],
+      mask: [page.locator('input[type="password"], [data-hornet-swarm-secret]')],
     });
     screenshots.push(path);
     return { statusCode: 0 };
@@ -389,7 +387,7 @@ async function maskSecrets(page: Page, secrets: SecretMap): Promise<void> {
     for (const node of document.querySelectorAll('input, textarea, body *')) {
       const field = node as HTMLInputElement;
       const text = typeof field.value === 'string' && field.value ? field.value : node.textContent ?? '';
-      if (secretsOnPage.some((secret) => text.includes(secret))) node.setAttribute('data-aegis-secret', '1');
+      if (secretsOnPage.some((secret) => text.includes(secret))) node.setAttribute('data-hornet-swarm-secret', '1');
     }
   }, values);
 }

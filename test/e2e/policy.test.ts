@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { setSecret } from '../../packages/controller/dist/index.js';
 import { validateJourneyYaml, projectSchema } from '../../packages/core/dist/index.js';
 import { parse } from 'yaml';
-import { aegis, clearSignins, cli, home, journeys, readRun, resetFixture, root, secret } from './helper.js';
+import { hornet, clearSignins, cli, home, journeys, readRun, resetFixture, root, secret } from './helper.js';
 
 const projectFile = join(home, 'projects/fixture/project.yaml');
 
@@ -17,7 +17,7 @@ describe('phase gate and safety', () => {
   it('skips later checks when sign-in fails', () => {
     setSecret('fixture', 'qa-user-1', 'password', 'wrong-password-value', home);
     try {
-      const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+      const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
       expect(run.status).toBe(1);
       const report = readRun();
       const users = report.result.users as { phase1: { status: string }; journeys: { status: string }[] }[];
@@ -33,7 +33,7 @@ describe('phase gate and safety', () => {
     const project = projectSchema.parse(parse(readFileSync(projectFile, 'utf8')));
     const checked = validateJourneyYaml('version: 1\nid: bad\nname: Bad\nusers: [qa-user-1]\nsteps:\n  - navigate: { url: "https://example.com/" }\n', project);
     expect(checked.valid).toBe(false);
-    const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'off-allowlist.journey.yaml')]);
+    const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'off-allowlist.journey.yaml')]);
     expect(run.status).toBe(2);
     const report = readRun();
     const text = JSON.stringify(report.result);
@@ -42,21 +42,21 @@ describe('phase gate and safety', () => {
 
   it('refuses a domain with no active authorisation', () => {
     writeMiniProject('unauth', 'https://not-allowed.example', ['localhost'], ['test']);
-    const run = aegis(['suite', '--project', 'unauth', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    const run = hornet(['suite', '--project', 'unauth', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
     expect(run.status).toBe(3);
     expect(run.stdout + run.stderr).toContain('domain_not_authorised');
   });
 
   it('refuses a production-looking host unless the record and the flag both allow it', () => {
     writeMiniProject('prodlook', 'https://app.invalid', ['app.invalid'], ['test']);
-    const refused = aegis(['suite', '--project', 'prodlook', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    const refused = hornet(['suite', '--project', 'prodlook', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
     expect(refused.status).toBe(3);
     expect(refused.stdout + refused.stderr).toContain('production_not_authorised');
     writeMiniProject('prodlook', 'https://app.invalid', ['app.invalid'], ['test', 'production'], 'production');
-    const unconfirmed = aegis(['suite', '--project', 'prodlook', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    const unconfirmed = hornet(['suite', '--project', 'prodlook', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
     expect(unconfirmed.status).toBe(3);
     expect(unconfirmed.stdout + unconfirmed.stderr).toContain('production_confirmation_required');
-    const confirmed = aegis(['suite', '--project', 'prodlook', '--confirm-production', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    const confirmed = hornet(['suite', '--project', 'prodlook', '--confirm-production', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
     expect(confirmed.status).not.toBe(3);
     expect(confirmed.stdout + confirmed.stderr).not.toContain('production_confirmation_required');
   });
@@ -73,17 +73,17 @@ describe('phase gate and safety', () => {
     expect(Date.now() - started).toBeLessThan(5000);
     expect(code).toBe(2);
     expect(output).not.toContain(secret);
-    const released = aegis(['kill', '--release', '--json']);
+    const released = hornet(['kill', '--release', '--json']);
     expect(released.status).toBe(0);
-    const up = aegis(['env', 'up', '--project', 'fixture', '--count', '1', '--json']);
+    const up = hornet(['env', 'up', '--project', 'fixture', '--count', '1', '--json']);
     expect(up.status, up.stdout + up.stderr).toBe(0);
   });
 
   it('stops on a human check and on a second code, and can fill an owner code', async () => {
-    const captcha = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'captcha.journey.yaml')]);
+    const captcha = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'captcha.journey.yaml')]);
     expect(captcha.status).toBe(2);
     expect(JSON.stringify(readRun().result)).toContain('captcha');
-    const otp = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
+    const otp = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
     expect(otp.status).toBe(2);
     expect(JSON.stringify(readRun().result)).toContain('2fa');
 
@@ -92,7 +92,7 @@ describe('phase gate and safety', () => {
     writeFileSync(projectFile, original.replace('enabled: false', 'enabled: true'));
     try {
       await resetFixture({ user1: { totp: 'JBSWY3DPEHPK3PXP' } });
-      const totp = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'totp.journey.yaml')]);
+      const totp = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'totp.journey.yaml')]);
       expect(totp.status, totp.stdout + totp.stderr).toBe(0);
       expect(JSON.stringify(readRun().result)).toContain('totp-fill');
     } finally {
@@ -107,7 +107,7 @@ describe('phase gate and safety', () => {
     writeFileSync(projectFile, original.replace('max_signin_attempts_per_user_per_hour: 30', 'max_signin_attempts_per_user_per_hour: 1'));
     writeFileSync(join(home, 'projects/fixture/signin.json'), `${JSON.stringify([{ label: 'qa-user-1', at: Date.now() }])}\n`);
     try {
-      const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+      const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
       expect(run.status).toBe(2);
       expect(JSON.stringify(readRun().result)).toContain('signin_limit');
       const statsAfter = await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json()) as { loginPosts: number };

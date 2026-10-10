@@ -4,15 +4,15 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import type { Project } from '@aegis/core';
-import { projectSchema } from '@aegis/core';
+import type { Project } from '@hornet-swarm/core';
+import { projectSchema } from '@hornet-swarm/core';
 import type Docker from 'dockerode';
 import { createDocker } from './docker.js';
 import { aegisHome, ensureDir, ensureHome } from './home.js';
 import { containerName, labelsForCount, networkName, parseMemory, profileVolume, proxyName } from './units.js';
 
-const RUNNER_IMAGE = 'aegis-runner:local';
-const PROXY_IMAGE = 'aegis-proxy:local';
+const RUNNER_IMAGE = 'hornet-swarm-runner:local';
+const PROXY_IMAGE = 'hornet-swarm-proxy:local';
 const CONTROL_PORT = '8899/tcp';
 
 export type RunnerStatus = {
@@ -73,7 +73,7 @@ export async function stopRunners(project: string): Promise<void> {
   const docker = createDocker();
   const listed = await docker.listContainers({
     all: true,
-    filters: { label: [`aegis.project=${project}`, 'aegis.role=runner'] },
+    filters: { label: [`hornet-swarm.project=${project}`, 'hornet-swarm.role=runner'] },
   });
   await Promise.all(
     listed.map(async (entry) => {
@@ -92,7 +92,7 @@ export async function envStatus(project: string): Promise<EnvStatus> {
   const settings = loadSettings(project);
   const listed = await docker.listContainers({
     all: true,
-    filters: { label: [`aegis.project=${project}`, 'aegis.role=runner'] },
+    filters: { label: [`hornet-swarm.project=${project}`, 'hornet-swarm.role=runner'] },
   });
   const runners: RunnerStatus[] = [];
   for (const label of settings.labels) {
@@ -127,7 +127,7 @@ export async function envStatus(project: string): Promise<EnvStatus> {
 export async function measureResources(project: string): Promise<Record<string, unknown>> {
   const docker = createDocker();
   const status = await envStatus(project);
-  if (status.healthy < 1) throw new Error('No healthy runners to measure. Run aegis env up first.');
+  if (status.healthy < 1) throw new Error('No healthy runners to measure. Run hornet-swarm env up first.');
   const containers = await runnerContainers(docker, project);
   const idle = await sampleGroup(containers);
   const targets = status.runners.filter((runner) => runner.health === 'healthy' && runner.endpoint);
@@ -257,7 +257,7 @@ function repoRoot(): string {
   for (const root of [process.cwd(), fromPackage]) {
     if (existsSync(join(root, 'scripts/build-image.sh'))) return root;
   }
-  throw new Error('Cannot find scripts/build-image.sh. Run this command from the Aegis repo.');
+  throw new Error('Cannot find scripts/build-image.sh. Run this command from the Hornet Swarm repo.');
 }
 
 function rebuildImages(): void {
@@ -352,7 +352,7 @@ async function ensureNetwork(docker: Docker, project: string): Promise<void> {
       Driver: 'bridge',
       Internal: true,
       CheckDuplicate: true,
-      Labels: { 'aegis.project': project },
+      Labels: { 'hornet-swarm.project': project },
     });
   }
 }
@@ -370,7 +370,7 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
   const container = await docker.createContainer({
     name,
     Image: PROXY_IMAGE,
-    Labels: { 'aegis.project': project, 'aegis.role': 'proxy' },
+    Labels: { 'hornet-swarm.project': project, 'hornet-swarm.role': 'proxy' },
     Env: [
       'AEGIS_PROXY_MAIN=1',
       'AEGIS_PROXY_PORT=8888',
@@ -414,7 +414,7 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   }
   const volume = profileVolume(project, label);
   try {
-    await docker.createVolume({ Name: volume, Labels: { 'aegis.project': project, 'aegis.user': label } });
+    await docker.createVolume({ Name: volume, Labels: { 'hornet-swarm.project': project, 'hornet-swarm.user': label } });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.toLowerCase().includes('already exists')) throw error;
@@ -428,7 +428,7 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
     name,
     Image: RUNNER_IMAGE,
     User: '10001:10001',
-    Labels: { 'aegis.project': project, 'aegis.user': label, 'aegis.role': 'runner' },
+    Labels: { 'hornet-swarm.project': project, 'hornet-swarm.user': label, 'hornet-swarm.role': 'runner' },
     Env: [`AEGIS_PROXY=http://${proxyName(project)}:8888`, `AEGIS_LABEL=${label}`],
     HostConfig: {
       ReadonlyRootfs: true,
@@ -516,7 +516,7 @@ async function failureText(container: Docker.Container, name: string): Promise<s
 }
 
 async function removeProjectContainers(docker: Docker, project: string): Promise<void> {
-  const listed = await docker.listContainers({ all: true, filters: { label: [`aegis.project=${project}`] } });
+  const listed = await docker.listContainers({ all: true, filters: { label: [`hornet-swarm.project=${project}`] } });
   await mapPool(listed, 5, async (entry) => {
     const container = docker.getContainer(entry.Id);
     try {
@@ -529,9 +529,9 @@ async function removeProjectContainers(docker: Docker, project: string): Promise
 }
 
 async function removeProfileVolumes(docker: Docker, project: string): Promise<void> {
-  const volumes = await docker.listVolumes({ filters: { label: [`aegis.project=${project}`] } });
+  const volumes = await docker.listVolumes({ filters: { label: [`hornet-swarm.project=${project}`] } });
   for (const volume of volumes.Volumes ?? []) {
-    if (!volume.Name.startsWith(`aegis-profile-${project}-`)) continue;
+    if (!volume.Name.startsWith(`hornet-swarm-profile-${project}-`)) continue;
     try {
       await docker.getVolume(volume.Name).remove();
     } catch {
@@ -551,7 +551,7 @@ async function removeNetwork(docker: Docker, project: string): Promise<void> {
 async function runnerContainers(docker: Docker, project: string): Promise<Docker.Container[]> {
   const listed = await docker.listContainers({
     all: false,
-    filters: { label: [`aegis.project=${project}`, 'aegis.role=runner'] },
+    filters: { label: [`hornet-swarm.project=${project}`, 'hornet-swarm.role=runner'] },
   });
   return listed.map((entry) => docker.getContainer(entry.Id));
 }
@@ -616,7 +616,7 @@ function round(value: number): number {
 
 export function defaultProjectFromHome(): string {
   try {
-    const raw = parse(readFileSync(join(homedir(), '.aegis', 'config.yaml'), 'utf8')) as { default_project?: string };
+    const raw = parse(readFileSync(join(homedir(), '.hornet-swarm', 'config.yaml'), 'utf8')) as { default_project?: string };
     if (raw.default_project) return raw.default_project;
   } catch {
     // no config yet

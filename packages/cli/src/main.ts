@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline';
-import { AegisError, acceptBaseline, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, releaseKill, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin } from '@aegis/controller';
+import { HornetError, acceptBaseline, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, readSwarm, releaseKill, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin } from '@hornet-swarm/controller';
 import { Command } from 'commander';
 
 const program = new Command();
-program.name('aegis').description('Local authorised QA harness').version('0.1.0');
+program.name('hornet-swarm').description('Local authorised QA harness').version('0.1.0');
 
 program
   .command('doctor')
@@ -129,7 +129,7 @@ program
       else process.stdout.write(`${result.status}\n`);
       process.exit(result.status === 'passed' ? 0 : result.status === 'blocked' || result.status === 'rate_limited' ? 2 : result.status === 'error' ? 4 : 1);
     } catch (error) {
-      const code = error instanceof AegisError ? error.exitCode : 4;
+      const code = error instanceof HornetError ? error.exitCode : 4;
       fail(opts.json, messageOf(error), code);
     }
   });
@@ -168,7 +168,7 @@ program
       if (opts.json) writeJson(result);
       else process.stdout.write('waiting\n');
     } catch (error) {
-      const code = error instanceof AegisError ? error.exitCode : 3;
+      const code = error instanceof HornetError ? error.exitCode : 3;
       fail(opts.json, messageOf(error), code);
     }
   });
@@ -210,6 +210,19 @@ creds
     } catch (error) {
       fail(opts.json, messageOf(error), 3);
     }
+  });
+
+program
+  .command('swarm')
+  .description('Show the website and personalities once the owner has pressed Ready')
+  .option('--project <id>', 'project id')
+  .option('--json', 'print machine-readable JSON')
+  .action((opts: { project?: string; json?: boolean }) => {
+    const project = opts.project ?? defaultProjectFromHome();
+    const view = readSwarm(project);
+    if (opts.json) writeJson(view);
+    else if (!view.ready) process.stdout.write('Not ready. Open http://127.0.0.1:7781/setup and press Ready.\n');
+    else process.stdout.write(`${view.website}\n${view.agents.map((agent) => `${agent.label}: ${agent.personality}`).join('\n')}\n`);
   });
 
 program

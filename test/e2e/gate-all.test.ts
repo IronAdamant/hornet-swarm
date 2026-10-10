@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { setSecret } from '../../packages/controller/dist/index.js';
-import { aegis, clearSignins, home, journeys, otherSecret, readRun } from './helper.js';
+import { hornet, clearSignins, home, journeys, otherSecret, readRun } from './helper.js';
 
 beforeAll(() => {
   clearSignins();
@@ -10,13 +10,13 @@ beforeAll(() => {
 describe('gate all', () => {
   it('skips earlier journeys when a later sign-in fails', () => {
     clearSignins();
-    const up = aegis(['env', 'up', '--project', 'fixture', '--count', '2', '--json']);
+    const up = hornet(['env', 'up', '--project', 'fixture', '--count', '2', '--json']);
     expect(up.status, up.stdout + up.stderr).toBe(0);
     let spoiled = false;
     try {
       setSecret('fixture', 'qa-user-2', 'password', 'wrong-password-value', home);
       spoiled = true;
-      const run = aegis([
+      const run = hornet([
         'suite',
         '--project',
         'fixture',
@@ -44,7 +44,7 @@ describe('gate all', () => {
       expect(users[1]?.journeys.every((journey) => journey.status === 'skipped' && journey.steps.length === 0)).toBe(true);
     } finally {
       if (spoiled) setSecret('fixture', 'qa-user-2', 'password', otherSecret, home);
-      const back = aegis(['env', 'up', '--project', 'fixture', '--count', '1', '--json']);
+      const back = hornet(['env', 'up', '--project', 'fixture', '--count', '1', '--json']);
       expect(back.status, back.stdout + back.stderr).toBe(0);
     }
   });

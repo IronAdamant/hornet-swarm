@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setSecret } from '../../packages/controller/dist/broker.js';
 
-const home = join(homedir(), '.aegis');
+const home = join(homedir(), '.hornet-swarm');
 const port = 4173;
 const password = 'FixtureOnly-s3cret"<&value>';
 const password2 = 'FixtureOnly-other"<&value>';

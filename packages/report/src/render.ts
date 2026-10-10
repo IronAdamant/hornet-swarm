@@ -1,4 +1,4 @@
-import { analysisSchema, type Analysis, type RunResult, type StepResult } from '@aegis/core';
+import { analysisSchema, type Analysis, type RunResult, type StepResult } from '@hornet-swarm/core';
 
 export type RichStep = StepResult & {
   console_logs?: string[];
@@ -194,7 +194,7 @@ export function htmlReport(result: RunResult, summary: string): string {
   const rows = result.users
     .map((user) => `<tr><td>${escapeXml(user.label)}</td><td>${escapeXml(user.phase1.status)}</td><td>${user.journeys.map((journey) => `${escapeXml(journey.id)} ${escapeXml(journey.status)}`).join(', ')}</td></tr>`)
     .join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Aegis report</title></head><body><h1>${banner}</h1><p>${escapeXml(when)}</p><pre>${escapeXml(summary)}</pre><table><tr><th>Account</th><th>Sign-in</th><th>Checks</th></tr>${rows}</table></body></html>\n`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Hornet Swarm report</title></head><body><h1>${banner}</h1><p>${escapeXml(when)}</p><pre>${escapeXml(summary)}</pre><table><tr><th>Account</th><th>Sign-in</th><th>Checks</th></tr>${rows}</table></body></html>\n`;
 }
 
 export function formatSydney(iso: string): string {
