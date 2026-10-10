@@ -1,47 +1,63 @@
 {
-  "measured": false,
-  "host": null,
+  "measured": true,
+  "measuredAt": "2026-10-10T05:39:23.780Z",
+  "host": "Apple M2, 32 GB, macOS, Docker Desktop linux/arm64",
+  "engine": "docker-desktop",
+  "engineMemoryBytes": 8319238144,
   "replacedSection": "6.3",
+  "sampleRunners": 10,
+  "probeLaunchMs": 141,
+  "idle": {
+    "ramBytesTotal": 912453632,
+    "ramBytesPerRunner": 91245363,
+    "cpuPercentTotal": 0.2
+  },
+  "active": {
+    "ramBytesTotal": 1556180992,
+    "ramBytesPerRunner": 155618099,
+    "cpuPercentTotal": 0.3,
+    "note": "Every sampled runner had Chromium open on about:blank during this sample. CPU is the docker-stats reading for that window, where 100 means one full core."
+  },
   "estimates": [
     {
       "runners": 1,
-      "containerRamIdle": "150 MB",
-      "containerRamActive": "500-800 MB",
-      "cpuActive": "0.5-1",
-      "vmMemory": "4 GB",
-      "notes": "spec estimate"
+      "containerRamIdle": "87.0 MB",
+      "containerRamActive": "148.4 MB",
+      "cpuActive": "0.000",
+      "vmMemory": "7.75 GB",
+      "notes": "Measured on this host and scaled to 1 runner."
     },
     {
       "runners": 5,
-      "containerRamIdle": "0.8 GB",
-      "containerRamActive": "3-4 GB",
-      "cpuActive": "3-5",
-      "vmMemory": "6 GB",
-      "notes": "spec estimate"
+      "containerRamIdle": "435.1 MB",
+      "containerRamActive": "742.0 MB",
+      "cpuActive": "0.001",
+      "vmMemory": "7.75 GB",
+      "notes": "Measured on this host and scaled to 5 runners."
     },
     {
       "runners": 10,
-      "containerRamIdle": "1.5 GB",
-      "containerRamActive": "5-8 GB",
-      "cpuActive": "6-8",
-      "vmMemory": "10 GB",
-      "notes": "spec estimate, default"
+      "containerRamIdle": "870.2 MB",
+      "containerRamActive": "1.45 GB",
+      "cpuActive": "0.003",
+      "vmMemory": "7.75 GB",
+      "notes": "Direct measurement on this host with Chromium open in every runner."
     },
     {
       "runners": 20,
-      "containerRamIdle": "3 GB",
-      "containerRamActive": "10-16 GB",
-      "cpuActive": "CPU-bound",
-      "vmMemory": "18 GB",
-      "notes": "spec estimate"
+      "containerRamIdle": "1.70 GB",
+      "containerRamActive": "2.90 GB",
+      "cpuActive": "0.006",
+      "vmMemory": "7.75 GB",
+      "notes": "Scaled from the measurement. Expect the M2 to throttle once many Chromiums are busy."
     },
     {
       "runners": 30,
       "containerRamIdle": "not recommended",
       "containerRamActive": "not recommended",
       "cpuActive": "not recommended",
-      "vmMemory": "not recommended",
-      "notes": "spec estimate"
+      "vmMemory": "7.75 GB",
+      "notes": "Not recommended on this Docker Desktop VM."
     }
   ]
 }

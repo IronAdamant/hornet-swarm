@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,8 +25,21 @@ export type MeasuredResources = {
 };
 
 export function loadResourceTable(): MeasuredResources {
-  const path = join(dirname(fileURLToPath(import.meta.url)), 'measured-resources.json');
-  return JSON.parse(readFileSync(path, 'utf8')) as MeasuredResources;
+  const packagedPath = join(dirname(fileURLToPath(import.meta.url)), 'measured-resources.json');
+  const packaged = JSON.parse(readFileSync(packagedPath, 'utf8')) as MeasuredResources;
+  try {
+    const homePath = join(process.env.AEGIS_HOME ?? join(homedir(), '.aegis'), 'measured-resources.json');
+    const home = JSON.parse(readFileSync(homePath, 'utf8')) as MeasuredResources;
+    if (home.measured) {
+      return {
+        ...home,
+        estimates: home.estimates?.length ? home.estimates : packaged.estimates,
+      };
+    }
+  } catch {
+    // No host measurement yet. The packaged spec rows still apply.
+  }
+  return packaged;
 }
 
 export function estimatesFor(runners: number): {
@@ -50,7 +64,7 @@ export function estimatesFor(runners: number): {
       `Measured on this host (${measured.engine ?? 'docker'}, ${measured.sampleRunners ?? runners} containers): idle RAM ${formatBytes(measured.idle.ramBytesTotal)} total (${formatBytes(measured.idle.ramBytesPerRunner)} each), idle CPU ${measured.idle.cpuPercentTotal.toFixed(1)}%.`,
     );
     lines.push(
-      `Measured while one Chromium was open: RAM ${formatBytes(measured.active.ramBytesTotal)} total (${formatBytes(measured.active.ramBytesPerRunner)} on the active runner), CPU ${measured.active.cpuPercentTotal.toFixed(1)}%.`,
+      `Measured with Chromium open: RAM ${formatBytes(measured.active.ramBytesTotal)} total (${formatBytes(measured.active.ramBytesPerRunner)} each), CPU ${measured.active.cpuPercentTotal.toFixed(1)}%.`,
     );
     lines.push('These measured figures replace the §6.3 estimates for capacity planning.');
   } else {

@@ -30,4 +30,14 @@ describe('runtime detection', () => {
     expect(report.docker.serverVersion.length).toBeGreaterThan(0);
     expect(report.docker.arch).toBe('arm64');
   });
+
+  it('doctor --estimate 10 prints the measured figures that replaced the spec estimates', () => {
+    const stdout = execFileSync(process.execPath, [cli, 'doctor', '--estimate', '10'], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    expect(stdout).toContain('Measured on this host');
+    expect(stdout).toContain('replace the §6.3 estimates');
+    expect(stdout).not.toContain('Measured figures are not recorded yet');
+  });
 });
