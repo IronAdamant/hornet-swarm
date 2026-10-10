@@ -1,0 +1,11 @@
+version: 1
+id: flaky-check
+name: A check that needs another try
+users: [qa-user-1]
+requires_phase1: false
+tags: [flaky]
+vars: {}
+retries: 1
+steps:
+  - navigate: { url: "/flaky" }
+  - assert: { type: selector_visible, value: "#ready" }

@@ -1,0 +1,12 @@
+version: 1
+id: chaos-check
+name: Chaos still loads the login page
+users: [qa-user-1]
+requires_phase1: false
+tags: [chaos]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/login" }
+  - wait: { for: timeout, ms: 50 }
+  - screenshot: { name: "login" }

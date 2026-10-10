@@ -143,7 +143,7 @@ export function createFixture() {
 
   app.get('/layout', async (_req, res) => {
     if (state.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, state.delayMs));
-    const extra = state.layout === 'changed' ? '<div id="banner">New banner</div>' : '';
+    const extra = state.layout === 'changed' ? '<div id="banner" style="background:#111;color:#fff;height:160px;font-size:48px">New banner</div>' : '';
     res.type('html').send(page('Layout', `<main id="stage">steady</main>${extra}`));
   });
 

@@ -1,0 +1,11 @@
+version: 1
+id: layout-check
+name: Layout stays steady
+users: [qa-user-1]
+requires_phase1: false
+tags: [baseline]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/layout" }
+  - screenshot: { name: "layout" }
