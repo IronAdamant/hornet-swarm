@@ -1,0 +1,167 @@
+import { spawn } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { setSecret } from '../../packages/controller/dist/index.js';
+import { validateJourneyYaml, projectSchema } from '../../packages/core/dist/index.js';
+import { parse } from 'yaml';
+import { aegis, clearSignins, cli, home, journeys, readRun, resetFixture, root, secret } from './helper.js';
+
+const projectFile = join(home, 'projects/fixture/project.yaml');
+
+beforeAll(() => {
+  clearSignins();
+});
+
+describe('phase gate and safety', () => {
+  it('skips later checks when sign-in fails', () => {
+    setSecret('fixture', 'qa-user-1', 'password', 'wrong-password-value', home);
+    try {
+      const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+      expect(run.status).toBe(1);
+      const report = readRun();
+      const users = report.result.users as { phase1: { status: string }; journeys: { status: string }[] }[];
+      expect(users[0]?.phase1.status).not.toBe('pass');
+      expect(users[0]?.journeys.every((journey) => journey.status === 'skipped')).toBe(true);
+      expect(report.summary.toLowerCase()).toContain('sign-in');
+    } finally {
+      setSecret('fixture', 'qa-user-1', 'password', secret, home);
+    }
+  });
+
+  it('blocks a journey that leaves the allowlist', () => {
+    const project = projectSchema.parse(parse(readFileSync(projectFile, 'utf8')));
+    const checked = validateJourneyYaml('version: 1\nid: bad\nname: Bad\nusers: [qa-user-1]\nsteps:\n  - navigate: { url: "https://example.com/" }\n', project);
+    expect(checked.valid).toBe(false);
+    const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'off-allowlist.journey.yaml')]);
+    expect(run.status).toBe(2);
+    const report = readRun();
+    const text = JSON.stringify(report.result);
+    expect(text).toContain('allowlist');
+  });
+
+  it('refuses a domain with no active authorisation', () => {
+    writeMiniProject('unauth', 'https://not-allowed.example', ['localhost'], ['test']);
+    const run = aegis(['suite', '--project', 'unauth', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    expect(run.status).toBe(3);
+    expect(run.stdout + run.stderr).toContain('domain_not_authorised');
+  });
+
+  it('refuses a production-looking host unless the record and the flag both allow it', () => {
+    writeMiniProject('prodlook', 'https://app.invalid', ['app.invalid'], ['test']);
+    const refused = aegis(['suite', '--project', 'prodlook', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    expect(refused.status).toBe(3);
+    expect(refused.stdout + refused.stderr).toContain('production_not_authorised');
+    writeMiniProject('prodlook', 'https://app.invalid', ['app.invalid'], ['test', 'production'], 'production');
+    const unconfirmed = aegis(['suite', '--project', 'prodlook', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    expect(unconfirmed.status).toBe(3);
+    expect(unconfirmed.stdout + unconfirmed.stderr).toContain('production_confirmation_required');
+    const confirmed = aegis(['suite', '--project', 'prodlook', '--confirm-production', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+    expect(confirmed.status).not.toBe(3);
+    expect(confirmed.stdout + confirmed.stderr).not.toContain('production_confirmation_required');
+  });
+
+  it('stops a live run within five seconds of the kill switch', async () => {
+    const child = spawn(process.execPath, [cli, 'suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'kill-wait.journey.yaml')], { cwd: root });
+    let output = '';
+    child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    child.stderr.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const started = Date.now();
+    writeFileSync(join(home, 'KILL'), 'stop\n');
+    const code = await new Promise<number>((resolve) => child.on('exit', (status) => resolve(status ?? 1)));
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(code).toBe(2);
+    expect(output).not.toContain(secret);
+    const released = aegis(['kill', '--release', '--json']);
+    expect(released.status).toBe(0);
+    const up = aegis(['env', 'up', '--project', 'fixture', '--count', '1', '--json']);
+    expect(up.status, up.stdout + up.stderr).toBe(0);
+  });
+
+  it('stops on a human check and on a second code, and can fill an owner code', async () => {
+    const captcha = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'captcha.journey.yaml')]);
+    expect(captcha.status).toBe(2);
+    expect(JSON.stringify(readRun().result)).toContain('captcha');
+    const otp = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
+    expect(otp.status).toBe(2);
+    expect(JSON.stringify(readRun().result)).toContain('2fa');
+
+    const original = readFileSync(projectFile, 'utf8');
+    setSecret('fixture', 'qa-user-1', 'totp_secret', 'JBSWY3DPEHPK3PXP', home);
+    writeFileSync(projectFile, original.replace('enabled: false', 'enabled: true'));
+    try {
+      await resetFixture({ user1: { totp: 'JBSWY3DPEHPK3PXP' } });
+      const totp = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'totp.journey.yaml')]);
+      expect(totp.status, totp.stdout + totp.stderr).toBe(0);
+      expect(JSON.stringify(readRun().result)).toContain('totp-fill');
+    } finally {
+      writeFileSync(projectFile, original);
+      await resetFixture();
+    }
+  });
+
+  it('enforces the sign-in attempt limit', async () => {
+    const original = readFileSync(projectFile, 'utf8');
+    const statsBefore = await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json()) as { loginPosts: number };
+    writeFileSync(projectFile, original.replace('max_signin_attempts_per_user_per_hour: 30', 'max_signin_attempts_per_user_per_hour: 1'));
+    writeFileSync(join(home, 'projects/fixture/signin.json'), `${JSON.stringify([{ label: 'qa-user-1', at: Date.now() }])}\n`);
+    try {
+      const run = aegis(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
+      expect(run.status).toBe(2);
+      expect(JSON.stringify(readRun().result)).toContain('signin_limit');
+      const statsAfter = await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json()) as { loginPosts: number };
+      expect(statsAfter.loginPosts).toBe(statsBefore.loginPosts);
+    } finally {
+      writeFileSync(projectFile, original);
+      clearSignins();
+    }
+  });
+});
+
+function writeMiniProject(id: string, base: string, domains: string[], environments: string[], environment = 'test'): void {
+  mkdirSync(join(home, 'authorisations'), { recursive: true });
+  mkdirSync(join(home, 'projects', id), { recursive: true });
+  writeFileSync(join(home, 'authorisations', `${id}.yaml`), `id: ${id}
+basis: owner
+client: self
+authoriser: { name: Aron Amos, role: Owner, email: aron.amos@ironadamant.com }
+granted_to: Aron Amos
+scope:
+  domains: [${domains.join(', ')}]
+  environments: [${environments.join(', ')}]
+activities: [signin_smoke, functional_e2e]
+exclusions: []
+valid_from: "2026-01-01"
+valid_until: "2027-12-31"
+document: { path: local.txt, sha256: "0000000000000000000000000000000000000000000000000000000000000000" }
+`);
+  writeFileSync(join(home, 'projects', id, 'project.yaml'), `id: ${id}
+name: ${id}
+authorisation_id: ${id}
+environment: ${environment}
+targets:
+  base_url: ${base}
+  allowed_origins: ["${base}"]
+  allowed_third_party: []
+auth:
+  signin_url: /login
+  selectors: { username: "#email", password: "#password", submit: "role=button[name='Sign in']" }
+  success: [{ type: url_contains, value: "/dashboard" }]
+  auth_endpoints: ["**/login"]
+  totp: { enabled: false }
+  access_denied_markers: ["access denied"]
+runners: { count: 1, memory: 1g, cpus: 1 }
+limits:
+  max_parallel_runners: 1
+  max_requests_per_second_per_runner: 5
+  max_requests_per_second_total: 20
+  min_step_delay_ms: 50
+  max_run_duration_min: 30
+  max_signin_attempts_per_user_per_hour: 5
+phase2: { gate: all }
+journeys_dir: ./journeys
+users:
+  - { label: qa-user-1, role: consultant, tenant: A1, vars: { tenant_slug: a1, owned_resource_id: res_a1_001 } }
+`);
+}

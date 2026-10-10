@@ -1,0 +1,10 @@
+version: 1
+id: off-allowlist
+name: Leave the allowed site
+users: [qa-user-1]
+requires_phase1: false
+tags: [safety]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/off" }

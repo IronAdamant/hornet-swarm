@@ -1,0 +1,18 @@
+version: 1
+id: totp-fill
+name: Owner authenticator code
+users: [qa-user-1]
+requires_phase1: false
+tags: [safety]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/login" }
+  - fill: { selector: "#email", credential: "qa-user-1.username" }
+  - fill: { selector: "#password", credential: "qa-user-1.password" }
+  - click: { selector: "role=button[name='Sign in']" }
+  - wait: { for: navigation }
+  - navigate: { url: "/otp" }
+  - fill: { selector: "input[autocomplete='one-time-code']", totp: "qa-user-1" }
+  - click: { selector: "role=button[name='Continue']" }
+  - assert: { type: selector_visible, value: "[data-testid='otp-ok']" }

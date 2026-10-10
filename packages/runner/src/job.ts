@@ -141,7 +141,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           break;
         }
         const message = redactor.redact(error instanceof Error ? error.message : String(error));
-        const reason = /allowlist|ERR_BLOCKED_BY_CLIENT|blockedbyclient/i.test(message) ? 'allowlist' : undefined;
+        const reason = /allowlist|ERR_BLOCKED_BY_CLIENT|blockedbyclient|ERR_TUNNEL_CONNECTION_FAILED/i.test(message) ? 'allowlist' : undefined;
         if (reason) {
           status = 'blocked';
           blocked = 'allowlist';

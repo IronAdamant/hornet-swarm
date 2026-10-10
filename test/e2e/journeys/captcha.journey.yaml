@@ -1,0 +1,10 @@
+version: 1
+id: captcha-stop
+name: Human check stops the run
+users: [qa-user-1]
+requires_phase1: false
+tags: [safety]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/captcha" }

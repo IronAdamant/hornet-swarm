@@ -1,0 +1,10 @@
+version: 1
+id: otp-stop
+name: Second code stops the run
+users: [qa-user-1]
+requires_phase1: false
+tags: [safety]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/otp" }

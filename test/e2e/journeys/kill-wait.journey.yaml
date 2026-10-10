@@ -1,0 +1,11 @@
+version: 1
+id: kill-wait
+name: A long wait
+users: [qa-user-1]
+requires_phase1: false
+tags: [kill]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/login" }
+  - wait: { for: timeout, ms: 20000 }

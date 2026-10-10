@@ -33,6 +33,7 @@ export function aegis(args: string[], input?: string, timeout = 180_000): { stat
 
 export function clearSignins(): void {
   rmSync(join(home, 'projects/fixture/signin.json'), { force: true });
+  rmSync(join(home, 'regressions/fixture'), { recursive: true, force: true });
   rmSync(join(home, 'KILL'), { force: true });
   try {
     const leases = JSON.parse(readFileSync(join(home, 'leases.json'), 'utf8')) as { project: string; agentId: string }[];

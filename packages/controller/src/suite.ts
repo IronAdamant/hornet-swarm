@@ -134,11 +134,15 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
     throw new AegisError(error instanceof Error ? error.message : 'The run failed.', 4);
   }
   const gatePassed = rich.every((user) => user.phase1.status === 'pass');
-  let status: RunResult['status'] = killed ? 'blocked' : gatePassed && rich.every((user) => user.journeys.every((journey) => journey.status === 'pass' || journey.status === 'skipped')) ? 'passed' : 'failed';
-  if (rich.some((user) => user.journeys.some((journey) => journey.status === 'flaky'))) status = 'failed';
-  if (rich.some((user) => user.phase1.status === 'blocked' || user.journeys.some((journey) => journey.status === 'blocked'))) {
-    if (status !== 'failed') status = 'blocked';
-  }
+  const phaseProblem = rich.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
+  const journeyProblem = rich.some((user) => user.journeys.some((journey) => journey.status === 'fail' || journey.status === 'error' || journey.status === 'flaky'));
+  const rateLimited = rich.some((user) => user.phase1.blocked_reason === 'rate_limited' || user.journeys.some((journey) => journey.steps.some((step) => step.blocked_reason === 'rate_limited')));
+  const blocked = killed || rich.some((user) => user.phase1.status === 'blocked' || user.journeys.some((journey) => journey.status === 'blocked'));
+  let status: RunResult['status'] = 'passed';
+  if (phaseProblem || journeyProblem) status = 'failed';
+  else if (rateLimited) status = 'rate_limited';
+  else if (blocked) status = 'blocked';
+  else if (!gatePassed) status = 'failed';
   const result = runResultSchema.parse({
     schema_version: '1',
     run_id: runId,
@@ -476,7 +480,7 @@ function rememberRegression(home: string, project: string, entry: { file: string
   const dir = ensureDir(join(home, 'regressions', project));
   const file = join(dir, `${entry.journey.id}.journey.yaml`);
   const ledgerPath = join(dir, `${entry.journey.id}.json`);
-  if (played.status === 'fail' || played.status === 'blocked' || played.status === 'error') {
+  if (played.status === 'fail' || played.status === 'error' || played.status === 'flaky') {
     writeFileSync(file, readFileSync(entry.file));
     writeFileSync(ledgerPath, `${JSON.stringify({ state: 'open', consecutive: 0 })}\n`);
     return;
