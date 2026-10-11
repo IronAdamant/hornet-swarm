@@ -78,7 +78,7 @@ describe('swarm board', () => {
         {
           project,
           website: 'https://example.com/',
-          cards: [{ username: 'someone', password: 'nope', personality: 'curious' }],
+          cards: [{ username: 'board-user', password: 'nope-long', personality: 'curious' }],
         },
         home,
       ),
@@ -113,7 +113,7 @@ document: { path: local.txt, sha256: "000000000000000000000000000000000000000000
           {
             project,
             website: 'https://selectors.example/login',
-            cards: [{ username: 'someone', password: 'nope-selector', personality: 'curious' }],
+            cards: [{ username: 'board-user', password: 'nope-selector', personality: 'curious' }],
             selectors: { username: '#email', password: '#password', submit: "role=button[name='Sign in']", success: '/dashboard' },
           },
           home,
@@ -123,7 +123,7 @@ document: { path: local.txt, sha256: "000000000000000000000000000000000000000000
         {
           project,
           website: 'https://selectors.example/login',
-          cards: [{ username: 'someone', password: 'nope-selector', personality: 'curious' }],
+          cards: [{ username: 'board-user', password: 'nope-selector', personality: 'curious' }],
           selectors: { username: '#user', password: '#pass', submit: "role=button[name='Continue']", success: '/home' },
         },
         home,
