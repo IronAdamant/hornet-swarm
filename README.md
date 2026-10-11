@@ -88,3 +88,9 @@ pnpm test:e2e
 ```
 
 The Linux job also runs `pnpm test:coverage`. That command fails the check when redactor or policy coverage drops below the gate in `vitest.config.ts`.
+
+On 12 October 2026 this Mac ran both commands against the offline fixture only.
+
+`pnpm test` exited 0. 15 files passed and 66 tests passed.
+
+`pnpm test:e2e` exited 0. 13 files passed and 40 tests passed.
