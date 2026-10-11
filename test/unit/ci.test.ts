@@ -14,6 +14,8 @@ describe('continuous integration', () => {
     expect(workflow).toContain('pnpm lint');
     expect(workflow).toContain('pnpm test');
     expect(workflow).toContain('pnpm test:coverage');
+    expect(workflow).toContain('SOPS_AGE_KEY<<EOF');
+    expect(workflow).toContain('cat "$key_file"');
     expect(workflow).toContain('pnpm test:e2e');
     expect(workflow).toContain('does not run `pnpm test:e2e`');
     expect(workflow).not.toMatch(/runs-on:\s*macos/);
