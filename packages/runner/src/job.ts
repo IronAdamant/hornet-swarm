@@ -172,7 +172,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   const bucket = createBucket(job.rps);
 
   try {
-    browser = await chromium.launch(browserLaunchOptions);
+    browser = await chromium.launch(browserLaunchOptions());
     context = await browser.newContext({
       ...(process.env.AEGIS_PROXY ? { proxy: { server: process.env.AEGIS_PROXY } } : {}),
       recordHar: { path: harPath, content: 'embed' },

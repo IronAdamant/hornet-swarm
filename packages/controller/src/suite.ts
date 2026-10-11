@@ -45,6 +45,7 @@ import { ensureCredentialPage } from './credentials.js';
 import { envStatus, startStoppedRunner, stopRunners } from './env.js';
 import { aegisHome, ensureDir } from './home.js';
 import { acquireLease, heartbeatStoredLease, releaseStoredLease } from './leases-store.js';
+import { rotateControlToken, runnerFetch } from './runner-auth.js';
 
 
 export { HornetError } from './errors.js';
@@ -390,6 +391,7 @@ async function execute(
   codes: string[] = [],
 ): Promise<{ report: JobReport; killed: boolean }> {
   const endpoint = await endpointFor(project.id, label);
+  rotateControlToken(project.id, label, home);
   const injected = await injectSecrets(project.id, label, endpoint, home);
   if (project.auth.totp.enabled) {
     const totp = await injectTotp(project.id, label, endpoint, home);
@@ -423,7 +425,7 @@ async function execute(
     if (arming) return arming;
     abortReason = reason;
     arming = (async () => {
-      await postAbort(endpoint);
+      await postAbort(project.id, endpoint, home);
       controller.abort();
     })();
     return arming;
@@ -436,12 +438,11 @@ async function execute(
     else if (Date.now() >= deadline) void arm('duration');
   }, 400);
   try {
-    const response = await fetch(`${endpoint}/v1/jobs`, {
+    const response = await runnerFetch(project.id, endpoint, '/v1/jobs', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
       signal: controller.signal,
-    });
+    }, home);
     const report = (await response.json()) as JobReport;
     copyArtifacts(home, project.id, label, runId, journey.id);
     rewriteArtifacts(home, project.id, label, runId, journey.id, report);
@@ -526,9 +527,9 @@ async function endpointFor(projectId: string, label: string): Promise<string> {
   throw new HornetError(`No healthy runner for ${label}.`, 4);
 }
 
-async function postAbort(endpoint: string): Promise<void> {
+async function postAbort(projectId: string, endpoint: string, home: string): Promise<void> {
   try {
-    await fetch(`${endpoint}/v1/abort`, { method: 'POST', signal: AbortSignal.timeout(1_500) });
+    await runnerFetch(projectId, endpoint, '/v1/abort', { method: 'POST', body: '{}', signal: AbortSignal.timeout(1_500) }, home);
   } catch {
     // A failed abort post still continues into the stop.
   }

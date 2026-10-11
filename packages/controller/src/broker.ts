@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { Redactor } from '@hornet-swarm/core';
 import { aegisHome, ensureDir } from './home.js';
+import { runnerFetch } from './runner-auth.js';
 import { totpCode } from './totp.js';
 
 const SERVICE = 'hornet-swarm-age-key';
@@ -66,11 +67,14 @@ export async function injectTotp(project: string, label: string, endpoint: strin
   const secret = readUsers(home, project)[label]?.totp_secret;
   if (!secret) return { ok: true, handles: [] };
   const code = totpCode(secret);
-  const response = await fetch(`${endpoint}/v1/secrets`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ credentials: [{ handle: `${label}.totp_code`, value: code }] }),
-  });
+  const response = await runnerFetch(
+    project,
+    endpoint,
+    '/v1/secrets',
+    { method: 'POST', body: JSON.stringify({ credentials: [{ handle: `${label}.totp_code`, value: code }] }) },
+    home,
+    label,
+  );
   if (!response.ok) throw new Error('Runner rejected the login handoff.');
   return { ok: true, handles: [`${label}.totp_code`], code };
 }
@@ -88,11 +92,7 @@ export async function injectSecrets(
     return value ? [{ handle: `${label}.${field}`, value }] : [];
   });
   if (credentials.length === 0) throw new Error(`No stored login for ${label}.`);
-  const response = await fetch(`${endpoint}/v1/secrets`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ credentials }),
-  });
+  const response = await runnerFetch(project, endpoint, '/v1/secrets', { method: 'POST', body: JSON.stringify({ credentials }) }, home, label);
   if (!response.ok) throw new Error(`Runner rejected the login handoff (${response.status}).`);
   const body = (await response.json()) as { ok?: boolean; handles?: string[] };
   credentials.forEach((entry) => {

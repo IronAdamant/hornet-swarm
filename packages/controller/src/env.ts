@@ -9,7 +9,8 @@ import { projectSchema } from '@hornet-swarm/core';
 import type Docker from 'dockerode';
 import { createDocker } from './docker.js';
 import { aegisHome, ensureDir, ensureHome } from './home.js';
-import { containerName, labelsForCount, networkName, parseMemory, profileVolume, proxyName } from './units.js';
+import { ensureControlToken, runnerFetch } from './runner-auth.js';
+import { containerName, controlVolume, labelsForCount, networkName, parseMemory, profileVolume, proxyName } from './units.js';
 
 const RUNNER_IMAGE = 'hornet-swarm-runner:local';
 const PROXY_IMAGE = 'hornet-swarm-proxy:local';
@@ -51,6 +52,7 @@ export async function envUp(options: { project: string; count?: number }): Promi
   const settings = loadSettings(options.project, options.count);
   saveRuntime(options.project, settings);
   await ensureNetwork(docker, options.project);
+  await ensureControlVolume(docker, options.project);
   await ensureProxy(docker, options.project, settings);
   await mapPool(settings.labels, 5, (label) => ensureRunner(docker, options.project, label, settings));
   return envStatus(options.project);
@@ -111,7 +113,7 @@ export async function startStoppedRunner(project: string, label: string): Promis
   } catch {
     return false;
   }
-  return waitHealthy(endpoint, 20_000);
+  return waitHealthy(project, endpoint, 20_000);
 }
 
 export async function envStatus(project: string): Promise<EnvStatus> {
@@ -136,7 +138,7 @@ export async function envStatus(project: string): Promise<EnvStatus> {
     const state = inspected.State.Running ? 'running' : inspected.State.Status;
     let health: RunnerStatus['health'] = 'unhealthy';
     if (inspected.State.Running && endpoint) {
-      health = (await pingHealth(endpoint)) ? 'healthy' : 'unhealthy';
+      health = (await pingHealth(project, endpoint)) ? 'healthy' : 'unhealthy';
     }
     runners.push({ label, name, state, health, port, endpoint });
   }
@@ -157,12 +159,11 @@ export async function measureResources(project: string): Promise<Record<string, 
   if (status.healthy < 1) throw new Error('No healthy runners to measure. Run hornet-swarm env up first.');
   const containers = await runnerContainers(docker, project);
   const idle = await sampleGroup(containers);
-  const targets = status.runners.filter((runner) => runner.health === 'healthy' && runner.endpoint);
+  const targets = status.runners.filter((runner): runner is typeof runner & { endpoint: string } => runner.health === 'healthy' && typeof runner.endpoint === 'string');
   if (targets.length < 1) throw new Error('No runner endpoint for the active sample.');
   const probes = targets.map((runner) =>
-    fetch(`${runner.endpoint}/v1/probe`, {
+    runnerFetch(project, runner.endpoint, '/v1/probe', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ holdMs: 20000 }),
       signal: AbortSignal.timeout(90_000),
     }),
@@ -405,10 +406,12 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
       `AEGIS_PROJECT=${project}`,
       `AEGIS_ALLOW_HOSTS=${settings.allowHosts.join(',')}`,
       `AEGIS_RPS=${settings.rps}`,
+      'AEGIS_CONTROL_DIR=/control',
     ],
     ExposedPorts: { '8888/tcp': {}, '8899/tcp': {} },
     HostConfig: {
       NetworkMode: 'bridge',
+      Binds: [`${controlVolume(project)}:/control`],
       PortBindings: { '8899/tcp': [{ HostIp: '127.0.0.1', HostPort: '' }] },
       Memory: 128 * 1024 * 1024,
       MemorySwap: 128 * 1024 * 1024,
@@ -434,7 +437,7 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
     if (sameImage) {
       if (!inspected.State.Running) await existing.start();
       const endpoint = await waitForEndpoint(docker, project, label);
-      const healthy = await waitHealthy(endpoint, 20_000);
+      const healthy = await waitHealthy(project, endpoint, 20_000);
       if (healthy) return;
     }
     await existing.remove({ force: true });
@@ -448,6 +451,9 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   }
   const outDir = ensureDir(join(aegisHome(), 'runners', project, label));
   chmodSync(outDir, 0o777);
+  const tokenDir = ensureDir(join(aegisHome(), 'control', project));
+  chmodSync(tokenDir, 0o755);
+  ensureControlToken(project, label);
   const seccomp = JSON.stringify(JSON.parse(readFileSync(installSeccomp(), 'utf8')));
   if (!seccomp.startsWith('{')) throw new Error(`seccomp did not encode as JSON: ${seccomp.slice(0, 30)}`);
   const memory = parseMemory(settings.memory);
@@ -456,11 +462,16 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
     Image: RUNNER_IMAGE,
     User: '10001:10001',
     Labels: { 'hornet-swarm.project': project, 'hornet-swarm.user': label, 'hornet-swarm.role': 'runner' },
-    Env: [`AEGIS_PROXY=http://${proxyName(project)}:8888`, `AEGIS_LABEL=${label}`],
+    Env: [
+      `AEGIS_PROXY=http://${proxyName(project)}:8888`,
+      `AEGIS_LABEL=${label}`,
+      `AEGIS_CONTROL_SOCKET=/control/${label}.sock`,
+      `AEGIS_CONTROL_TOKEN_FILE=/tokens/${label}.token`,
+    ],
     HostConfig: {
       ReadonlyRootfs: true,
       Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=256m' },
-      Binds: [`${volume}:/home/runner/profile`, `${outDir}:/out`],
+      Binds: [`${volume}:/home/runner/profile`, `${outDir}:/out`, `${controlVolume(project)}:/control`, `${tokenDir}:/tokens`],
       Memory: memory,
       MemorySwap: memory,
       NanoCpus: Math.round(settings.cpus * 1e9),
@@ -473,7 +484,7 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   });
   await container.start();
   const endpoint = await waitForEndpoint(docker, project, label);
-  const healthy = await waitHealthy(endpoint, 20_000);
+  const healthy = await waitHealthy(project, endpoint, 20_000);
   if (!healthy) throw new Error(await failureText(container, name));
 }
 
@@ -511,9 +522,9 @@ async function waitForEndpoint(docker: Docker, project: string, label: string): 
   throw new Error('Control gateway did not publish a localhost port');
 }
 
-async function pingHealth(endpoint: string): Promise<boolean> {
+async function pingHealth(project: string, endpoint: string): Promise<boolean> {
   try {
-    const response = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(1500) });
+    const response = await runnerFetch(project, endpoint, '/health', { method: 'GET', signal: AbortSignal.timeout(1500) });
     if (!response.ok) return false;
     const body = (await response.json()) as { ok?: boolean };
     return body.ok === true;
@@ -522,13 +533,35 @@ async function pingHealth(endpoint: string): Promise<boolean> {
   }
 }
 
-async function waitHealthy(endpoint: string, timeoutMs: number): Promise<boolean> {
+async function waitHealthy(project: string, endpoint: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await pingHealth(endpoint)) return true;
+    if (await pingHealth(project, endpoint)) return true;
     await delay(300);
   }
   return false;
+}
+
+async function ensureControlVolume(docker: Docker, project: string): Promise<void> {
+  const name = controlVolume(project);
+  try {
+    await docker.getVolume(name).inspect();
+  } catch {
+    await docker.createVolume({ Name: name, Labels: { 'hornet-swarm.project': project, 'hornet-swarm.role': 'control' } });
+  }
+  const container = await docker.createContainer({
+    Image: PROXY_IMAGE,
+    User: '0:0',
+    Entrypoint: ['chmod', '777', '/control'],
+    HostConfig: { Binds: [`${name}:/control`] },
+  });
+  try {
+    await container.start();
+    const result = await container.wait();
+    if (result.StatusCode !== 0) throw new Error('Could not prepare the control socket directory.');
+  } finally {
+    await container.remove({ force: true }).catch(() => undefined);
+  }
 }
 
 async function failureText(container: Docker.Container, name: string): Promise<string> {

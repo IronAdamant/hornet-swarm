@@ -1,5 +1,6 @@
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect as netConnect, type Socket } from 'node:net';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export type ProxyOptions = {
@@ -143,6 +144,7 @@ export function startControlGateway(options: {
   project: string;
   upstreamHost?: string;
   upstreamPort?: number;
+  controlDir?: string;
 }): Promise<{ port: number; close: () => Promise<void> }> {
   const server = createServer((req, res) => {
     const requested = req.url ?? '/';
@@ -158,13 +160,15 @@ export function startControlGateway(options: {
     const host = options.upstreamHost ?? `hornet-swarm-${options.project}-${label}`;
     const port = options.upstreamPort ?? 8787;
     const upstream = httpRequest(
-      {
-        host,
-        port,
-        path: suffix,
-        method: req.method,
-        headers: { ...req.headers, host: `${host}:${port}` },
-      },
+      options.controlDir
+        ? { socketPath: join(options.controlDir, `${label}.sock`), path: suffix, method: req.method, headers: { ...req.headers } }
+        : {
+            host,
+            port,
+            path: suffix,
+            method: req.method,
+            headers: { ...req.headers, host: `${host}:${port}` },
+          },
       (response) => {
         res.writeHead(response.statusCode ?? 502, response.headers);
         response.pipe(res);
@@ -217,5 +221,6 @@ if (isDirectRun()) {
   void startControlGateway({
     port: Number(process.env.AEGIS_CONTROL_PORT ?? 8899),
     project: process.env.AEGIS_PROJECT ?? 'default',
+    controlDir: process.env.AEGIS_CONTROL_DIR ?? '/control',
   });
 }

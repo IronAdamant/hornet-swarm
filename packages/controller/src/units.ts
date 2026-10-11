@@ -28,3 +28,7 @@ export function networkName(project: string): string {
 export function profileVolume(project: string, label: string): string {
   return `hornet-swarm-profile-${project}-${label}`;
 }
+
+export function controlVolume(project: string): string {
+  return `hornet-swarm-control-${project}`;
+}
