@@ -27,6 +27,100 @@ type CredentialRequest = {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 let page: { port: number; close: () => Promise<void> } | undefined;
+let boundPort = 7781;
+
+export type OperatorGateStatus = 'waiting' | 'declined' | 'touchid' | 'ready';
+
+type OperatorGate = {
+  id: string;
+  project: string;
+  label: string;
+  reason: string;
+  tokenHash: string;
+  notified: boolean;
+  status: OperatorGateStatus;
+  code?: string;
+};
+
+const operatorGates = new Map<string, OperatorGate>();
+
+export function openOperatorGate(input: { project: string; label: string; reason: string }): { id: string; token: string } {
+  const token = randomBytes(24).toString('hex');
+  const id = randomUUID();
+  operatorGates.set(id, {
+    id,
+    project: input.project,
+    label: input.label,
+    reason: input.reason,
+    tokenHash: hashToken(token),
+    notified: false,
+    status: 'waiting',
+  });
+  return { id, token };
+}
+
+export function operatorGateView(id: string, token: string): { status: OperatorGateStatus; code?: string } | undefined {
+  const gate = findGate(id, token);
+  if (!gate) return undefined;
+  if (gate.status === 'ready' && gate.code) {
+    const code = gate.code;
+    gate.code = undefined;
+    return { status: 'ready', code };
+  }
+  return { status: gate.status };
+}
+
+export function markOperatorNeeded(home: string, id: string, token: string, port = boundPort): boolean {
+  const gate = findGate(id, token);
+  if (!gate) return false;
+  if (!gate.notified) {
+    gate.notified = true;
+    notifyOperator(home, gate.project, gate.label, port, token);
+  }
+  return true;
+}
+
+export function submitOperatorCode(
+  home: string,
+  token: string,
+  input: { decision?: string; code?: string },
+): { status: number; message: string } {
+  const gate = findGateByToken(token);
+  if (!gate || gate.status !== 'waiting') {
+    return { status: 403, message: 'This link is missing or has already been used.' };
+  }
+  if (input.decision === 'decline') {
+    gate.status = 'declined';
+    gate.code = undefined;
+    return { status: 200, message: 'The request was declined.' };
+  }
+  const confirmed = attemptTouchId(touchLog(home));
+  if (!confirmed) {
+    gate.status = 'touchid';
+    gate.code = undefined;
+    return { status: 401, message: 'Touch ID was not confirmed.' };
+  }
+  const code = input.code ?? '';
+  if (!code) return { status: 400, message: 'Enter the code from the text or the email.' };
+  gate.status = 'ready';
+  gate.code = code;
+  return { status: 200, message: 'The code was accepted. You can close this page.' };
+}
+
+function findGate(id: string, token: string): OperatorGate | undefined {
+  const gate = operatorGates.get(id);
+  if (!gate || !token || gate.tokenHash !== hashToken(token)) return undefined;
+  return gate;
+}
+
+function findGateByToken(token: string): OperatorGate | undefined {
+  if (!token) return undefined;
+  const hash = hashToken(token);
+  for (const gate of operatorGates.values()) {
+    if (gate.tokenHash === hash) return gate;
+  }
+  return undefined;
+}
 
 export async function requestCredentials(input: unknown, home = aegisHome()): Promise<{ id: string; waiting: true }> {
   const parsed = credentialRequestSchema.safeParse(input);
@@ -123,6 +217,7 @@ export function startCredentialPage(home = aegisHome(), port = 7781): Promise<{ 
     server.listen(port, '127.0.0.1', () => {
       const address = server.address();
       const bound = typeof address === 'object' && address ? address.port : port;
+      boundPort = bound;
       resolve({
         port: bound,
         close: () =>
@@ -136,6 +231,45 @@ export function startCredentialPage(home = aegisHome(), port = 7781): Promise<{ 
 
 async function handlePage(req: IncomingMessage, res: ServerResponse, home: string): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  if (url.pathname === '/v1/operator-code' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req)) as { project?: string; label?: string; reason?: string };
+    if (!body.project || !body.label) {
+      send(res, 400, 'A project and a label are required.');
+      return;
+    }
+    const opened = openOperatorGate({
+      project: body.project,
+      label: body.label,
+      reason: body.reason || 'A texted or emailed code is needed.',
+    });
+    sendJson(res, 200, opened);
+    return;
+  }
+  const codeMatch = url.pathname.match(/^\/v1\/operator-code\/([^/]+)$/);
+  if (codeMatch) {
+    const id = decodeURIComponent(codeMatch[1] ?? '');
+    const token = url.searchParams.get('token') ?? '';
+    if (req.method === 'POST') {
+      const found = markOperatorNeeded(home, id, token, boundPort);
+      send(res, found ? 200 : 404, found ? 'waiting' : 'Not found.');
+      return;
+    }
+    if (req.method === 'GET') {
+      const view = operatorGateView(id, token);
+      if (!view) {
+        send(res, 404, 'Not found.');
+        return;
+      }
+      sendJson(res, 200, view);
+      return;
+    }
+    send(res, 405, 'Method not allowed.');
+    return;
+  }
+  if (url.pathname === '/codes') {
+    await handleOperatorCode(req, res, home, url);
+    return;
+  }
   if (url.pathname === '/setup') {
     await handleSetup(req, res, home, url);
     return;
@@ -229,6 +363,54 @@ async function handleSetup(req: IncomingMessage, res: ServerResponse, home: stri
     const message = error instanceof HornetError ? error.message : 'The board could not be saved.';
     send(res, 400, message);
   }
+}
+
+async function handleOperatorCode(req: IncomingMessage, res: ServerResponse, home: string, url: URL): Promise<void> {
+  const token = url.searchParams.get('token') ?? '';
+  const gate = findGateByToken(token);
+  if (!gate || gate.status !== 'waiting') {
+    send(res, 403, 'This link is missing or has already been used.');
+    return;
+  }
+  if (req.method === 'GET') {
+    send(res, 200, codeForm(gate), 'text/html; charset=utf-8');
+    return;
+  }
+  if (req.method !== 'POST') {
+    send(res, 405, 'Method not allowed.');
+    return;
+  }
+  const body = new URLSearchParams(await readBody(req));
+  const result = submitOperatorCode(home, token, { decision: body.get('decision') ?? undefined, code: body.get('code') ?? undefined });
+  send(res, result.status, result.message);
+}
+
+function codeForm(gate: OperatorGate): string {
+  return `<!doctype html><html><head><title>Hornet Swarm code</title></head><body>
+<h1>Enter the texted or emailed code</h1>
+<p>${escapeText(gate.project)} · ${escapeText(gate.label)}</p>
+<p>${escapeText(gate.reason)}</p>
+<form method="post">
+<label>Code <input name="code" autocomplete="one-time-code" inputmode="numeric"></label>
+<button name="decision" value="save">Submit code</button>
+<button name="decision" value="decline">Decline</button>
+</form></body></html>`;
+}
+
+function notifyOperator(home: string, project: string, label: string, port: number, token: string): void {
+  const reason = 'A texted or emailed code is needed.';
+  const notice = { project, label, reason, url: `http://127.0.0.1:${port}/codes?token=${token}`, at: new Date().toISOString() };
+  appendFileSync(join(ensureDir(home), 'notifications.log'), `${JSON.stringify(notice)}\n`);
+  const script = `display notification ${JSON.stringify(reason)} with title ${JSON.stringify(`Hornet Swarm ${project}`)} subtitle ${JSON.stringify(label)}`;
+  try {
+    execFileSync('osascript', ['-e', script], { stdio: 'ignore', timeout: 5_000 });
+  } catch {
+    // The notification log is the captured copy when Notification Center is unavailable.
+  }
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  send(res, status, JSON.stringify(body), 'application/json; charset=utf-8');
 }
 
 function form(record: CredentialRequest): string {

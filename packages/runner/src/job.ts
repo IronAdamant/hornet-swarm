@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
 import { browserLaunchOptions } from './launch.js';
@@ -21,7 +22,116 @@ export type JobRequest = {
   outDir: string;
   vars: Record<string, string>;
   users: TemplateContext['users'];
+  deadline?: number;
+  operatorPollUrl?: string;
 };
+
+export type OperatorSettlement = { action: 'continue'; code: string } | { action: 'block'; reason: '2fa' } | { action: 'abort'; reason: 'kill' };
+
+export function settleOperatorAnswer(answer: 'code' | 'declined' | 'touchid' | 'timeout' | 'kill', code?: string): OperatorSettlement {
+  if (answer === 'kill') return { action: 'abort', reason: 'kill' };
+  if (answer === 'code' && code) return { action: 'continue', code };
+  return { action: 'block', reason: '2fa' };
+}
+
+export function stageOperatorCode(redactor: Redactor, secrets: SecretMap, code: string): string {
+  const handle = 'operator_code';
+  secrets.set(handle, code);
+  redactor.register(handle, code);
+  return handle;
+}
+
+export async function resolveChallenge(input: {
+  challenge: 'captcha' | '2fa' | undefined;
+  fillsTotp: boolean;
+  redactor: Redactor;
+  secrets: SecretMap;
+  ask: () => Promise<OperatorSettlement>;
+}): Promise<{ kind: 'continue' } | { kind: 'stop'; reason: 'captcha' | '2fa' | 'kill' }> {
+  if (input.challenge === 'captcha') return { kind: 'stop', reason: 'captcha' };
+  if (input.challenge !== '2fa' || input.fillsTotp) return { kind: 'continue' };
+  const settlement = await input.ask();
+  if (settlement.action === 'abort') return { kind: 'stop', reason: 'kill' };
+  if (settlement.action !== 'continue') return { kind: 'stop', reason: '2fa' };
+  stageOperatorCode(input.redactor, input.secrets, settlement.code);
+  return { kind: 'continue' };
+}
+
+export async function pollOperatorGate(pollUrl: string, deadline: number, isAborted: () => boolean): Promise<OperatorSettlement> {
+  if (isAborted()) return { action: 'abort', reason: 'kill' };
+  await gateRequest(pollUrl, 'POST').catch(() => undefined);
+  while (Date.now() < deadline - 750) {
+    if (isAborted()) return { action: 'abort', reason: 'kill' };
+    try {
+      const response = await gateRequest(pollUrl, 'GET');
+      if (response.ok) {
+        const body = (await response.json()) as { status?: string; code?: string };
+        if (body.status === 'declined' || body.status === 'touchid') return { action: 'block', reason: '2fa' };
+        if (body.status === 'ready' && body.code) return settleOperatorAnswer('code', body.code);
+      }
+    } catch {
+      // The page can be down. The wait still ends at the deadline.
+    }
+    await delay(200);
+  }
+  if (isAborted()) return { action: 'abort', reason: 'kill' };
+  return { action: 'block', reason: '2fa' };
+}
+
+// The runner sits on an internal network and cannot resolve host.docker.internal.
+// Global fetch ignores AEGIS_PROXY, so the poll is an absolute-form request through that proxy.
+// With no proxy set, the same call uses fetch so a page on 127.0.0.1 still answers.
+async function gateRequest(pollUrl: string, method: 'GET' | 'POST'): Promise<{ ok: boolean; json: () => Promise<unknown> }> {
+  const proxy = process.env.AEGIS_PROXY;
+  if (!proxy) return fetch(pollUrl, method === 'POST' ? { method } : undefined);
+  const proxyUrl = new URL(proxy);
+  const target = new URL(pollUrl);
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        host: proxyUrl.hostname,
+        port: proxyUrl.port || 80,
+        method,
+        path: pollUrl,
+        headers: { host: target.host, accept: 'application/json' },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+        response.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          const status = response.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            json: async () => JSON.parse(text) as unknown,
+          });
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function askOperator(job: JobRequest, isAborted: () => boolean): Promise<OperatorSettlement> {
+  const deadline = job.deadline ?? Date.now();
+  if (job.operatorPollUrl) return pollOperatorGate(job.operatorPollUrl, deadline, isAborted);
+  if (isAborted()) return { action: 'abort', reason: 'kill' };
+  while (Date.now() < deadline - 750) {
+    if (isAborted()) return { action: 'abort', reason: 'kill' };
+    await delay(200);
+  }
+  if (isAborted()) return { action: 'abort', reason: 'kill' };
+  return { action: 'block', reason: '2fa' };
+}
+
+async function fillVisibleCode(page: Page, code: string): Promise<void> {
+  await page.locator('input:visible:not([type="password"])').first().fill(code, { timeout: 15_000 });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export type JobReport = {
   ok: boolean;
@@ -125,12 +235,22 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
         const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted);
         const challenge = await detectChallenge(page);
-        // A stored authenticator code does not hide an OTP prompt. Skip that stop only when this journey itself types the code.
-        if (challenge && !(challenge === '2fa' && fillsTotp)) {
+        const decision = await resolveChallenge({
+          challenge,
+          fillsTotp,
+          redactor,
+          secrets,
+          ask: () => askOperator(job, isAborted),
+        });
+        if (decision.kind === 'stop') {
           status = 'blocked';
-          blocked = challenge;
+          blocked = decision.reason;
           steps.push(finishStep(index, kind, 'blocked', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, blocked));
           break;
+        }
+        if (challenge === '2fa' && !fillsTotp) {
+          const code = secrets.get('operator_code') ?? '';
+          await fillVisibleCode(page, code);
         }
         steps.push(finishStep(index, kind, 'pass', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, undefined, outcome.httpStatus));
       } catch (error) {

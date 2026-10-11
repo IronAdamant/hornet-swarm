@@ -41,6 +41,7 @@ import {
 import { writeAudit } from './audit.js';
 import { injectSecrets, injectTotp, listFields, projectSecretValues, registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
+import { ensureCredentialPage } from './credentials.js';
 import { envStatus, startStoppedRunner, stopRunners } from './env.js';
 import { aegisHome, ensureDir } from './home.js';
 import { acquireLease, heartbeatStoredLease, releaseStoredLease } from './leases-store.js';
@@ -396,6 +397,7 @@ async function execute(
   }
   const target = containerTarget(project);
   const actions = chaos ? chaosSequence(chaos.seed, chaos.profile, journey.steps.length) : [];
+  const pollUrl = await operatorPollUrl(project.id, label, home);
   const body = {
     runId,
     label,
@@ -411,6 +413,8 @@ async function execute(
     outDir: `/out/${runId}/${journey.id}`,
     vars: journey.vars,
     users: Object.fromEntries(project.users.map((user) => [user.label, { vars: user.vars }])),
+    deadline,
+    ...(pollUrl ? { operatorPollUrl: pollUrl } : {}),
   };
   const controller = new AbortController();
   let abortReason: 'kill' | 'duration' | undefined;
@@ -443,24 +447,70 @@ async function execute(
     rewriteArtifacts(home, project.id, label, runId, journey.id, report);
     void injected;
     if (arming) await arming;
-    if (abortReason === 'duration' && !existsSync(join(home, 'KILL'))) {
-      await Promise.race([stopRunners(project.id, label), delay(2_000)]);
-      return { report: durationReport(), killed: false };
-    }
-    return { report, killed: false };
+    return applyReturnedJob({
+      ...(abortReason ? { abortReason } : {}),
+      killPresent: existsSync(join(home, 'KILL')),
+      report,
+      projectId: project.id,
+      label,
+      stopRunners,
+    });
   } catch (error) {
     if (arming) await arming;
-    if (abortReason === 'duration' && !existsSync(join(home, 'KILL'))) {
-      await Promise.race([stopRunners(project.id, label), delay(2_000)]);
-      return { report: durationReport(), killed: false };
-    }
-    if (abortReason === 'kill' || existsSync(join(home, 'KILL'))) {
-      await Promise.race([stopRunners(project.id), delay(2_000)]);
-      return { report: { ok: false, status: 'blocked', blocked_reason: 'kill', steps: [], chaosApplied: [] }, killed: true };
+    const killPresent = existsSync(join(home, 'KILL'));
+    if (abortReason || killPresent) {
+      return applyReturnedJob({
+        ...(abortReason ? { abortReason } : {}),
+        killPresent,
+        report: { ok: false, status: 'blocked', steps: [], chaosApplied: [] },
+        projectId: project.id,
+        label,
+        stopRunners,
+      });
     }
     throw error;
   } finally {
     clearInterval(timer);
+  }
+}
+
+export async function applyReturnedJob(input: {
+  abortReason?: 'kill' | 'duration';
+  killPresent: boolean;
+  report: JobReport;
+  projectId: string;
+  label: string;
+  stopRunners: (project: string, label?: string) => Promise<void>;
+}): Promise<{ report: JobReport; killed: boolean }> {
+  if (input.abortReason === 'kill' || input.killPresent) {
+    await Promise.race([input.stopRunners(input.projectId), delay(2_000)]);
+    return { report: { ok: false, status: 'blocked', blocked_reason: 'kill', steps: [], chaosApplied: [] }, killed: true };
+  }
+  if (input.report.blocked_reason === '2fa') return { report: input.report, killed: false };
+  if (input.abortReason === 'duration') {
+    await Promise.race([input.stopRunners(input.projectId, input.label), delay(2_000)]);
+    return { report: durationReport(), killed: false };
+  }
+  return { report: input.report, killed: false };
+}
+
+async function operatorPollUrl(project: string, label: string, home: string): Promise<string | undefined> {
+  try {
+    const port = await ensureCredentialPage(home);
+    const response = await fetch(`http://127.0.0.1:${port}/v1/operator-code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project, label, reason: 'A texted or emailed code is needed.' }),
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) return undefined;
+    const opened = (await response.json()) as { id?: string; token?: string };
+    if (!opened.id || !opened.token) return undefined;
+    const id = encodeURIComponent(opened.id);
+    const token = encodeURIComponent(opened.token);
+    return `http://host.docker.internal:${port}/v1/operator-code/${id}?token=${token}`;
+  } catch {
+    return undefined;
   }
 }
 

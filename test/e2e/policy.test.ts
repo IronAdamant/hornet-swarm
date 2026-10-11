@@ -145,15 +145,21 @@ steps:
     const captcha = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'captcha.journey.yaml')]);
     expect(captcha.status).toBe(2);
     expect(JSON.stringify(readRun().result)).toContain('captcha');
-    const otp = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
-    expect(otp.status).toBe(2);
-    expect(JSON.stringify(readRun().result)).toContain('2fa');
-    const smsBefore = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { smsPosts: number };
-    const sms = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'sms.journey.yaml')]);
-    expect(sms.status).toBe(2);
-    expect(JSON.stringify(readRun().result)).toContain('2fa');
-    const smsAfter = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { smsPosts: number };
-    expect(smsAfter.smsPosts).toBe(smsBefore.smsPosts);
+    const limits = readFileSync(projectFile, 'utf8');
+    writeFileSync(projectFile, limits.replace('max_run_duration_min: 30', 'max_run_duration_min: 0.2'));
+    try {
+      const otp = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
+      expect(otp.status).toBe(2);
+      expect(JSON.stringify(readRun().result)).toContain('2fa');
+      const smsBefore = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { smsPosts: number };
+      const sms = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'sms.journey.yaml')]);
+      expect(sms.status).toBe(2);
+      expect(JSON.stringify(readRun().result)).toContain('2fa');
+      const smsAfter = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { smsPosts: number };
+      expect(smsAfter.smsPosts).toBe(smsBefore.smsPosts);
+    } finally {
+      writeFileSync(projectFile, limits);
+    }
 
     const original = readFileSync(projectFile, 'utf8');
     setSecret('fixture', 'qa-user-1', 'totp_secret', 'JBSWY3DPEHPK3PXP', home);
@@ -170,6 +176,7 @@ steps:
       const now = Date.now();
       const codes = [totpCode('JBSWY3DPEHPK3PXP', now), totpCode('JBSWY3DPEHPK3PXP', now - 30_000), totpCode('JBSWY3DPEHPK3PXP', now + 30_000)];
       if (codes.some((code) => har.includes(code))) throw new Error('The one-time code was still present');
+      writeFileSync(projectFile, readFileSync(projectFile, 'utf8').replace('max_run_duration_min: 30', 'max_run_duration_min: 0.2'));
       const prompted = hornet(['suite', '--project', 'fixture', '--json', '--agent-id', 'otp-holder', '--journey', join(journeys, 'otp.journey.yaml')]);
       expect(prompted.status).toBe(2);
       expect(JSON.stringify(readRun().result)).toContain('2fa');
