@@ -35,7 +35,7 @@ describe('phase gate and safety', () => {
     const html = await login.text();
     expect(html).toContain('maxlength="6"');
     expect(html).toContain('hidden');
-    const run = hornet(['sign-in', '--project', 'fixture', '--json', '--user', 'qa-user-1', '--agent-id', 'hidden-code']);
+    const run = hornet(['sign-in', '--project', 'fixture', '--json', '--user', 'qa-user-1']);
     expect(run.status, run.stdout + run.stderr).toBe(0);
   });
 
@@ -177,7 +177,7 @@ steps:
       const codes = [totpCode('JBSWY3DPEHPK3PXP', now), totpCode('JBSWY3DPEHPK3PXP', now - 30_000), totpCode('JBSWY3DPEHPK3PXP', now + 30_000)];
       if (codes.some((code) => har.includes(code))) throw new Error('The one-time code was still present');
       writeFileSync(projectFile, readFileSync(projectFile, 'utf8').replace('max_run_duration_min: 30', 'max_run_duration_min: 0.2'));
-      const prompted = hornet(['suite', '--project', 'fixture', '--json', '--agent-id', 'otp-holder', '--journey', join(journeys, 'otp.journey.yaml')]);
+      const prompted = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
       expect(prompted.status).toBe(2);
       expect(JSON.stringify(readRun().result)).toContain('2fa');
     } finally {

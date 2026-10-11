@@ -116,7 +116,7 @@ program
   .option('--chaos <profile>', 'chaos profile')
   .option('--seed <seed>', 'chaos seed')
   .option('--user <label...>', 'labels to run')
-  .option('--agent-id <id>', 'caller id that holds one login')
+  .option('--agent-id <id>', 'refused unless it is this process')
   .option('--json', 'print machine-readable JSON')
   .action(async (opts: SuiteFlags) => {
     await runCommand(opts, {
@@ -133,7 +133,7 @@ program
   .description('Run the sign-in check for one agent')
   .option('--project <id>', 'project id')
   .option('--user <label...>', 'labels to sign in')
-  .option('--agent-id <id>', 'caller id that holds one login')
+  .option('--agent-id <id>', 'refused unless it is this process')
   .option('--json', 'print machine-readable JSON')
   .action(async (opts: SuiteFlags) => {
     await runCommand(opts, { phase1Only: true, ...(opts.user ? { users: opts.user } : {}) });
@@ -145,7 +145,7 @@ program
   .argument('<file>', 'journey file or id')
   .option('--project <id>', 'project id')
   .option('--user <label...>', 'labels to run')
-  .option('--agent-id <id>', 'caller id that holds one login')
+  .option('--agent-id <id>', 'refused unless it is this process')
   .option('--json', 'print machine-readable JSON')
   .action(async (file: string, opts: SuiteFlags) => {
     await runCommand(opts, { journeyFiles: [file], ...(opts.user ? { users: opts.user } : {}) });
@@ -358,11 +358,15 @@ async function runCommand(
     users?: string[];
   },
 ): Promise<void> {
+  const ownId = `cli-${process.pid}`;
+  if (opts.agentId && opts.agentId !== ownId) {
+    fail(opts.json, 'That agent id belongs to another process.', 3);
+  }
   try {
     const result = await runSuite({
       ...extra,
       project: opts.project ?? extra.project ?? defaultProjectFromHome(),
-      ...(opts.agentId ? { agentId: opts.agentId } : {}),
+      agentId: ownId,
     });
     if (opts.json) writeJson(result);
     else {
@@ -375,7 +379,11 @@ async function runCommand(
     process.exit(status === 'passed' ? 0 : status === 'blocked' || status === 'rate_limited' ? 2 : status === 'error' ? 4 : 1);
   } catch (error) {
     const code = error instanceof HornetError ? error.exitCode : 4;
-    fail(opts.json, messageOf(error), code);
+    if (opts.json) {
+      writeJson({ ok: false, error: messageOf(error), agent_id: ownId });
+      process.exit(code);
+    }
+    fail(false, messageOf(error), code);
   }
 }
 

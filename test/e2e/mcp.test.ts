@@ -109,7 +109,8 @@ describe('MCP server', () => {
     expect(body.missingAgent.ok).toBe(false);
     expect(body.leasesUnchanged).toBe(true);
     expect(body.signin.status).toBe('passed');
-    expect(readFileSync(join(home, 'audit.log'), 'utf8')).toContain('"agent":"mcp-e2e-run"');
+    expect(body.signin.agent_id).toMatch(/^mcp-/);
+    expect(readFileSync(join(home, 'audit.log'), 'utf8')).toContain(`"agent":"${body.signin.agent_id}"`);
     expect(body.summary.text ?? '').toContain('Findings');
     expect(body.summary.text ?? '').toContain('[REDACTED:qa-user-1.password]');
     expect(body.summary.text ?? '').not.toContain(secret);

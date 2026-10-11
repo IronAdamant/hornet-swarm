@@ -19,14 +19,14 @@ output.invalid = await call('validate_journey', {
   journey_yaml: 'version: 1\nid: bad\nname: Bad\nusers: [qa-user-1]\nsteps:\n  - navigate: { url: "https://example.com/" }\n',
 });
 output.byId = await call('validate_journey', { project: 'fixture', journey_id: 'signin-dashboard' });
-output.lease = await call('acquire_test_user', { project: 'fixture', label: 'qa-user-1', agent_id: 'mcp-e2e' });
-output.second = await call('acquire_test_user', { project: 'fixture', label: 'qa-user-2', agent_id: 'mcp-e2e' });
-output.released = await call('release_test_user', { project: 'fixture', agent_id: 'mcp-e2e' });
+output.lease = await call('acquire_test_user', { project: 'fixture', label: 'qa-user-1' });
+output.second = await call('acquire_test_user', { project: 'fixture', label: 'qa-user-2' });
+output.released = await call('release_test_user', { project: 'fixture' });
 output.passwordRejected = await call('request_credentials', { project: 'fixture', label: 'qa-user-1', reason: 'mcp check', password: 'should-not-stick' });
 const leasesBefore = leasesText();
-output.missingAgent = await call('run_signin_check', { project: 'fixture', users: ['qa-user-1'], wait: true });
+output.missingAgent = await call('run_signin_check', { project: 'fixture', users: ['qa-user-1'], agent_id: 'not-this-session', wait: true });
 output.leasesUnchanged = leasesText() === leasesBefore;
-output.signin = await call('run_signin_check', { project: 'fixture', users: ['qa-user-1'], agent_id: 'mcp-e2e-run', wait: true });
+output.signin = await call('run_signin_check', { project: 'fixture', users: ['qa-user-1'], wait: true });
 const summaryPath = join(homedir(), '.hornet-swarm', 'runs', output.signin.run_id, 'summary.md');
 const originalSummary = readFileSync(summaryPath, 'utf8');
 writeFileSync(summaryPath, `${originalSummary}\nFixtureOnly-s3cret"<&value>\n`);
@@ -36,27 +36,25 @@ try {
 } finally {
   writeFileSync(summaryPath, originalSummary);
 }
-output.journey = await call('run_journey', { project: 'fixture', journey_id: 'flag-check', agent_id: 'mcp-e2e-journey', wait: true });
+output.journey = await call('run_journey', { project: 'fixture', journey_id: 'flag-check', wait: true });
 output.filtered = await call('run_journey', {
   project: 'fixture',
   journey_id: 'both-users',
   users: ['qa-user-1'],
-  agent_id: 'mcp-e2e-filter',
   wait: true,
 });
 output.suite = await call('run_suite', {
   project: 'fixture',
   journeys: ['signin-dashboard', 'tenant-isolation'],
   gate: 'all',
-  agent_id: 'mcp-e2e-suite',
   wait: true,
 });
 output.latest = await call('get_results', { project: 'fixture' });
 output.reset = await call('reset_environment', { project: 'fixture' });
-output.blocked = await call('run_suite', { project: 'unauth', journeys: ['signin-dashboard'], agent_id: 'mcp-e2e-blocked', wait: true });
+output.blocked = await call('run_suite', { project: 'unauth', journeys: ['signin-dashboard'], wait: true });
 output.killed = await call('reset_environment', { project: 'fixture', kill: true });
 output.killFileAfterEngage = existsSync(join(homedir(), '.hornet-swarm', 'KILL'));
-output.afterKill = await call('run_suite', { project: 'fixture', journeys: ['signin-dashboard'], agent_id: 'mcp-e2e-after', wait: true });
+output.afterKill = await call('run_suite', { project: 'fixture', journeys: ['signin-dashboard'], wait: true });
 output.releasedKill = await call('reset_environment', { project: 'fixture', release: true });
 output.killFileAfterRelease = existsSync(join(homedir(), '.hornet-swarm', 'KILL'));
 await client.close();

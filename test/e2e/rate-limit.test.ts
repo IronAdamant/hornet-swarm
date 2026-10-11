@@ -6,7 +6,7 @@ import { clearSignins, home, hornet, journeys, readRun } from './helper.js';
 describe('request bucket versus allowlist', () => {
   it('keeps a passing journey passed when off-list requests are aborted, and reports rate_limited when the bucket trips', async () => {
     clearSignins();
-    const off = hornet(['suite', '--project', 'fixture', '--json', '--agent-id', 'rate-off', '--journey', join(journeys, 'offlist-pass.journey.yaml')]);
+    const off = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'offlist-pass.journey.yaml')]);
     expect(off.status, off.stdout + off.stderr).toBe(0);
     const offBody = JSON.parse(off.stdout) as { status: string; run_id: string; parent: { status: string }; users: { journeys: { id: string; status: string; steps: { status: string; blocked_reason?: string }[] }[] }[] };
     expect(offBody.status).toBe('passed');
@@ -23,7 +23,7 @@ describe('request bucket versus allowlist', () => {
     expect(afterOff.pingCount).toBeGreaterThanOrEqual(12);
 
     clearSignins();
-    const burst = hornet(['suite', '--project', 'fixture', '--json', '--agent-id', 'rate-burst', '--journey', join(journeys, 'burst-budget.journey.yaml')]);
+    const burst = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'burst-budget.journey.yaml')]);
     expect(burst.status, burst.stdout + burst.stderr).toBe(2);
     const burstBody = JSON.parse(burst.stdout) as { status: string; parent: { status: string }; users: { journeys: { id: string; status: string; steps: { status: string; blocked_reason?: string }[] }[] }[] };
     expect(burstBody.status).toBe('rate_limited');

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -26,6 +27,14 @@ import { parse } from 'yaml';
 import { homedir } from 'node:os';
 
 const home = () => process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm');
+const sessionAgentId = `mcp-${randomBytes(16).toString('hex')}`;
+
+function useAgent(supplied: string | undefined): { ok: true; agentId: string } | { ok: false; error: string } {
+  if (supplied !== undefined && supplied !== sessionAgentId) {
+    return { ok: false, error: 'That agent id belongs to another session.' };
+  }
+  return { ok: true, agentId: sessionAgentId };
+}
 
 const server = new McpServer({ name: 'hornet-swarm', version: '0.1.0' });
 
@@ -42,14 +51,17 @@ server.registerTool(
     inputSchema: z.object({
       project: z.string(),
       users: z.array(z.string()).optional(),
-      agent_id: z.string().min(1),
+      agent_id: z.string().min(1).optional(),
       wait: z.boolean().optional(),
     }),
   },
-  async ({ project, users, agent_id }) =>
-    guard(project, () =>
-      runSuite({ project, phase1Only: true, ...(users ? { users } : {}), via: 'mcp', agentId: agent_id }),
-    ),
+  async ({ project, users, agent_id }) => {
+    const agent = useAgent(agent_id);
+    if (!agent.ok) return pack(project, { ok: false, error: agent.error });
+    return guard(project, () =>
+      runSuite({ project, phase1Only: true, ...(users ? { users } : {}), via: 'mcp', agentId: agent.agentId }),
+    );
+  },
 );
 
 server.registerTool(
@@ -60,20 +72,23 @@ server.registerTool(
       project: z.string(),
       journey_id: z.string(),
       users: z.array(z.string()).optional(),
-      agent_id: z.string().min(1),
+      agent_id: z.string().min(1).optional(),
       wait: z.boolean().optional(),
     }),
   },
-  async ({ project, journey_id, users, agent_id }) =>
-    guard(project, () =>
+  async ({ project, journey_id, users, agent_id }) => {
+    const agent = useAgent(agent_id);
+    if (!agent.ok) return pack(project, { ok: false, error: agent.error });
+    return guard(project, () =>
       runSuite({
         project,
         journeyFiles: [journey_id],
         ...(users ? { users } : {}),
         via: 'mcp',
-        agentId: agent_id,
+        agentId: agent.agentId,
       }),
-    ),
+    );
+  },
 );
 
 server.registerTool(
@@ -86,12 +101,14 @@ server.registerTool(
       users: z.array(z.string()).optional(),
       gate: z.enum(['all', 'per_user']).optional(),
       confirm_production: z.boolean().optional(),
-      agent_id: z.string().min(1),
+      agent_id: z.string().min(1).optional(),
       wait: z.boolean().optional(),
     }),
   },
-  async ({ project, journeys, users, gate, confirm_production, agent_id }) =>
-    guard(project, () =>
+  async ({ project, journeys, users, gate, confirm_production, agent_id }) => {
+    const agent = useAgent(agent_id);
+    if (!agent.ok) return pack(project, { ok: false, error: agent.error });
+    return guard(project, () =>
       runSuite({
         project,
         ...(journeys ? { journeyFiles: journeys } : {}),
@@ -99,9 +116,10 @@ server.registerTool(
         ...(gate ? { gate } : {}),
         confirmProduction: Boolean(confirm_production),
         via: 'mcp',
-        agentId: agent_id,
+        agentId: agent.agentId,
       }),
-    ),
+    );
+  },
 );
 
 server.registerTool(
@@ -189,10 +207,12 @@ server.registerTool(
   'acquire_test_user',
   {
     description: 'Acquire an exclusive login lease',
-    inputSchema: z.object({ project: z.string(), label: z.string(), agent_id: z.string(), run_id: z.string().optional() }),
+    inputSchema: z.object({ project: z.string(), label: z.string(), agent_id: z.string().min(1).optional(), run_id: z.string().optional() }),
   },
   async ({ project, label, agent_id, run_id }) => {
-    const decision = acquireLease({ project, label, agentId: agent_id, ...(run_id ? { runId: run_id } : {}), home: home(), via: 'mcp' });
+    const agent = useAgent(agent_id);
+    if (!agent.ok) return pack(project, { ok: false, error: agent.error });
+    const decision = acquireLease({ project, label, agentId: agent.agentId, ...(run_id ? { runId: run_id } : {}), home: home(), via: 'mcp' });
     if (!decision.ok) {
       return pack(project, {
         ok: false,
@@ -209,10 +229,12 @@ server.registerTool(
   'release_test_user',
   {
     description: 'Release the login lease held by an agent',
-    inputSchema: z.object({ project: z.string(), agent_id: z.string() }),
+    inputSchema: z.object({ project: z.string(), agent_id: z.string().min(1).optional() }),
   },
   async ({ project, agent_id }) => {
-    releaseStoredLease(project, agent_id, home(), 'mcp');
+    const agent = useAgent(agent_id);
+    if (!agent.ok) return pack(project, { ok: false, error: agent.error });
+    releaseStoredLease(project, agent.agentId, home(), 'mcp');
     return pack(project, { ok: true, released: true });
   },
 );
@@ -285,6 +307,10 @@ function pack(project: string | undefined, value: unknown): { content: { type: '
       // A project without a store still has to return redacted JSON.
     }
   }
-  return { content: [{ type: 'text', text: JSON.stringify(redactor.redactUnknown(value)) }] };
+  const body =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? { ...(value as Record<string, unknown>), agent_id: sessionAgentId }
+      : { agent_id: sessionAgentId, value };
+  return { content: [{ type: 'text', text: JSON.stringify(redactor.redactUnknown(body)) }] };
 }
 

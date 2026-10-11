@@ -110,7 +110,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', request.project, 'project.yaml'), 'utf8')));
   const auth = authorisationSchema.parse(parse(readFileSync(join(home, 'authorisations', `${project.authorisation_id}.yaml`), 'utf8')));
   const gate = request.gate ?? project.phase2.gate;
-  const agentId = request.agentId ?? process.env.AEGIS_AGENT_ID ?? `cli-${process.pid}`;
+  const agentId = request.agentId ?? `cli-${process.pid}`;
   if (existsSync(join(home, 'KILL'))) throw new HornetError('The kill switch is on.', 2);
   const domains = projectDomainsAuthorised(project, auth);
   if (!domains.ok) throw new HornetError(domains.reason, 3);

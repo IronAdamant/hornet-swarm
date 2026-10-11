@@ -14,19 +14,34 @@ const projectFile = join(home, 'projects/fixture/project.yaml');
 const mcp = join(root, 'packages/mcp-server/dist/main.js');
 
 describe('unattended swarm', () => {
-  it('lets two agent ids hold two labels and refuses a second label for one id', async () => {
+  it('lets two sessions hold two labels and refuses a second session using the first id', async () => {
     clearSignins();
-    const [first, second] = await Promise.all([
-      mcpCall('acquire_test_user', { project: 'fixture', label: 'qa-user-1', agent_id: 'swarm-a' }),
-      mcpCall('acquire_test_user', { project: 'fixture', label: 'qa-user-2', agent_id: 'swarm-b' }),
-    ]);
-    expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
-    const third = await mcpCall('acquire_test_user', { project: 'fixture', label: 'qa-user-2', agent_id: 'swarm-a' });
-    expect(third.ok).toBe(false);
-    expect(third.reason).toBe('agent_already_holds');
-    await mcpCall('release_test_user', { project: 'fixture', agent_id: 'swarm-a' });
-    await mcpCall('release_test_user', { project: 'fixture', agent_id: 'swarm-b' });
+    const firstSession = await openMcp();
+    const secondSession = await openMcp();
+    try {
+      const first = await sessionCall(firstSession, 'acquire_test_user', { project: 'fixture', label: 'qa-user-1' });
+      const second = await sessionCall(secondSession, 'acquire_test_user', { project: 'fixture', label: 'qa-user-2' });
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      expect(first.agent_id).toMatch(/^mcp-/);
+      expect(second.agent_id).toMatch(/^mcp-/);
+      expect(second.agent_id).not.toBe(first.agent_id);
+      const stolen = await sessionCall(secondSession, 'acquire_test_user', { project: 'fixture', label: 'qa-user-1', agent_id: first.agent_id });
+      expect(stolen.ok).toBe(false);
+      expect(stolen.error).toContain('another session');
+      const third = await sessionCall(firstSession, 'acquire_test_user', { project: 'fixture', label: 'qa-user-2' });
+      expect(third.ok).toBe(false);
+      expect(third.reason).toBe('agent_already_holds');
+      const released = await sessionCall(secondSession, 'release_test_user', { project: 'fixture', agent_id: first.agent_id });
+      expect(released.ok).toBe(false);
+      const stillHeld = JSON.parse(readFileSync(join(home, 'leases.json'), 'utf8')) as { agentId: string; label: string }[];
+      expect(stillHeld.some((lease) => lease.agentId === first.agent_id && lease.label === 'qa-user-1')).toBe(true);
+      await sessionCall(firstSession, 'release_test_user', { project: 'fixture' });
+      await sessionCall(secondSession, 'release_test_user', { project: 'fixture' });
+    } finally {
+      await firstSession.close();
+      await secondSession.close();
+    }
   });
 
   it('renews a short lease until the hold ends', async () => {
@@ -65,7 +80,7 @@ describe('unattended swarm', () => {
         },
         home,
       );
-      const missed = hornet(['sign-in', '--project', 'fixture', '--user', 'qa-user-1', '--agent-id', 'selector-probe', '--json']);
+      const missed = hornet(['sign-in', '--project', 'fixture', '--user', 'qa-user-1', '--json']);
       expect(missed.status).not.toBe(0);
       expect(readFileSync(projectFile, 'utf8')).toContain('#missing-user');
       saveSwarmBoard(
@@ -77,7 +92,7 @@ describe('unattended swarm', () => {
         },
         home,
       );
-      const signed = hornet(['sign-in', '--project', 'fixture', '--user', 'qa-user-1', '--agent-id', 'selector-probe', '--json']);
+      const signed = hornet(['sign-in', '--project', 'fixture', '--user', 'qa-user-1', '--json']);
       expect(signed.status, signed.stdout + signed.stderr).toBe(0);
       const body = JSON.parse(signed.stdout) as { status: string; parent: { validation_required: boolean; packet_path: string; evidence_zip: string } };
       expect(body.status).toBe('passed');
@@ -105,8 +120,6 @@ describe('unattended swarm', () => {
       '--project',
       'fixture',
       '--json',
-      '--agent-id',
-      'chaos-click',
       '--chaos',
       'double-click',
       '--seed',
@@ -131,7 +144,7 @@ describe('unattended swarm', () => {
     const html = readFileSync(parsed.html_path, 'utf8');
     expect(html).toContain('Data isolation');
     expect(html).toContain('Redaction: PASS');
-    const human = hornet(['sign-in', '--project', 'fixture', '--user', 'qa-user-1', '--agent-id', 'human-parent']);
+    const human = hornet(['sign-in', '--project', 'fixture', '--user', 'qa-user-1']);
     expect(human.status, human.stdout + human.stderr).toBe(0);
     const lines = human.stdout.split('\n');
     expect(lines[0]).toBe('The parent must validate this run.');
@@ -144,7 +157,7 @@ describe('unattended swarm', () => {
     const original = readFileSync(projectFile, 'utf8');
     writeFileSync(projectFile, original.replace('max_run_duration_min: 30', 'max_run_duration_min: 0.01'));
     try {
-      const run = hornet(['suite', '--project', 'fixture', '--json', '--agent-id', 'duration-holder', '--journey', join(journeys, 'kill-wait.journey.yaml')]);
+      const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'kill-wait.journey.yaml')]);
       expect(run.status).toBe(2);
       const body = JSON.parse(run.stdout) as { status: string; parent: { status: string; killed: boolean } };
       expect(body.status).toBe('blocked');
@@ -206,8 +219,6 @@ describe('unattended swarm', () => {
       '--project',
       'fixture',
       '--json',
-      '--agent-id',
-      'label-filter',
       '--user',
       'qa-user-1',
       '--journey',
@@ -240,7 +251,7 @@ describe('unattended swarm', () => {
     const target = 'hornet-swarm-fixture-qa-user-2';
     const before = dockerNames();
     const existed = before.includes(target);
-    const run = hornet(['sign-in', '--project', 'fixture', '--json', '--agent-id', 'missing-runner', '--user', 'qa-user-2']);
+    const run = hornet(['sign-in', '--project', 'fixture', '--json', '--user', 'qa-user-2']);
     const after = dockerNames();
     if (!existed) expect(after).not.toContain(target);
     const packet = JSON.parse(readFileSync(join(home, 'projects/fixture/latest-parent-report.json'), 'utf8')) as {
@@ -262,7 +273,7 @@ describe('unattended swarm', () => {
     clearSignins();
     execFileSync('docker', ['stop', 'hornet-swarm-fixture-qa-user-1'], { encoding: 'utf8' });
     try {
-      const run = hornet(['sign-in', '--project', 'fixture', '--json', '--agent-id', 'restart-holder', '--user', 'qa-user-1']);
+      const run = hornet(['sign-in', '--project', 'fixture', '--json', '--user', 'qa-user-1']);
       const packet = JSON.parse(readFileSync(join(home, 'projects/fixture/latest-parent-report.json'), 'utf8')) as {
         status: string;
         validation_required: boolean;
@@ -286,6 +297,19 @@ describe('unattended swarm', () => {
 
 function dockerNames(): string[] {
   return execFileSync('docker', ['ps', '-a', '--format', '{{.Names}}'], { encoding: 'utf8' }).split('\n');
+}
+
+async function openMcp(): Promise<Client> {
+  const transport = new StdioClientTransport({ command: process.execPath, args: [mcp], cwd: root });
+  const client = new Client({ name: 'hornet-unattended', version: '0.1.0' });
+  await client.connect(transport);
+  return client;
+}
+
+async function sessionCall(client: Client, name: string, args: Record<string, unknown>): Promise<{ ok?: boolean; reason?: string; error?: string; agent_id?: string }> {
+  const result = await client.callTool({ name, arguments: args });
+  const text = result.content?.find((entry) => entry.type === 'text')?.text ?? '{}';
+  return JSON.parse(text) as { ok?: boolean; reason?: string; error?: string; agent_id?: string };
 }
 
 async function mcpCall(name: string, args: Record<string, unknown>): Promise<{ ok?: boolean; reason?: string }> {
