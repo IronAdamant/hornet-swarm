@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { authorisationSchema, credentialRequestSchema, domainCovered, projectDomainsAuthorised, projectSchema, authorisationStatus } from '@hornet-swarm/core';
+import { authorisationSchema, credentialRequestSchema, domainCovered, projectDomainsAuthorised, projectSchema, authorisationStatus, shortSecretError } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
 import { setSecret } from './broker.js';
 import { HornetError } from './errors.js';
@@ -166,6 +166,8 @@ export function storeOwnerLogin(
   totp: string | undefined,
   home = aegisHome(),
 ): { ok: true; label: string; status: 'ready' } {
+  const problem = shortSecretError(username, password, totp);
+  if (problem) throw new HornetError(problem, 3);
   assertProjectAuthorised(project, home);
   setSecret(project, label, 'username', username, home);
   setSecret(project, label, 'password', password, home);
@@ -297,6 +299,18 @@ async function handlePage(req: IncomingMessage, res: ServerResponse, home: strin
     send(res, 200, 'The request was declined.');
     return;
   }
+  const username = body.get('username') ?? '';
+  const password = body.get('password') ?? '';
+  const totp = body.get('totp') ?? '';
+  if (!username || !password) {
+    send(res, 400, 'Username and password are required.');
+    return;
+  }
+  const problem = shortSecretError(username, password, totp || undefined);
+  if (problem) {
+    send(res, 400, problem);
+    return;
+  }
   const site = body.get('site') ?? '';
   let hostname: string;
   try {
@@ -315,14 +329,13 @@ async function handlePage(req: IncomingMessage, res: ServerResponse, home: strin
     send(res, 401, 'Touch ID was not confirmed.');
     return;
   }
-  const username = body.get('username') ?? '';
-  const password = body.get('password') ?? '';
-  const totp = body.get('totp') ?? '';
-  if (!username || !password) {
-    send(res, 400, 'Username and password are required.');
+  try {
+    storeOwnerLogin(record.project, record.label, username, password, totp || undefined, home);
+  } catch (error) {
+    const message = error instanceof HornetError ? error.message : 'The login could not be saved.';
+    send(res, 400, message);
     return;
   }
-  storeOwnerLogin(record.project, record.label, username, password, totp || undefined, home);
   send(res, 200, 'Saved. You can close this page.');
 }
 

@@ -4,5 +4,6 @@ export * from './journey.js';
 export * from './lease.js';
 export * from './policy.js';
 export * from './redactor.js';
+export * from './secret-length.js';
 export * from './schemas.js';
 export * from './template.js';

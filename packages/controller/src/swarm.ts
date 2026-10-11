@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
-import { authorisationSchema, authorisationStatus, containerHost, domainCovered, projectSchema, Redactor, type Project } from '@hornet-swarm/core';
+import { authorisationSchema, authorisationStatus, containerHost, domainCovered, projectSchema, Redactor, shortSecretError, type Project } from '@hornet-swarm/core';
 import { listLabels, registerProjectSecrets, setSecret } from './broker.js';
 import { envStatus } from './env.js';
 import { HornetError } from './errors.js';
@@ -98,6 +98,8 @@ export function saveSwarmBoard(
   if (filled.length === 0) throw new HornetError('Enter at least one login.', 3);
   for (const card of filled) {
     if (!card.username || !card.password) throw new HornetError('Each login needs a username and a password.', 3);
+    const problem = shortSecretError(card.username, card.password);
+    if (problem) throw new HornetError(problem, 3);
   }
   const file = join(home, 'projects', projectId, 'project.yaml');
   let project: Project;

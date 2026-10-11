@@ -57,6 +57,23 @@ describe('redactor', () => {
     expect(cleaned.nested.cookie).toBe('[REDACTED:header]');
   });
 
+  it('redacts encoded forms of a secret that is at least 8 characters', () => {
+    const secret = 'a"b<c>d&';
+    expect(secret.length).toBe(8);
+    const redactor = new Redactor();
+    redactor.register('qa-user-1.password', secret);
+    const encoded = [
+      encodeURIComponent(secret),
+      Buffer.from(secret, 'utf8').toString('base64'),
+      JSON.stringify(secret).slice(1, -1),
+    ];
+    for (const form of encoded) {
+      expect(form.length).toBeGreaterThan(0);
+      expect(redactor.redact(`before ${form} after`)).toBe('before [REDACTED:qa-user-1.password] after');
+      expect(redactor.contains(form)).toBe(true);
+    }
+  });
+
   it('keeps a short original secret and drops a short derived form', () => {
     const empty = new Redactor();
     empty.register('qa-user-1.password', '');
