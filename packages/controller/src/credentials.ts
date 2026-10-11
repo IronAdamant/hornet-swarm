@@ -211,7 +211,17 @@ async function handleSetup(req: IncomingMessage, res: ServerResponse, home: stri
   }
   try {
     const view = saveSwarmBoard(
-      { project: body.get('project') ?? '', website: body.get('website') ?? '', cards: cardsFromForm(body) },
+      {
+        project: body.get('project') ?? '',
+        website: body.get('website') ?? '',
+        cards: cardsFromForm(body),
+        selectors: {
+          username: body.get('selector_username') ?? '',
+          password: body.get('selector_password') ?? '',
+          submit: body.get('selector_submit') ?? '',
+          success: body.get('selector_success') ?? '',
+        },
+      },
       home,
     );
     send(res, 200, `Ready. ${view.agents.length} login${view.agents.length === 1 ? '' : 's'} stored for ${view.website}. Agents can see the site and the personalities.`);

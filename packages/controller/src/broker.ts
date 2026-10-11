@@ -15,7 +15,7 @@ export type SecretField = (typeof FIELDS)[number];
 type SecretUser = { username?: string; password?: string; totp_secret?: string };
 type SecretFile = { users: Record<string, SecretUser> };
 
-export type InjectedHandle = { ok: true; handles: string[] };
+export type InjectedHandle = { ok: true; handles: string[]; code?: string };
 
 export function listLabels(project: string, home = aegisHome()): string[] {
   return Object.keys(readUsers(home, project)).filter((label) => /^qa-user-\d+$/.test(label));
@@ -27,6 +27,17 @@ export function registerProjectSecrets(project: string, redactor: Redactor, home
     if (user.password) redactor.register(`${label}.password`, user.password);
     if (user.totp_secret) redactor.register(`${label}.totp_secret`, user.totp_secret);
   }
+}
+
+export function projectSecretValues(project: string, home = aegisHome()): string[] {
+  const values: string[] = [];
+  for (const user of Object.values(readUsers(home, project))) {
+    for (const field of FIELDS) {
+      const value = user[field];
+      if (value) values.push(value);
+    }
+  }
+  return values;
 }
 
 export function listFields(project: string, label: string, home = aegisHome()): SecretField[] {
@@ -61,7 +72,7 @@ export async function injectTotp(project: string, label: string, endpoint: strin
     body: JSON.stringify({ credentials: [{ handle: `${label}.totp_code`, value: code }] }),
   });
   if (!response.ok) throw new Error('Runner rejected the login handoff.');
-  return { ok: true, handles: [`${label}.totp_code`] };
+  return { ok: true, handles: [`${label}.totp_code`], code };
 }
 
 export async function injectSecrets(

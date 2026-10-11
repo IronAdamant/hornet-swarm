@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+pnpm --filter @hornet-swarm/core build
 mkdir -p images/runner/build
 pnpm exec esbuild packages/runner/src/main.ts \
   --bundle --platform=node --format=esm \

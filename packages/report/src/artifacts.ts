@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import JSZip from 'jszip';
 import pixelmatch from 'pixelmatch';
@@ -70,7 +70,10 @@ export async function writeEvidenceZip(sourceDir: string, destination: string, r
   const hits = await scanTree(sourceDir, redactor);
   if (hits.length > 0) throw new Error('evidence failed the redaction scan');
   const zip = new JSZip();
-  const files = walkFiles(sourceDir).map((file) => {
+  const skipped = resolve(destination);
+  const files = walkFiles(sourceDir)
+    .filter((file) => resolve(file) !== skipped)
+    .map((file) => {
     const data = readFileSync(file);
     const path = relative(sourceDir, file);
     zip.file(path, data);

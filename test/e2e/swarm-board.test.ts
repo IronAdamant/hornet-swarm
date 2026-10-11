@@ -31,6 +31,9 @@ describe('swarm board', () => {
       expect(html).toContain('qa-user-10');
       expect(html).toContain('name="password_1"');
       expect(html).toContain('name="personality_10"');
+      expect(html).toContain('name="selector_username"');
+      expect(html).toContain('#email');
+      expect(html).toContain('value="/dashboard"');
       expect(html).not.toContain(password);
     } finally {
       await page.close();
@@ -80,6 +83,62 @@ describe('swarm board', () => {
         home,
       ),
     ).toThrow(/not authorised/);
+  });
+
+  it('refuses fixture selectors on a non-fixture host and stores selectors for an authorised host', () => {
+    const authFile = join(home, 'authorisations/selector-owner.yaml');
+    const projectFile = join(projectDir, 'project.yaml');
+    const original = readFileSync(projectFile, 'utf8');
+    writeFileSync(
+      authFile,
+      `id: selector-owner
+basis: owner
+client: self
+authoriser: { name: Aron Amos, role: Owner, email: aron.amos@ironadamant.com }
+granted_to: Aron Amos
+scope:
+  domains: [localhost, selectors.example]
+  environments: [test]
+activities: [signin_smoke]
+exclusions: []
+valid_from: "2026-01-01"
+valid_until: "2027-12-31"
+document: { path: local.txt, sha256: "0000000000000000000000000000000000000000000000000000000000000000" }
+`,
+    );
+    writeFileSync(projectFile, original.replace('authorisation_id: fixture-owner', 'authorisation_id: selector-owner'));
+    try {
+      expect(() =>
+        saveSwarmBoard(
+          {
+            project,
+            website: 'https://selectors.example/login',
+            cards: [{ username: 'someone', password: 'nope-selector', personality: 'curious' }],
+            selectors: { username: '#email', password: '#password', submit: "role=button[name='Sign in']", success: '/dashboard' },
+          },
+          home,
+        ),
+      ).toThrow(/practice site/);
+      const view = saveSwarmBoard(
+        {
+          project,
+          website: 'https://selectors.example/login',
+          cards: [{ username: 'someone', password: 'nope-selector', personality: 'curious' }],
+          selectors: { username: '#user', password: '#pass', submit: "role=button[name='Continue']", success: '/home' },
+        },
+        home,
+      );
+      expect(view.ready).toBe(true);
+      const saved = readFileSync(projectFile, 'utf8');
+      expect(saved).toContain('#user');
+      expect(saved).toContain('#pass');
+      expect(saved).toContain('/home');
+      expect(saved).not.toContain('nope-selector');
+      expect(JSON.stringify(readSwarm(project, home))).not.toContain('nope-selector');
+    } finally {
+      writeFileSync(projectFile, original);
+      rmSync(authFile, { force: true });
+    }
   });
 });
 

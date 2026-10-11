@@ -1,8 +1,10 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
-import { authorisationSchema, authorisationStatus, domainCovered, projectSchema, Redactor, type Project } from '@hornet-swarm/core';
+import { authorisationSchema, authorisationStatus, containerHost, domainCovered, projectSchema, Redactor, type Project } from '@hornet-swarm/core';
 import { listLabels, registerProjectSecrets, setSecret } from './broker.js';
+import { envStatus } from './env.js';
 import { HornetError } from './errors.js';
 import { aegisHome, ensureDir } from './home.js';
 
@@ -15,9 +17,47 @@ export type SwarmView = {
   agents: SwarmAgent[];
 };
 
+export type SwarmSnapshot = SwarmView & {
+  kill_switch: boolean;
+  runners: { label: string; healthy: boolean }[];
+};
+
 export type SwarmCard = { username: string; password: string; personality: string };
 
+export type SwarmSelectors = { username: string; password: string; submit: string; success: string };
+
+const FIXTURE_SELECTORS: SwarmSelectors = {
+  username: '#email',
+  password: '#password',
+  submit: "role=button[name='Sign in']",
+  success: '/dashboard',
+};
+
+const FIXTURE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'host.docker.internal']);
+
 const CARD_COUNT = 10;
+
+/** Healthy means the runner is running and its health check answered. An endpoint alone is not enough. */
+export function runnerHealth(
+  agents: SwarmAgent[],
+  runners: { label: string; health: string }[] | null,
+): { label: string; healthy: boolean }[] {
+  return agents.map((agent) => ({
+    label: agent.label,
+    healthy: runners?.some((runner) => runner.label === agent.label && runner.health === 'healthy') ?? false,
+  }));
+}
+
+export async function swarmSnapshot(project: string, home = aegisHome()): Promise<SwarmSnapshot> {
+  const view = readSwarm(project, home);
+  let runners: { label: string; health: string }[] | null = null;
+  try {
+    runners = (await envStatus(project)).runners;
+  } catch {
+    runners = null;
+  }
+  return { ...view, kill_switch: existsSync(join(home, 'KILL')), runners: runnerHealth(view.agents, runners) };
+}
 
 export function readSwarm(project: string, home = aegisHome()): SwarmView {
   try {
@@ -36,7 +76,10 @@ export function readSwarm(project: string, home = aegisHome()): SwarmView {
   }
 }
 
-export function saveSwarmBoard(input: { project: string; website: string; cards: SwarmCard[] }, home = aegisHome()): SwarmView {
+export function saveSwarmBoard(
+  input: { project: string; website: string; cards: SwarmCard[]; selectors?: SwarmSelectors },
+  home = aegisHome(),
+): SwarmView {
   const projectId = input.project.trim();
   if (!/^[a-z0-9-]+$/.test(projectId)) throw new HornetError('Enter a project name made of letters, numbers, and dashes.', 3);
   let website: URL;
@@ -64,6 +107,10 @@ export function saveSwarmBoard(input: { project: string; website: string; cards:
     throw new HornetError(`Project ${projectId} is not set up yet.`, 3);
   }
   if (!hostAuthorised(projectId, website.hostname, home)) throw new HornetError('That site is not authorised.', 3);
+  const selectors = resolveSelectors(project, input.selectors);
+  if (!fixtureHost(website.hostname) && sameFixtureSelectors(selectors)) {
+    throw new HornetError('Those login selectors belong to the practice site. Enter the selectors for this website.', 3);
+  }
 
   const agents: SwarmAgent[] = filled.map((card, index) => {
     const label = `qa-user-${index + 1}`;
@@ -76,13 +123,20 @@ export function saveSwarmBoard(input: { project: string; website: string; cards:
   for (const agent of agents) agent.personality = redactor.redact(agent.personality);
 
   const origins = new Set<string>([website.origin]);
-  if (website.hostname === 'localhost' || website.hostname === '127.0.0.1') {
+  if (containerHost(website.hostname, localAddresses()) === 'host.docker.internal') {
     const docker = new URL(website.toString());
     docker.hostname = 'host.docker.internal';
     origins.add(docker.origin);
   }
   project.targets.base_url = website.toString();
   project.targets.allowed_origins = [...origins];
+  project.auth.selectors = {
+    username: selectors.username,
+    password: selectors.password,
+    submit: selectors.submit,
+    totp: project.auth.selectors.totp,
+  };
+  project.auth.success = [{ type: 'url_contains', value: selectors.success }];
   project.runners.count = agents.length;
   project.limits.max_parallel_runners = agents.length;
   project.users = agents.map((agent) => {
@@ -103,6 +157,7 @@ export function saveSwarmBoard(input: { project: string; website: string; cards:
 
 export function swarmBoardHtml(project: string, home = aegisHome()): string {
   const view = readSwarm(project, home);
+  const selectors = selectorsForHtml(project, home);
   let stored: string[] = [];
   try {
     stored = listLabels(project, home);
@@ -136,6 +191,10 @@ export function swarmBoardHtml(project: string, home = aegisHome()): string {
     <form method="post" action="/setup">
       <label>Project <input name="project" value="${escapeText(project)}" required></label>
       <label>Website <input name="website" type="url" required value="${escapeText(view.website)}" placeholder="http://127.0.0.1:4173"></label>
+      <label>Username selector <input name="selector_username" value="${escapeText(selectors.username)}" required></label>
+      <label>Password selector <input name="selector_password" value="${escapeText(selectors.password)}" required></label>
+      <label>Submit selector <input name="selector_submit" value="${escapeText(selectors.submit)}" required></label>
+      <label>Success check <input name="selector_success" value="${escapeText(selectors.success)}" required></label>
       ${cards}
       <button name="decision" value="ready">Ready</button>
     </form>
@@ -148,6 +207,60 @@ export function cardsFromForm(body: URLSearchParams): SwarmCard[] {
     password: body.get(`password_${index + 1}`) ?? '',
     personality: body.get(`personality_${index + 1}`) ?? '',
   }));
+}
+
+function resolveSelectors(project: Project, given: SwarmSelectors | undefined): SwarmSelectors {
+  const current = selectorsFromProject(project);
+  const selectors = {
+    username: (given?.username ?? current.username).trim(),
+    password: (given?.password ?? current.password).trim(),
+    submit: (given?.submit ?? current.submit).trim(),
+    success: (given?.success ?? current.success).trim(),
+  };
+  if (!selectors.username || !selectors.password || !selectors.submit || !selectors.success) {
+    throw new HornetError('Enter the username, password, and submit selectors, and the success check.', 3);
+  }
+  return selectors;
+}
+
+function selectorsFromProject(project: Project): SwarmSelectors {
+  const success = project.auth.success.find((item) => item.type === 'url_contains')?.value ?? FIXTURE_SELECTORS.success;
+  return {
+    username: project.auth.selectors.username,
+    password: project.auth.selectors.password,
+    submit: project.auth.selectors.submit,
+    success,
+  };
+}
+
+function selectorsForHtml(projectId: string, home: string): SwarmSelectors {
+  try {
+    const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
+    return selectorsFromProject(project);
+  } catch {
+    return { ...FIXTURE_SELECTORS };
+  }
+}
+
+function sameFixtureSelectors(selectors: SwarmSelectors): boolean {
+  return (
+    selectors.username === FIXTURE_SELECTORS.username &&
+    selectors.password === FIXTURE_SELECTORS.password &&
+    selectors.submit === FIXTURE_SELECTORS.submit &&
+    selectors.success === FIXTURE_SELECTORS.success
+  );
+}
+
+function fixtureHost(hostname: string): boolean {
+  return FIXTURE_HOSTS.has(hostname.toLowerCase().replace(/^\[|\]$/g, ''));
+}
+
+function localAddresses(): string[] {
+  const addresses: string[] = [];
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) addresses.push(entry.address);
+  }
+  return addresses;
 }
 
 function swarmPath(home: string, project: string): string {

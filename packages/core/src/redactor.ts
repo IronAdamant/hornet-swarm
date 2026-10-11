@@ -10,9 +10,13 @@ export class Redactor {
     const token = `[REDACTED:${label}]`;
     const forms = new Set<string>();
     addDerived(forms, value);
-    if (label.endsWith('.username')) addDerived(forms, value.toLowerCase());
+    const foldCase = label.endsWith('.username') || label.endsWith('.password') || label.endsWith('.totp_secret');
+    if (foldCase) addDerived(forms, value.toLowerCase());
+    const originals = new Set<string>([value, encodeURIComponent(value)]);
+    if (foldCase) originals.add(value.toLowerCase());
     for (const form of forms) {
-      if (form.length < 4) continue;
+      if (!form) continue;
+      if (form.length < 4 && !originals.has(form)) continue;
       this.forms.push({ form, token });
     }
     this.forms.sort((left, right) => right.form.length - left.form.length);

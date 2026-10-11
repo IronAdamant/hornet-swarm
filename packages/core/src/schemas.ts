@@ -67,6 +67,7 @@ export const projectSchema = z
             username: z.string(),
             password: z.string(),
             submit: z.string(),
+            totp: z.string().default("input[autocomplete='one-time-code']"),
           })
           .strict(),
         success: z.array(assertionSchema).min(1),
@@ -254,7 +255,7 @@ export const stepResultSchema = z
     error: z.string().optional(),
     screenshot: z.string().optional(),
     blocked_reason: z
-      .enum(['captcha', '2fa', 'allowlist', 'rate_limited', 'kill', 'signin_limit'])
+      .enum(['captcha', '2fa', 'allowlist', 'rate_limited', 'kill', 'signin_limit', 'duration', 'totp_missing', 'proxy'])
       .optional(),
     console_error_count: z.number().int().nonnegative().optional(),
     network_errors: z

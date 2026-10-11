@@ -138,7 +138,12 @@ class TokenBucket {
   }
 }
 
-export function startControlGateway(options: { port: number; project: string }): Promise<{ port: number; close: () => Promise<void> }> {
+export function startControlGateway(options: {
+  port: number;
+  project: string;
+  upstreamHost?: string;
+  upstreamPort?: number;
+}): Promise<{ port: number; close: () => Promise<void> }> {
   const server = createServer((req, res) => {
     const requested = req.url ?? '/';
     const pathOnly = requested.split('?')[0] ?? '/';
@@ -150,13 +155,15 @@ export function startControlGateway(options: { port: number; project: string }):
     }
     const label = match[1];
     const suffix = `${match[2] && match[2].length > 0 ? match[2] : '/'}${requested.includes('?') ? `?${requested.split('?')[1]}` : ''}`;
+    const host = options.upstreamHost ?? `hornet-swarm-${options.project}-${label}`;
+    const port = options.upstreamPort ?? 8787;
     const upstream = httpRequest(
       {
-        host: `hornet-swarm-${options.project}-${label}`,
-        port: 8787,
+        host,
+        port,
         path: suffix,
         method: req.method,
-        headers: { ...req.headers, host: `hornet-swarm-${options.project}-${label}:8787` },
+        headers: { ...req.headers, host: `${host}:${port}` },
       },
       (response) => {
         res.writeHead(response.statusCode ?? 502, response.headers);
@@ -166,6 +173,13 @@ export function startControlGateway(options: { port: number; project: string }):
     upstream.on('error', () => {
       if (!res.headersSent) res.writeHead(502);
       res.end();
+    });
+    let finished = false;
+    res.on('finish', () => {
+      finished = true;
+    });
+    res.on('close', () => {
+      if (!finished) upstream.destroy();
     });
     req.pipe(upstream);
   });

@@ -69,14 +69,20 @@ export async function envReset(options: { project: string; count?: number; hard?
   return { ...status, durationMs: Date.now() - started, idempotent: true };
 }
 
-export async function stopRunners(project: string): Promise<void> {
+export function containerChosen(entry: { Names: string[]; Labels?: Record<string, string> }, project: string, label?: string): boolean {
+  if (!label) return true;
+  const wanted = containerName(project, label);
+  return entry.Names.some((name) => name === `/${wanted}` || name === wanted) || entry.Labels?.['hornet-swarm.user'] === label;
+}
+
+export async function stopRunners(project: string, label?: string): Promise<void> {
   const docker = createDocker();
   const listed = await docker.listContainers({
     all: true,
     filters: { label: [`hornet-swarm.project=${project}`, 'hornet-swarm.role=runner'] },
   });
   await Promise.all(
-    listed.map(async (entry) => {
+    listed.filter((entry) => containerChosen(entry, project, label)).map(async (entry) => {
       const container = docker.getContainer(entry.Id);
       try {
         await container.stop({ t: 1 });
@@ -85,6 +91,27 @@ export async function stopRunners(project: string): Promise<void> {
       }
     }),
   );
+}
+
+export async function startStoppedRunner(project: string, label: string): Promise<boolean> {
+  const docker = createDocker();
+  const existing = await findContainer(docker, containerName(project, label));
+  if (!existing) return false;
+  const inspected = await existing.inspect();
+  if (!inspected.State.Running) {
+    try {
+      await existing.start();
+    } catch {
+      return false;
+    }
+  }
+  let endpoint = '';
+  try {
+    endpoint = await waitForEndpoint(docker, project, label);
+  } catch {
+    return false;
+  }
+  return waitHealthy(endpoint, 20_000);
 }
 
 export async function envStatus(project: string): Promise<EnvStatus> {

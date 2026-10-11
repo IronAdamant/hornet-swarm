@@ -46,8 +46,12 @@ describe('example journeys and reports', () => {
       expect(junit).toContain('</testsuites>');
       const html = readFileSync(join(report.dir, 'report.html'), 'utf8');
       expect(html).toContain('Redaction: PASS');
+      expect(html).toContain('Data isolation');
+      expect(html).toContain('<a href=');
+      expect(html).toContain('.png');
       expect(html).toMatch(/AEDT|AEST/);
       expect(html).toMatch(/2026-\d{2}-\d{2}T/);
+      expect(html).not.toContain(secret);
     }
   });
 });

@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { setSecret } from '../../packages/controller/dist/index.js';
 import { validateJourneyYaml, projectSchema } from '../../packages/core/dist/index.js';
 import { parse } from 'yaml';
-import { hornet, clearSignins, cli, home, journeys, readRun, resetFixture, root, secret } from './helper.js';
+import { totpCode } from '../../packages/controller/src/totp.ts';
+import { hornet, clearSignins, cli, home, journeys, latestRun, readRun, resetFixture, root, secret } from './helper.js';
 
 const projectFile = join(home, 'projects/fixture/project.yaml');
 
@@ -26,6 +27,67 @@ describe('phase gate and safety', () => {
       expect(report.summary.toLowerCase()).toContain('sign-in');
     } finally {
       setSecret('fixture', 'qa-user-1', 'password', secret, home);
+    }
+  });
+
+  it('does not treat a hidden six-digit field as a second factor', async () => {
+    const login = await fetch('http://127.0.0.1:4173/login');
+    const html = await login.text();
+    expect(html).toContain('maxlength="6"');
+    expect(html).toContain('hidden');
+    const run = hornet(['sign-in', '--project', 'fixture', '--json', '--user', 'qa-user-1', '--agent-id', 'hidden-code']);
+    expect(run.status, run.stdout + run.stderr).toBe(0);
+  });
+
+  it('rejects a journey that pastes a stored password', () => {
+    const file = join(journeys, 'pasted-secret.journey.yaml');
+    writeFileSync(
+      file,
+      `version: 1
+id: pasted-secret
+name: Pasted secret
+users: [qa-user-1]
+requires_phase1: false
+tags: []
+vars: {}
+retries: 0
+steps:
+  - fill: { selector: "#email", value: ${JSON.stringify(secret)} }
+`,
+    );
+    try {
+      const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', file]);
+      expect(run.status, run.stdout + run.stderr).toBe(3);
+      expect(run.stdout + run.stderr).toContain('stored secret');
+      expect(run.stdout + run.stderr).not.toContain(secret);
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
+  it('rejects a screenshot name that contains a stored secret', () => {
+    const file = join(journeys, 'screenshot-secret.journey.yaml');
+    writeFileSync(
+      file,
+      `version: 1
+id: screenshot-secret
+name: Screenshot secret
+users: [qa-user-1]
+requires_phase1: false
+tags: []
+vars: {}
+retries: 0
+steps:
+  - screenshot: { name: ${JSON.stringify(secret)} }
+`,
+    );
+    try {
+      const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', file]);
+      expect(run.status, run.stdout + run.stderr).toBe(3);
+      expect(run.stdout + run.stderr).toContain('stored secret');
+      expect(run.stdout + run.stderr).not.toContain(secret);
+    } finally {
+      rmSync(file, { force: true });
     }
   });
 
@@ -86,15 +148,31 @@ describe('phase gate and safety', () => {
     const otp = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
     expect(otp.status).toBe(2);
     expect(JSON.stringify(readRun().result)).toContain('2fa');
+    const smsBefore = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { smsPosts: number };
+    const sms = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'sms.journey.yaml')]);
+    expect(sms.status).toBe(2);
+    expect(JSON.stringify(readRun().result)).toContain('2fa');
+    const smsAfter = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { smsPosts: number };
+    expect(smsAfter.smsPosts).toBe(smsBefore.smsPosts);
 
     const original = readFileSync(projectFile, 'utf8');
     setSecret('fixture', 'qa-user-1', 'totp_secret', 'JBSWY3DPEHPK3PXP', home);
-    writeFileSync(projectFile, original.replace('enabled: false', 'enabled: true'));
+    writeFileSync(projectFile, original.replace('enabled: false', 'enabled: true').replace('signin_url: /login', 'signin_url: /login?totp=1'));
     try {
       await resetFixture({ user1: { totp: 'JBSWY3DPEHPK3PXP' } });
       const totp = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'totp.journey.yaml')]);
       expect(totp.status, totp.stdout + totp.stderr).toBe(0);
       expect(JSON.stringify(readRun().result)).toContain('totp-fill');
+      const stats = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { otpFilled: boolean };
+      expect(stats.otpFilled).toBe(true);
+      const harPath = findHar(latestRun());
+      const har = readFileSync(harPath, 'utf8');
+      const now = Date.now();
+      const codes = [totpCode('JBSWY3DPEHPK3PXP', now), totpCode('JBSWY3DPEHPK3PXP', now - 30_000), totpCode('JBSWY3DPEHPK3PXP', now + 30_000)];
+      if (codes.some((code) => har.includes(code))) throw new Error('The one-time code was still present');
+      const prompted = hornet(['suite', '--project', 'fixture', '--json', '--agent-id', 'otp-holder', '--journey', join(journeys, 'otp.journey.yaml')]);
+      expect(prompted.status).toBe(2);
+      expect(JSON.stringify(readRun().result)).toContain('2fa');
     } finally {
       writeFileSync(projectFile, original);
       await resetFixture();
@@ -164,4 +242,19 @@ journeys_dir: ./journeys
 users:
   - { label: qa-user-1, role: consultant, tenant: A1, vars: { tenant_slug: a1, owned_resource_id: res_a1_001 } }
 `);
+}
+
+function findHar(dir: string): string {
+  const found: string[] = [];
+  const walk = (current: string) => {
+    for (const name of readdirSync(current)) {
+      const path = join(current, name);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (name === 'network.har') found.push(path);
+    }
+  };
+  walk(dir);
+  const har = found[0];
+  if (!har) throw new Error('network.har was not written');
+  return har;
 }

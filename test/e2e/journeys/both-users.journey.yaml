@@ -1,0 +1,11 @@
+version: 1
+id: both-users
+name: Ready flag is visible
+users: [qa-user-1, qa-user-2]
+requires_phase1: false
+tags: []
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/flag" }
+  - assert: { type: selector_visible, value: "#ready" }

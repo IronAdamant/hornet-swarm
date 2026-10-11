@@ -16,6 +16,8 @@ export type RichJourney = {
   duration_ms: number;
   steps: RichStep[];
   chaosApplied?: string[];
+  /** Job-level stop reason. The published journey status stays a step status. */
+  blocked_reason?: string;
 };
 
 export type RichUser = {
@@ -29,7 +31,7 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status']):
   const phaseFailed = users.some((user) => user.phase1.status !== 'pass');
   const blockedCaptcha = users.some((user) => user.phase1.blocked_reason === 'captcha' || user.journeys.some((journey) => journey.steps.some((step) => step.blocked_reason === 'captcha')));
   const blockedCode = users.some((user) => user.phase1.blocked_reason === '2fa' || user.journeys.some((journey) => journey.steps.some((step) => step.blocked_reason === '2fa')));
-  const isolationFailed = users.some((user) => user.journeys.some((journey) => journey.name.toLowerCase().includes('denied') && journey.status !== 'pass' && journey.status !== 'skipped'));
+  const isolationFailed = users.some((user) => user.journeys.some((journey) => journey.name.toLowerCase().includes('denied') && journey.status === 'fail'));
   let paragraph: string;
   if (status === 'redaction_failure') {
     paragraph = 'A saved file still contained something that should have stayed hidden. This is critical. Do not share these results until that file is removed.';
@@ -188,13 +190,31 @@ export function junitXml(result: RunResult): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>${suites}</testsuites>\n`;
 }
 
-export function htmlReport(result: RunResult, summary: string): string {
+export function htmlReport(result: RunResult, summary: string, artifacts?: { screenshots: string[]; traces: string[] }): string {
   const when = formatSydney(result.started_at);
   const banner = result.redaction === 'pass' ? 'Redaction: PASS' : 'Redaction: FAIL';
+  const journeyIds = [...new Set(result.users.flatMap((user) => user.journeys.map((journey) => journey.id)))];
+  const header = `<tr><th>Account</th><th>Sign-in</th>${journeyIds.map((id) => `<th>${escapeXml(id)}</th>`).join('')}</tr>`;
   const rows = result.users
-    .map((user) => `<tr><td>${escapeXml(user.label)}</td><td>${escapeXml(user.phase1.status)}</td><td>${user.journeys.map((journey) => `${escapeXml(journey.id)} ${escapeXml(journey.status)}`).join(', ')}</td></tr>`)
+    .map((user) => {
+      const cells = journeyIds
+        .map((id) => {
+          const journey = user.journeys.find((entry) => entry.id === id);
+          return `<td>${escapeXml(journey?.status ?? '')}</td>`;
+        })
+        .join('');
+      return `<tr><td>${escapeXml(user.label)}</td><td>${escapeXml(user.phase1.status)}</td>${cells}</tr>`;
+    })
     .join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Hornet Swarm report</title></head><body><h1>${banner}</h1><p>${escapeXml(when)}</p><pre>${escapeXml(summary)}</pre><table><tr><th>Account</th><th>Sign-in</th><th>Checks</th></tr>${rows}</table></body></html>\n`;
+  const links = [...(artifacts?.screenshots ?? []), ...(artifacts?.traces ?? [])]
+    .map((path) => `<li><a href="${escapeXml(linkHref(path))}">${escapeXml(path)}</a></li>`)
+    .join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Hornet Swarm report</title></head><body><h1>${banner}</h1><p>${escapeXml(when)}</p><pre>${escapeXml(summary)}</pre><h2>Data isolation</h2><table>${header}${rows}</table><h2>Evidence</h2><ul>${links}</ul></body></html>\n`;
+}
+
+function linkHref(path: string): string {
+  const href = path.startsWith('/') ? `file://${path}` : path;
+  return encodeURI(href).replace(/&/g, '%26');
 }
 
 export function formatSydney(iso: string): string {
@@ -217,7 +237,7 @@ export function formatSydney(iso: string): string {
 }
 
 function testcase(classname: string, name: string, status: string, secondsMs: number, error?: string): string {
-  const failed = status === 'fail' || status === 'flaky' || status === 'error';
+  const failed = status === 'fail' || status === 'flaky' || status === 'error' || status === 'blocked';
   const body = failed ? `<failure message="${escapeXml(status)}">${escapeXml(error ?? status)}</failure>` : '';
   return `<testcase classname="${escapeXml(classname)}" name="${escapeXml(name)}" time="${(secondsMs / 1000).toFixed(3)}">${body}</testcase>`;
 }

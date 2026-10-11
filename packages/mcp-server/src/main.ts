@@ -13,12 +13,14 @@ import {
   envReset,
   listProjectUsers,
   readJourneyYaml,
-  readSwarm,
+  projectSecretValues,
   registerProjectSecrets,
+  releaseKill,
   releaseStoredLease,
   requestCredentials,
   runSuite,
   stopRunners,
+  swarmSnapshot,
 } from '@hornet-swarm/controller';
 import { parse } from 'yaml';
 import { homedir } from 'node:os';
@@ -37,20 +39,41 @@ server.registerTool(
   'run_signin_check',
   {
     description: 'Run the sign-in check',
-    inputSchema: z.object({ project: z.string(), users: z.array(z.string()).optional(), wait: z.boolean().optional() }),
+    inputSchema: z.object({
+      project: z.string(),
+      users: z.array(z.string()).optional(),
+      agent_id: z.string().min(1),
+      wait: z.boolean().optional(),
+    }),
   },
-  async ({ project, users }) =>
-    guard(project, () => runSuite({ project, phase1Only: true, ...(users ? { users } : {}), via: 'mcp', agentId: 'mcp' })),
+  async ({ project, users, agent_id }) =>
+    guard(project, () =>
+      runSuite({ project, phase1Only: true, ...(users ? { users } : {}), via: 'mcp', agentId: agent_id }),
+    ),
 );
 
 server.registerTool(
   'run_journey',
   {
     description: 'Run one journey',
-    inputSchema: z.object({ project: z.string(), journey_id: z.string(), users: z.array(z.string()).optional(), wait: z.boolean().optional() }),
+    inputSchema: z.object({
+      project: z.string(),
+      journey_id: z.string(),
+      users: z.array(z.string()).optional(),
+      agent_id: z.string().min(1),
+      wait: z.boolean().optional(),
+    }),
   },
-  async ({ project, journey_id }) =>
-    guard(project, () => runSuite({ project, journeyFiles: [journey_id], via: 'mcp', agentId: 'mcp' })),
+  async ({ project, journey_id, users, agent_id }) =>
+    guard(project, () =>
+      runSuite({
+        project,
+        journeyFiles: [journey_id],
+        ...(users ? { users } : {}),
+        via: 'mcp',
+        agentId: agent_id,
+      }),
+    ),
 );
 
 server.registerTool(
@@ -60,20 +83,23 @@ server.registerTool(
     inputSchema: z.object({
       project: z.string(),
       journeys: z.array(z.string()).optional(),
+      users: z.array(z.string()).optional(),
       gate: z.enum(['all', 'per_user']).optional(),
       confirm_production: z.boolean().optional(),
+      agent_id: z.string().min(1),
       wait: z.boolean().optional(),
     }),
   },
-  async ({ project, journeys, gate, confirm_production }) =>
+  async ({ project, journeys, users, gate, confirm_production, agent_id }) =>
     guard(project, () =>
       runSuite({
         project,
         ...(journeys ? { journeyFiles: journeys } : {}),
+        ...(users ? { users } : {}),
         ...(gate ? { gate } : {}),
         confirmProduction: Boolean(confirm_production),
         via: 'mcp',
-        agentId: 'mcp',
+        agentId: agent_id,
       }),
     ),
 );
@@ -83,12 +109,22 @@ server.registerTool(
   {
     description: 'Read a run report',
     inputSchema: z.object({
-      run_id: z.string(),
+      project: z.string().optional(),
+      run_id: z.string().optional(),
       format: z.enum(['json', 'junit', 'summary']).optional(),
       detail: z.enum(['summary', 'full']).optional(),
     }),
   },
-  async ({ run_id, format, detail }) => {
+  async ({ project, run_id, format, detail }) => {
+    if (!run_id) {
+      const id = project ?? 'fixture';
+      try {
+        const packet = JSON.parse(readFileSync(join(home(), 'projects', id, 'latest-parent-report.json'), 'utf8')) as unknown;
+        return pack(id, packet);
+      } catch {
+        return pack(id, { ok: false, error: 'No parent report has been written for this project.' });
+      }
+    }
     const dir = join(home(), 'runs', run_id);
     const stored = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')) as { project?: string };
     const kind = detail === 'summary' || format === 'summary' ? 'summary' : detail === 'full' ? 'full' : format ?? 'json';
@@ -102,10 +138,19 @@ server.registerTool(
   'reset_environment',
   {
     description: 'Reset runners or engage the kill switch',
-    inputSchema: z.object({ project: z.string().optional(), hard: z.boolean().optional(), kill: z.boolean().optional() }),
+    inputSchema: z.object({
+      project: z.string().optional(),
+      hard: z.boolean().optional(),
+      kill: z.boolean().optional(),
+      release: z.boolean().optional(),
+    }),
   },
-  async ({ project, hard, kill }) => {
+  async ({ project, hard, kill, release }) => {
     const id = project ?? 'fixture';
+    if (release) {
+      releaseKill(home());
+      return pack(id, { ok: true, released: true });
+    }
     if (kill) {
       engageKill(home());
       await stopRunners(id);
@@ -135,7 +180,7 @@ server.registerTool(
       }
     }
     if (!source.trim()) return pack(id, { valid: false, errors: ['Provide a journey file or journey YAML.'] });
-    const checked = validateJourneyYaml(source, loaded);
+    const checked = validateJourneyYaml(source, loaded, projectSecretValues(id, home()));
     return pack(id, { valid: checked.valid, errors: checked.errors });
   },
 );
@@ -178,7 +223,7 @@ server.registerTool(
     description: 'Read the website, account labels, and personalities after the owner presses Ready. Passwords are not included.',
     inputSchema: z.object({ project: z.string() }),
   },
-  async ({ project }) => pack(project, readSwarm(project, home())),
+  async ({ project }) => pack(project, await swarmSnapshot(project, home())),
 );
 
 server.registerTool(

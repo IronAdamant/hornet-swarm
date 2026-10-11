@@ -25,9 +25,12 @@ export function validateJourneyDocument(
       if (step.fill.totp && !/^qa-user-\d+$/.test(step.fill.totp)) {
         errors.push(`step ${index}: totp must be a user label`);
       }
-      if (step.fill.value && knownSecrets.some((secret) => secret.length >= 4 && step.fill.value?.includes(secret))) {
+      if (step.fill.value && knownSecrets.some((secret) => secret.length >= 1 && step.fill.value?.includes(secret))) {
         errors.push(`step ${index}: literal value matches a stored secret`);
       }
+    }
+    if ('screenshot' in step && knownSecrets.some((secret) => secret.length >= 1 && step.screenshot.name.includes(secret))) {
+      errors.push(`step ${index}: literal value matches a stored secret`);
     }
     if ('navigate' in step && /^[a-z][a-z0-9+.-]*:/i.test(step.navigate.url)) {
       const decision = interactiveOriginAllowed(project, step.navigate.url);

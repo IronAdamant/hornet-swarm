@@ -1,4 +1,5 @@
 import { copyFileSync, cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import {
@@ -11,6 +12,7 @@ import {
   projectDomainsAuthorised,
   projectSchema,
   Redactor,
+  rewriteForContainer,
   runResultSchema,
   type Analysis,
   signinBudget,
@@ -37,16 +39,16 @@ import {
   type RichUser,
 } from '@hornet-swarm/report';
 import { writeAudit } from './audit.js';
-import { injectSecrets, injectTotp, registerProjectSecrets } from './broker.js';
+import { injectSecrets, injectTotp, listFields, projectSecretValues, registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
-import { envStatus, stopRunners } from './env.js';
+import { envStatus, startStoppedRunner, stopRunners } from './env.js';
 import { aegisHome, ensureDir } from './home.js';
-import { acquireLease, releaseStoredLease } from './leases-store.js';
+import { acquireLease, heartbeatStoredLease, releaseStoredLease } from './leases-store.js';
 
 
 export { HornetError } from './errors.js';
 
-type JobReport = {
+export type JobReport = {
   ok: boolean;
   status: 'passed' | 'failed' | 'blocked' | 'error' | 'rate_limited';
   blocked_reason?: StepResult['blocked_reason'];
@@ -65,9 +67,43 @@ export type SuiteRequest = {
   via?: 'cli' | 'mcp';
   phase1Only?: boolean;
   users?: string[];
+  /** Test hook. Production runs keep the 30 minute lease. */
+  leaseTtlMs?: number;
 };
 
-export async function runSuite(request: SuiteRequest): Promise<RunResult> {
+export type ParentPacket = {
+  validation_required: true;
+  run_id: string;
+  project: string;
+  status: string;
+  summary: string;
+  analysis: unknown;
+  evidence_zip: string;
+  html_path: string;
+  screenshot_paths: string[];
+  trace_paths: string[];
+  packet_path: string;
+  instruction: string;
+  killed: boolean;
+};
+
+const PARENT_INSTRUCTION =
+  "The parent Grok Build session or Grok Bot reads this packet, checks it against the task, and only then tells the owner the outcome. The harness does not grade a site's AI replies.";
+
+export function selectRunLabels(input: {
+  phase1Only: boolean;
+  users?: string[];
+  projectUsers: string[];
+  journeyUsers: string[];
+}): string[] {
+  if (input.phase1Only) return input.users ?? input.projectUsers;
+  const journeyUsers = [...new Set(input.journeyUsers)];
+  if (!input.users) return journeyUsers;
+  const wanted = new Set(input.users);
+  return journeyUsers.filter((label) => wanted.has(label));
+}
+
+export async function runSuite(request: SuiteRequest): Promise<RunResult & { parent: ParentPacket }> {
   const home = request.home ?? aegisHome();
   const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', request.project, 'project.yaml'), 'utf8')));
   const auth = authorisationSchema.parse(parse(readFileSync(join(home, 'authorisations', `${project.authorisation_id}.yaml`), 'utf8')));
@@ -83,20 +119,29 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
     if (!allowed.ok) throw new HornetError(allowed.reason, 3);
   }
   const journeys = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? []);
+  const knownSecrets = projectSecretValues(project.id, home);
   for (const journey of journeys) {
-    const checked = validateJourneyYaml(journey.text, project);
+    const checked = validateJourneyYaml(journey.text, project, knownSecrets);
     if (!checked.valid || !checked.journey) throw new HornetError(checked.errors.join('; '), 3);
     journey.journey = checked.journey;
   }
-  const labels = request.phase1Only
-    ? (request.users ?? project.users.map((user) => user.label))
-    : [...new Set(journeys.flatMap((entry) => entry.journey?.users ?? []))];
+  const labels = selectRunLabels({
+    phase1Only: Boolean(request.phase1Only),
+    ...(request.users ? { users: request.users } : {}),
+    projectUsers: project.users.map((user) => user.label),
+    journeyUsers: journeys.flatMap((entry) => entry.journey?.users ?? []),
+  });
   const runId = makeRunId();
   const started = isoOffset();
+  const deadline = Date.now() + project.limits.max_run_duration_min * 60_000;
+  const ttlMs = request.leaseTtlMs ?? 30 * 60 * 1000;
+  const via = request.via ?? 'cli';
   const runDir = ensureDir(join(home, 'runs', runId));
   const rich: RichUser[] = [];
   let killed = false;
+  let durationStop = false;
   const phaseResults: { label: string; report: JobReport }[] = [];
+  const totpCodes: string[] = [];
   const hold = (label: string, work: () => Promise<void>): Promise<void> => {
     const lease = acquireLease({
       project: project.id,
@@ -105,19 +150,34 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
       runId,
       candidates: project.users.map((user) => user.label),
       home,
-      via: request.via ?? 'cli',
+      via,
+      ...(request.leaseTtlMs ? { ttlMs: request.leaseTtlMs } : {}),
     });
     if (!lease.ok) throw new HornetError(lease.reason === 'busy' ? `busy until ${lease.busyUntil ?? 'later'}` : 'agent already holds a login', 3);
-    return work().finally(() => releaseStoredLease(project.id, agentId, home, request.via ?? 'cli'));
+    const intervalMs = Math.max(20, Math.min(60_000, Math.floor(ttlMs / 3)));
+    const renew = setInterval(() => {
+      heartbeatStoredLease(project.id, agentId, home, ttlMs, via);
+    }, intervalMs);
+    return work().finally(() => {
+      clearInterval(renew);
+      heartbeatStoredLease(project.id, agentId, home, ttlMs, via);
+      releaseStoredLease(project.id, agentId, home, via);
+    });
   };
   try {
     for (const label of labels) {
+      if (Date.now() >= deadline) {
+        durationStop = true;
+        phaseResults.push({ label, report: durationReport() });
+        break;
+      }
       await hold(label, async () => {
-        const phase1 = await runPhase1(project, label, runId, home, agentId);
+        const phase1 = await runPhase1(project, label, runId, home, agentId, deadline, totpCodes);
         phaseResults.push({ label, report: phase1.report });
         if (phase1.killed) killed = true;
+        if (phase1.report.blocked_reason === 'duration') durationStop = true;
       });
-      if (killed) break;
+      if (killed || durationStop) break;
     }
     const everyPhasePassed = phaseResults.length === labels.length && phaseResults.every((item) => item.report.status === 'passed');
     for (const item of phaseResults) {
@@ -125,12 +185,13 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
       const phaseOk = item.report.status === 'passed';
       const blockedByGate = gate === 'all' && !everyPhasePassed;
       const userJourneys: RichJourney[] = [];
-      if (!killed && phaseOk && !blockedByGate && entries.length > 0) {
+      if (!killed && !durationStop && phaseOk && !blockedByGate && entries.length > 0) {
         await hold(item.label, async () => {
           for (const entry of entries) {
-            if (killed) break;
-            const played = await runJourney(project, item.label, entry.journey as Journey, runId, home, request.chaos);
+            if (killed || durationStop) break;
+            const played = await runJourney(project, item.label, entry.journey as Journey, runId, home, deadline, totpCodes, request.chaos);
             if (played.killed) killed = true;
+            if (played.duration) durationStop = true;
             userJourneys.push(played.journey);
             rememberRegression(home, project.id, entry, played.journey);
           }
@@ -138,25 +199,42 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
       }
       for (const entry of entries) {
         if (userJourneys.some((journey) => journey.id === entry.journey?.id)) continue;
+        if (durationStop) {
+          userJourneys.push({
+            id: entry.journey?.id ?? 'journey',
+            name: entry.journey?.name ?? 'Check',
+            status: 'blocked',
+            duration_ms: 0,
+            steps: [],
+            blocked_reason: 'duration',
+          });
+          continue;
+        }
         userJourneys.push({ id: entry.journey?.id ?? 'journey', name: entry.journey?.name ?? 'Check', status: 'skipped', duration_ms: 0, steps: [] });
       }
       rich.push({ label: item.label, phase1: phaseRecord(item.report), journeys: userJourneys });
     }
   } catch (error) {
-    releaseStoredLease(project.id, agentId, home, request.via ?? 'cli');
-    if (error instanceof HornetError) throw error;
-    throw new HornetError(error instanceof Error ? error.message : 'The run failed.', 4);
+    releaseStoredLease(project.id, agentId, home, via);
+    const message = error instanceof Error ? error.message : 'The run failed.';
+    const wrote = writeErrorOutcome({
+      home,
+      projectId: project.id,
+      environment: project.environment,
+      authorisationId: project.authorisation_id,
+      runDir,
+      runId,
+      started,
+      gate,
+      message,
+      codes: totpCodes,
+    });
+    if (!wrote.run && !wrote.packet) rmSync(runDir, { recursive: true, force: true });
+    const code = error instanceof HornetError ? error.exitCode : 4;
+    throw new HornetError(wrote.message, code);
   }
   const gatePassed = rich.every((user) => user.phase1.status === 'pass');
-  const phaseProblem = rich.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
-  const journeyProblem = rich.some((user) => user.journeys.some((journey) => journey.status === 'fail' || journey.status === 'error' || journey.status === 'flaky'));
-  const rateLimited = rich.some((user) => user.phase1.blocked_reason === 'rate_limited' || user.journeys.some((journey) => journey.steps.some((step) => step.blocked_reason === 'rate_limited')));
-  const blocked = killed || rich.some((user) => user.phase1.status === 'blocked' || user.journeys.some((journey) => journey.status === 'blocked'));
-  let status: RunResult['status'] = 'passed';
-  if (phaseProblem || journeyProblem) status = 'failed';
-  else if (rateLimited) status = 'rate_limited';
-  else if (blocked) status = 'blocked';
-  else if (!gatePassed) status = 'failed';
+  const status = foldRunStatus({ killed, gatePassed, users: rich, durationStop });
   const result = runResultSchema.parse({
     schema_version: '1',
     run_id: runId,
@@ -183,7 +261,13 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
   });
   applyBaselines(home, project.id, rich);
   const loggedChaos = rich.flatMap((user) => user.journeys.flatMap((journey) => journey.chaosApplied ?? []));
-  const suspected = status === 'passed' ? 'Nothing failed.' : killed ? 'The run was stopped.' : 'A check did not match what we expected.';
+  const suspected = durationStop
+    ? 'The run reached its time limit.'
+    : status === 'passed'
+      ? 'Nothing failed.'
+      : killed
+        ? 'The run was stopped.'
+        : 'A check did not match what we expected.';
   const analysis = buildAnalysis({
     result,
     users: rich,
@@ -195,10 +279,12 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
     next: status === 'passed' ? ['No change is needed.'] : ['Fix the first failed check and run it again.'],
   });
   const summary = summaryMarkdown(rich, status);
-  writeRunReports(runDir, result, analysis, summary);
+  const artifacts = collectArtifacts(runDir);
+  writeRunReports(runDir, result, analysis, summary, undefined, artifacts);
   writeFileSync(join(runDir, 'junit.xml'), junitXml(result));
   const redactor = new Redactor();
   registerProjectSecrets(project.id, redactor, home);
+  for (const code of totpCodes) redactor.register('totp_code', code);
   await redactTree(runDir, redactor);
   const hits = await scanTree(runDir, redactor);
   if (hits.length > 0) {
@@ -207,14 +293,35 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult> {
     const failedAnalysis = failAnalysis(analysis);
     result.status = 'redaction_failure';
     result.redaction = 'fail';
-    writeRunReports(runDir, result, failedAnalysis, failedSummary, redactor);
-    writeAudit({ interface: request.via ?? 'cli', agent: agentId, action: 'redaction_failure', project: project.id, run_id: runId, result: 'quarantined' }, redactor, home);
+    writeRunReports(runDir, result, failedAnalysis, failedSummary, redactor, collectArtifacts(runDir));
+    writeAudit({ interface: via, agent: agentId, action: 'redaction_failure', project: project.id, run_id: runId, result: 'quarantined' }, redactor, home);
   }
-  writeAudit({ interface: request.via ?? 'cli', agent: agentId, action: 'run_suite', project: project.id, run_id: runId, labels, result: result.status }, redactor, home);
-  return result;
+  writeAudit({ interface: via, agent: agentId, action: 'run_suite', project: project.id, run_id: runId, labels, result: result.status }, redactor, home);
+  const parent = await publishParent({
+    home,
+    projectId: project.id,
+    runDir,
+    runId,
+    result,
+    summary,
+    durationStop: durationStop && result.status !== 'redaction_failure',
+    killed,
+    redactor,
+    artifacts: collectArtifacts(runDir),
+    redactionFailed: hits.length > 0,
+  });
+  return { ...result, parent };
 }
 
-async function runPhase1(project: Project, label: string, runId: string, home: string, _agent: string): Promise<{ report: JobReport; killed: boolean }> {
+async function runPhase1(
+  project: Project,
+  label: string,
+  runId: string,
+  home: string,
+  _agent: string,
+  deadline: number,
+  codes: string[],
+): Promise<{ report: JobReport; killed: boolean }> {
   const budget = signinState(home, project, label);
   if (!budget.allowed) {
     return {
@@ -222,7 +329,17 @@ async function runPhase1(project: Project, label: string, runId: string, home: s
       report: { ok: false, status: 'blocked', blocked_reason: 'signin_limit', steps: [], chaosApplied: [] },
     };
   }
+  if (project.auth.totp.enabled && !listFields(project.id, label, home).includes('totp_secret')) {
+    return { killed: false, report: { ok: false, status: 'blocked', blocked_reason: 'totp_missing', steps: [], chaosApplied: [] } };
+  }
   recordSignin(home, project.id, label);
+  const steps: Journey['steps'] = [
+    { navigate: { url: project.auth.signin_url } },
+    { fill: { selector: project.auth.selectors.username, credential: `${label}.username` } },
+    { fill: { selector: project.auth.selectors.password, credential: `${label}.password` } },
+  ];
+  if (project.auth.totp.enabled) steps.push({ fill: { selector: project.auth.selectors.totp, totp: label } });
+  steps.push({ click: { selector: project.auth.selectors.submit } }, { wait: { for: 'navigation' } }, ...project.auth.success.map((assertion) => ({ assert: assertion })));
   const journey: Journey = {
     version: 1,
     id: 'phase1',
@@ -233,17 +350,9 @@ async function runPhase1(project: Project, label: string, runId: string, home: s
     tags: [],
     vars: {},
     retries: 0,
-    steps: [
-      { navigate: { url: project.auth.signin_url } },
-      { fill: { selector: project.auth.selectors.username, credential: `${label}.username` } },
-      { fill: { selector: project.auth.selectors.password, credential: `${label}.password` } },
-      { click: { selector: project.auth.selectors.submit } },
-      { wait: { for: 'navigation' } },
-      ...project.auth.success.map((assertion) => ({ assert: assertion })),
-    ],
+    steps,
   };
-  const played = await execute(project, label, journey, runId, home);
-  return played;
+  return execute(project, label, journey, runId, home, deadline, undefined, codes);
 }
 
 async function runJourney(
@@ -252,26 +361,20 @@ async function runJourney(
   journey: Journey,
   runId: string,
   home: string,
+  deadline: number,
+  codes: string[],
   chaos?: { profile: string; seed: string },
-): Promise<{ journey: RichJourney; killed: boolean }> {
-  let played = await execute(project, label, journey, runId, home, chaos);
+): Promise<{ journey: RichJourney; killed: boolean; duration: boolean }> {
+  let played = await execute(project, label, journey, runId, home, deadline, chaos, codes);
   let tries = 0;
-  while (!played.killed && played.report.status === 'failed' && tries < journey.retries) {
+  while (!played.killed && played.report.blocked_reason !== 'duration' && played.report.status === 'failed' && tries < journey.retries) {
     tries += 1;
-    played = await execute(project, label, journey, runId, home, chaos);
+    played = await execute(project, label, journey, runId, home, deadline, chaos, codes);
   }
-  const status = tries > 0 && played.report.status === 'passed' ? 'flaky' : mapStatus(played.report);
-  const steps = played.report.steps.map((step) => (status === 'flaky' ? { ...step, status: 'flaky' as const } : step));
   return {
     killed: played.killed,
-    journey: {
-      id: journey.id,
-      name: journey.name,
-      status,
-      duration_ms: steps.reduce((sum, step) => sum + step.duration_ms, 0),
-      steps,
-      chaosApplied: played.report.chaosApplied,
-    },
+    duration: played.report.blocked_reason === 'duration',
+    journey: journeyFromJob(played.report, { id: journey.id, name: journey.name, tries }),
   };
 }
 
@@ -281,13 +384,16 @@ async function execute(
   journey: Journey,
   runId: string,
   home: string,
+  deadline: number,
   chaos?: { profile: string; seed: string },
+  codes: string[] = [],
 ): Promise<{ report: JobReport; killed: boolean }> {
-  const status = await envStatus(project.id);
-  const runner = status.runners.find((entry) => entry.label === label && entry.endpoint);
-  if (!runner?.endpoint) throw new HornetError(`No healthy runner for ${label}.`, 4);
-  const injected = await injectSecrets(project.id, label, runner.endpoint, home);
-  if (project.auth.totp.enabled) await injectTotp(project.id, label, runner.endpoint, home);
+  const endpoint = await endpointFor(project.id, label);
+  const injected = await injectSecrets(project.id, label, endpoint, home);
+  if (project.auth.totp.enabled) {
+    const totp = await injectTotp(project.id, label, endpoint, home);
+    if (totp.code) codes.push(totp.code);
+  }
   const target = containerTarget(project);
   const actions = chaos ? chaosSequence(chaos.seed, chaos.profile, journey.steps.length) : [];
   const body = {
@@ -307,11 +413,26 @@ async function execute(
     users: Object.fromEntries(project.users.map((user) => [user.label, { vars: user.vars }])),
   };
   const controller = new AbortController();
+  let abortReason: 'kill' | 'duration' | undefined;
+  let arming: Promise<void> | undefined;
+  const arm = (reason: 'kill' | 'duration'): Promise<void> => {
+    if (arming) return arming;
+    abortReason = reason;
+    arming = (async () => {
+      await postAbort(endpoint);
+      controller.abort();
+    })();
+    return arming;
+  };
+  if (existsSync(join(home, 'KILL'))) await arm('kill');
+  else if (Date.now() >= deadline) await arm('duration');
   const timer = setInterval(() => {
-    if (existsSync(join(home, 'KILL'))) controller.abort();
+    if (abortReason) return;
+    if (existsSync(join(home, 'KILL'))) void arm('kill');
+    else if (Date.now() >= deadline) void arm('duration');
   }, 400);
   try {
-    const response = await fetch(`${runner.endpoint}/v1/jobs`, {
+    const response = await fetch(`${endpoint}/v1/jobs`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -321,9 +442,19 @@ async function execute(
     copyArtifacts(home, project.id, label, runId, journey.id);
     rewriteArtifacts(home, project.id, label, runId, journey.id, report);
     void injected;
+    if (arming) await arming;
+    if (abortReason === 'duration' && !existsSync(join(home, 'KILL'))) {
+      await Promise.race([stopRunners(project.id, label), delay(2_000)]);
+      return { report: durationReport(), killed: false };
+    }
     return { report, killed: false };
   } catch (error) {
-    if (controller.signal.aborted || existsSync(join(home, 'KILL'))) {
+    if (arming) await arming;
+    if (abortReason === 'duration' && !existsSync(join(home, 'KILL'))) {
+      await Promise.race([stopRunners(project.id, label), delay(2_000)]);
+      return { report: durationReport(), killed: false };
+    }
+    if (abortReason === 'kill' || existsSync(join(home, 'KILL'))) {
       await Promise.race([stopRunners(project.id), delay(2_000)]);
       return { report: { ok: false, status: 'blocked', blocked_reason: 'kill', steps: [], chaosApplied: [] }, killed: true };
     }
@@ -331,6 +462,100 @@ async function execute(
   } finally {
     clearInterval(timer);
   }
+}
+
+async function endpointFor(projectId: string, label: string): Promise<string> {
+  const current = await envStatus(projectId);
+  const runner = current.runners.find((entry) => entry.label === label);
+  if (runner?.health === 'healthy' && runner.endpoint) return runner.endpoint;
+  const started = await startStoppedRunner(projectId, label);
+  if (!started) throw new HornetError(`No healthy runner for ${label}.`, 4);
+  const again = await envStatus(projectId);
+  const next = again.runners.find((entry) => entry.label === label);
+  if (next?.health === 'healthy' && next.endpoint) return next.endpoint;
+  throw new HornetError(`No healthy runner for ${label}.`, 4);
+}
+
+async function postAbort(endpoint: string): Promise<void> {
+  try {
+    await fetch(`${endpoint}/v1/abort`, { method: 'POST', signal: AbortSignal.timeout(1_500) });
+  } catch {
+    // A failed abort post still continues into the stop.
+  }
+}
+
+export function writeErrorOutcome(input: {
+  home: string;
+  projectId: string;
+  environment: string;
+  authorisationId: string;
+  runDir: string;
+  runId: string;
+  started: string;
+  gate: 'all' | 'per_user';
+  message: string;
+  codes?: string[];
+}): { run: boolean; packet: boolean; message: string } {
+  const redactor = new Redactor();
+  try {
+    registerProjectSecrets(input.projectId, redactor, input.home);
+  } catch {
+    // A missing store still gets a packet with a fixed summary.
+  }
+  for (const code of input.codes ?? []) redactor.register('totp_code', code);
+  let run = false;
+  let packet = false;
+  try {
+    const result = runResultSchema.parse({
+      schema_version: '1',
+      run_id: input.runId,
+      project: input.projectId,
+      started_at: input.started,
+      finished_at: isoOffset(),
+      status: 'error',
+      gate: input.gate,
+      gate_passed: false,
+      totals: { users: 0, journeys: 0, steps: 0, passed: 0, failed: 0, skipped: 0 },
+      users: [],
+      environment: input.environment,
+      authorisation_id: input.authorisationId,
+      redaction: 'pass',
+    });
+    writeFileSync(join(input.runDir, 'run.json'), redactor.redact(`${JSON.stringify(result, null, 2)}\n`));
+    run = true;
+  } catch {
+    run = false;
+  }
+  try {
+    const packetPath = join(input.home, 'projects', input.projectId, 'latest-parent-report.json');
+    const body: ParentPacket = {
+      validation_required: true,
+      run_id: input.runId,
+      project: input.projectId,
+      status: 'error',
+      summary: 'The run failed before it could finish.',
+      analysis: { withheld: false },
+      evidence_zip: '',
+      html_path: '',
+      screenshot_paths: [],
+      trace_paths: [],
+      packet_path: packetPath,
+      instruction: PARENT_INSTRUCTION,
+      killed: false,
+    };
+    let encoded = JSON.stringify(body, null, 2);
+    if (redactor.contains(encoded) || redactor.contains(input.message)) encoded = redactor.redact(encoded);
+    ensureDir(join(input.home, 'projects', input.projectId));
+    writeFileSync(packetPath, `${encoded}\n`);
+    packet = true;
+  } catch {
+    packet = false;
+  }
+  return { run, packet, message: redactor.redact(input.message) };
+}
+
+function durationReport(): JobReport {
+  return { ok: false, status: 'blocked', blocked_reason: 'duration', steps: [], chaosApplied: [] };
 }
 
 function rewriteArtifacts(home: string, project: string, label: string, runId: string, journeyId: string, report: JobReport): void {
@@ -448,6 +673,16 @@ function quarantineHit(hit: string): void {
   if (existsSync(file)) quarantineFile(file);
 }
 
+function fileContainsSecret(file: string, redactor: Redactor): boolean {
+  if (!file || !existsSync(file)) return false;
+  try {
+    const bytes = readFileSync(file);
+    return redactor.contains(bytes.toString('utf8')) || redactor.contains(bytes.toString('latin1'));
+  } catch {
+    return false;
+  }
+}
+
 function copyArtifacts(home: string, project: string, label: string, runId: string, journeyId: string): void {
   const source = join(home, 'runners', project, label, runId, journeyId);
   if (!existsSync(source)) return;
@@ -511,16 +746,24 @@ function listRegressions(home: string, project: string): string[] {
 }
 
 function containerTarget(project: Project): { base: string; origins: string[] } {
-  const baseUrl = new URL(project.targets.base_url);
-  const origins = new Set(project.targets.allowed_origins);
-  for (const origin of project.targets.allowed_origins) origins.add(origin);
-  if (baseUrl.hostname === 'localhost' || baseUrl.hostname === '127.0.0.1') {
-    const rewritten = new URL(baseUrl.toString());
-    rewritten.hostname = 'host.docker.internal';
-    origins.add(rewritten.origin);
-    return { base: rewritten.toString(), origins: [...origins] };
+  const locals = macAddresses();
+  const base = rewriteForContainer(project.targets.base_url, locals);
+  const origins = new Set<string>();
+  origins.add(new URL(base).origin);
+  for (const origin of project.targets.allowed_origins) {
+    origins.add(origin);
+    origins.add(new URL(rewriteForContainer(origin, locals)).origin);
   }
-  return { base: baseUrl.toString(), origins: [...origins] };
+  for (const third of project.targets.allowed_third_party) origins.add(new URL(third.origin).origin);
+  return { base, origins: [...origins] };
+}
+
+function macAddresses(): string[] {
+  const addresses: string[] = [];
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) addresses.push(entry.address);
+  }
+  return addresses;
 }
 
 function productionDecision(project: Project, auth: ReturnType<typeof authorisationSchema.parse>, confirm: boolean): { ok: true } | { ok: false; reason: string } {
@@ -554,6 +797,48 @@ function phaseRecord(report: JobReport): RichUser['phase1'] {
     ...(report.blocked_reason ? { blocked_reason: report.blocked_reason } : {}),
     ...(report.steps.find((step) => step.error)?.error ? { error: report.steps.find((step) => step.error)?.error } : {}),
   };
+}
+
+export function journeyFromJob(report: JobReport, meta: { id: string; name: string; tries: number }): RichJourney {
+  const status = meta.tries > 0 && report.status === 'passed' ? 'flaky' : mapStatus(report);
+  const steps = report.steps.map((step) => (status === 'flaky' ? { ...step, status: 'flaky' as const } : step));
+  const blockedReason = report.status === 'rate_limited' ? 'rate_limited' : report.blocked_reason;
+  return {
+    id: meta.id,
+    name: meta.name,
+    status,
+    duration_ms: steps.reduce((sum, step) => sum + step.duration_ms, 0),
+    steps,
+    chaosApplied: report.chaosApplied,
+    ...(blockedReason ? { blocked_reason: blockedReason } : {}),
+  };
+}
+
+export function foldRunStatus(input: {
+  killed: boolean;
+  gatePassed: boolean;
+  durationStop?: boolean;
+  users: ReadonlyArray<{
+    phase1: { status: string; blocked_reason?: string };
+    journeys: ReadonlyArray<{ status: string; blocked_reason?: string; steps: ReadonlyArray<{ blocked_reason?: string }> }>;
+  }>;
+}): RunResult['status'] {
+  const phaseProblem = input.users.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
+  const journeyProblem = input.users.some((user) => user.journeys.some((journey) => journey.status === 'fail' || journey.status === 'error' || journey.status === 'flaky'));
+  const rateLimited = input.users.some(
+    (user) =>
+      user.phase1.blocked_reason === 'rate_limited' ||
+      user.journeys.some(
+        (journey) => journey.blocked_reason === 'rate_limited' || journey.steps.some((step) => step.blocked_reason === 'rate_limited'),
+      ),
+  );
+  const blocked =
+    input.killed || input.users.some((user) => user.phase1.status === 'blocked' || user.journeys.some((journey) => journey.status === 'blocked'));
+  if (phaseProblem || journeyProblem) return 'failed';
+  if (rateLimited) return 'rate_limited';
+  if (blocked || input.durationStop) return 'blocked';
+  if (!input.gatePassed) return 'failed';
+  return 'passed';
 }
 
 function mapStatus(report: JobReport): StepResult['status'] {
@@ -603,13 +888,99 @@ function totals(users: RichUser[]): RunResult['totals'] {
   };
 }
 
-function writeRunReports(runDir: string, result: RunResult, analysis: Analysis, summary: string, redactor?: Redactor): void {
+function writeRunReports(
+  runDir: string,
+  result: RunResult,
+  analysis: Analysis,
+  summary: string,
+  redactor?: Redactor,
+  artifacts?: { screenshots: string[]; traces: string[] },
+): void {
   const emit = (text: string) => (redactor ? redactor.redact(text) : text);
   writeFileSync(join(runDir, 'run.json'), emit(`${JSON.stringify(result, null, 2)}\n`));
   writeFileSync(join(runDir, 'summary.md'), emit(summary));
   writeFileSync(join(runDir, 'analysis.json'), emit(`${JSON.stringify(analysis, null, 2)}\n`));
   writeFileSync(join(runDir, 'analysis.md'), emit(analysisMarkdown(analysis)));
-  writeFileSync(join(runDir, 'report.html'), emit(htmlReport(result, summary)));
+  writeFileSync(join(runDir, 'report.html'), emit(htmlReport(result, summary, artifacts)));
+}
+
+function collectArtifacts(runDir: string): { screenshots: string[]; traces: string[] } {
+  const screenshots: string[] = [];
+  const traces: string[] = [];
+  const walk = (dir: string) => {
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) {
+        walk(path);
+        continue;
+      }
+      if (name.endsWith('.png')) screenshots.push(path);
+      if (name === 'trace.zip') traces.push(path);
+    }
+  };
+  walk(runDir);
+  return { screenshots, traces };
+}
+
+export async function publishParent(input: {
+  home: string;
+  projectId: string;
+  runDir: string;
+  runId: string;
+  result: RunResult;
+  summary: string;
+  durationStop: boolean;
+  killed: boolean;
+  redactor: Redactor;
+  artifacts: { screenshots: string[]; traces: string[] };
+  redactionFailed: boolean;
+}): Promise<ParentPacket> {
+  let evidenceZip = '';
+  if (!input.redactionFailed) {
+    evidenceZip = join(input.runDir, 'evidence.zip');
+    await exportEvidence(input.projectId, input.runId, evidenceZip, input.home);
+  }
+  const summaryFile = join(input.runDir, 'summary.md');
+  const summary = existsSync(summaryFile) ? readFileSync(summaryFile, 'utf8') : input.summary;
+  const analysisFile = join(input.runDir, 'analysis.json');
+  const analysis = existsSync(analysisFile) ? (JSON.parse(readFileSync(analysisFile, 'utf8')) as unknown) : {};
+  const packetPath = join(input.home, 'projects', input.projectId, 'latest-parent-report.json');
+  const packet: ParentPacket = {
+    validation_required: true,
+    run_id: input.runId,
+    project: input.projectId,
+    status: input.redactionFailed ? 'redaction_failure' : input.durationStop ? 'duration' : input.result.status,
+    summary,
+    analysis,
+    evidence_zip: evidenceZip,
+    html_path: join(input.runDir, 'report.html'),
+    screenshot_paths: input.artifacts.screenshots,
+    trace_paths: input.artifacts.traces,
+    packet_path: packetPath,
+    instruction: PARENT_INSTRUCTION,
+    killed: input.killed,
+  };
+  let encoded = JSON.stringify(packet, null, 2);
+  if (input.redactor.contains(encoded)) {
+    const candidates = [evidenceZip, join(input.runDir, 'evidence.zip'), join(input.runDir, 'report.html'), ...input.artifacts.screenshots, ...input.artifacts.traces];
+    for (const file of candidates) {
+      if (!file || !fileContainsSecret(file, input.redactor)) continue;
+      quarantineFile(file);
+    }
+    packet.status = 'redaction_failure';
+    packet.summary = 'Redaction failed. The summary was withheld.';
+    packet.analysis = { withheld: true };
+    packet.evidence_zip = '';
+    packet.screenshot_paths = [];
+    packet.trace_paths = [];
+    packet.html_path = '';
+    encoded = JSON.stringify(packet, null, 2);
+    if (input.redactor.contains(encoded)) encoded = input.redactor.redact(encoded);
+  }
+  ensureDir(join(input.home, 'projects', input.projectId));
+  writeFileSync(packetPath, `${encoded}\n`);
+  return JSON.parse(encoded) as ParentPacket;
 }
 
 function failAnalysis(analysis: Analysis): Analysis {

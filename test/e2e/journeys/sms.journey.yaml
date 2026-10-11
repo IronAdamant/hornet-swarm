@@ -1,0 +1,10 @@
+version: 1
+id: sms-check
+name: SMS code page
+users: [qa-user-1]
+requires_phase1: false
+tags: []
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/sms" }

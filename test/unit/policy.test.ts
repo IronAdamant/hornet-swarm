@@ -7,6 +7,7 @@ import { validateJourneyDocument } from '../../packages/core/src/journey.ts';
 import {
   authorisationStatus,
   chaosPermitted,
+  containerHost,
   domainCovered,
   interactiveOriginAllowed,
   isProductionLooking,
@@ -15,6 +16,8 @@ import {
   overRateLimit,
   productionGate,
   projectDomainsAuthorised,
+  rewriteForContainer,
+  runnerOverload,
   signinBudget,
 } from '../../packages/core/src/policy.ts';
 import { authorisationSchema, projectSchema, type Authorisation, type Project } from '../../packages/core/src/schemas.ts';
@@ -46,6 +49,14 @@ describe('policy engine', () => {
     expect(isProductionLooking('host.docker.internal')).toBe(false);
     expect(isProductionLooking('app.localhost')).toBe(false);
     expect(isProductionLooking('10.1.2.3')).toBe(false);
+    expect(isProductionLooking('192.168.0.8')).toBe(false);
+    expect(isProductionLooking('172.20.1.4')).toBe(false);
+    expect(isProductionLooking('172.15.1.1')).toBe(true);
+    expect(isProductionLooking('dev.example.com')).toBe(false);
+    expect(isProductionLooking('my-dev.example.com')).toBe(false);
+    expect(isProductionLooking('device.example.com')).toBe(true);
+    expect(isProductionLooking('contest.example.com')).toBe(true);
+    expect(isProductionLooking('10.prod.example')).toBe(true);
     expect(isProductionLooking('app.consistencyhub.app')).toBe(true);
     expect(originAllowed(project, '/login').ok).toBe(true);
     expect(originAllowed(project, 'https://cdn.consistencyhub.app/app.js').ok).toBe(true);
@@ -68,6 +79,8 @@ describe('policy engine', () => {
     expect(domainCovered(auth, 'staging.consistencyhub.app')).toBe(true);
     expect(domainCovered(auth, 'qa.staging.consistencyhub.app')).toBe(true);
     expect(domainCovered(auth, '127.0.0.1')).toBe(true);
+    expect(domainCovered(auth, '::1')).toBe(true);
+    expect(domainCovered(auth, '[::1]')).toBe(true);
     expect(domainCovered(auth, 'example.com')).toBe(false);
     expect(projectDomainsAuthorised(project, auth, now).reason).toContain('auth.consistencyhub.app');
     const covered = withAuth({
@@ -93,7 +106,15 @@ describe('policy engine', () => {
       targets: { base_url: 'https://app.consistencyhub.app', allowed_origins: ['https://app.consistencyhub.app'], allowed_third_party: [] },
     });
     const prodAuth = withAuth({ scope: { domains: ['app.consistencyhub.app'], environments: ['production'] } });
-    expect(productionGate(project, auth, false).ok).toBe(true);
+    expect(productionGate(project, auth, false).reason).toBe('production_not_authorised');
+    const stagingOnly = withProject({
+      targets: {
+        base_url: 'https://staging.consistencyhub.app',
+        allowed_origins: ['https://staging.consistencyhub.app'],
+        allowed_third_party: [{ origin: 'https://cdn.consistencyhub.app', passive: true }],
+      },
+    });
+    expect(productionGate(stagingOnly, auth, false).ok).toBe(true);
     expect(productionGate(prod, auth, true).reason).toBe('production_not_authorised');
     expect(productionGate(prod, prodAuth, false).reason).toBe('production_confirmation_required');
     expect(productionGate(prod, prodAuth, true).ok).toBe(true);
@@ -107,9 +128,21 @@ describe('policy engine', () => {
     expect(overRateLimit(1, 5)).toBe(false);
     expect(overRateLimit(2, 10)).toBe(true);
     expect(overRateLimit(1, 10)).toBe(false);
+    expect(runnerOverload(12, 0, 0)).toBe(false);
+    expect(runnerOverload(10, 2, 0)).toBe(true);
+    expect(runnerOverload(10, 0, 2)).toBe(true);
+    expect(runnerOverload(9, 9, 0)).toBe(false);
     expect(chaosPermitted(auth, project).reason).toBe('chaos_not_authorised');
     const chaosAuth = withAuth({ activities: ['functional_e2e', 'signin_smoke', 'access_control_checks', 'chaos'] });
-    expect(chaosPermitted(chaosAuth, project).ok).toBe(true);
+    expect(chaosPermitted(chaosAuth, project).reason).toBe('chaos_not_authorised');
+    const stagingOnly = withProject({
+      targets: {
+        base_url: 'https://staging.consistencyhub.app',
+        allowed_origins: ['https://staging.consistencyhub.app'],
+        allowed_third_party: [],
+      },
+    });
+    expect(chaosPermitted(chaosAuth, stagingOnly).ok).toBe(true);
     const prod = withProject({
       environment: 'staging',
       targets: { base_url: 'https://app.consistencyhub.app', allowed_origins: ['https://app.consistencyhub.app'], allowed_third_party: [] },
@@ -130,12 +163,31 @@ describe('policy engine', () => {
     const rejected = validateJourneyDocument(leaked, project, ['super-secret-password']);
     expect(rejected.valid).toBe(false);
     expect(rejected.errors.some((error) => error.includes('stored secret'))).toBe(true);
+    const short = structuredClone(journey) as { steps: Array<{ fill?: { selector: string; value?: string } }> };
+    short.steps[1] = { fill: { selector: '#email', value: 'pin is xyz' } };
+    const shortRejected = validateJourneyDocument(short, project, ['xyz']);
+    expect(shortRejected.valid).toBe(false);
+    expect(shortRejected.errors.some((error) => error.includes('stored secret'))).toBe(true);
     const both = structuredClone(journey) as { steps: Array<Record<string, unknown>> };
     both.steps[1] = { fill: { selector: '#email', value: 'a', credential: 'qa-user-1.username' } };
     expect(validateJourneyDocument(both, project).errors.some((error) => error.includes('exactly one'))).toBe(true);
     const upload = structuredClone(journey) as { steps: Array<Record<string, unknown>> };
     upload.steps.push({ upload: { selector: 'input', fixture: '../secret.txt' } });
     expect(validateJourneyDocument(upload, project).valid).toBe(false);
+  });
+});
+
+describe('container addresses', () => {
+  it('rewrites loopback and this Mac, and leaves a foreign host alone', () => {
+    expect(containerHost('localhost')).toBe('host.docker.internal');
+    expect(containerHost('127.0.0.1')).toBe('host.docker.internal');
+    expect(containerHost('::1')).toBe('host.docker.internal');
+    expect(containerHost('10.0.0.8', ['10.0.0.8'])).toBe('host.docker.internal');
+    expect(containerHost('192.168.1.50', ['10.0.0.8'])).toBe('192.168.1.50');
+    expect(containerHost('app.example.com', ['10.0.0.8'])).toBe('app.example.com');
+    expect(rewriteForContainer('http://127.0.0.1:4173/login')).toBe('http://host.docker.internal:4173/login');
+    expect(rewriteForContainer('http://[::1]:4173/login')).toBe('http://host.docker.internal:4173/login');
+    expect(rewriteForContainer('http://192.168.1.50:4173/login', ['10.0.0.8'])).toBe('http://192.168.1.50:4173/login');
   });
 });
 

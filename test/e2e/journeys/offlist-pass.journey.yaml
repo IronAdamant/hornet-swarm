@@ -1,0 +1,11 @@
+version: 1
+id: offlist-pass
+name: Passing page with off-list requests
+users: [qa-user-1]
+requires_phase1: false
+tags: [safety]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/offlist-pass" }
+  - assert: { type: selector_visible, value: "#paced" }

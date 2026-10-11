@@ -1,0 +1,12 @@
+version: 1
+id: burst-budget
+name: Burst trips the request bucket
+users: [qa-user-1]
+requires_phase1: false
+tags: [safety]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/burst" }
+  - assert: { type: selector_visible, value: "#ready" }
+  - wait: { for: timeout, ms: 2500 }

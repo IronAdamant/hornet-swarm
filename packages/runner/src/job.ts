@@ -1,8 +1,8 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
 import { browserLaunchOptions } from './launch.js';
-import { Redactor, renderTemplate, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
+import { Redactor, renderTemplate, runnerOverload, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
 
 export type ChaosAction = { step: number; kind: string; detail: string };
 
@@ -26,7 +26,7 @@ export type JobRequest = {
 export type JobReport = {
   ok: boolean;
   status: 'passed' | 'failed' | 'blocked' | 'error' | 'rate_limited';
-  blocked_reason?: 'captcha' | '2fa' | 'allowlist' | 'rate_limited' | 'kill' | 'signin_limit';
+  blocked_reason?: 'captcha' | '2fa' | 'allowlist' | 'proxy' | 'rate_limited' | 'kill' | 'signin_limit' | 'duration' | 'totp_missing';
   steps: Array<
     StepResult & {
       console_logs: string[];
@@ -56,7 +56,8 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   const harPath = join(job.outDir, 'network.har');
   const tracePath = join(job.outDir, 'trace.zip');
   let requests = 0;
-  let blockedRequests = 0;
+  let bucketRefusals = 0;
+  let httpOverloads = 0;
   let dropLeft = 0;
   const bucket = createBucket(job.rps);
 
@@ -75,13 +76,12 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         return;
       }
       if (!url.startsWith('about:') && !url.startsWith('data:') && !originAllowed(url, job.allowOrigins)) {
-        blockedRequests += 1;
         await route.abort('blockedbyclient');
         return;
       }
       requests += 1;
       if (!bucket.take()) {
-        blockedRequests += 1;
+        bucketRefusals += 1;
         await route.abort('failed');
         return;
       }
@@ -93,6 +93,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
     page.on('console', (message) => consoleLogs.push(redactor.redact(message.text())));
     page.on('pageerror', (error) => consoleLogs.push(redactor.redact(error.message)));
     page.on('response', (response) => {
+      if (response.status() === 429 || response.status() === 503) httpOverloads += 1;
       if (response.status() < 400) return;
       networkErrors.push({
         method: response.request().method(),
@@ -101,7 +102,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
       });
     });
     const nav = { status: 0 };
-    const totpReady = [...secrets.keys()].some((handle) => handle.endsWith('.totp_code'));
+    const fillsTotp = journeyFillsTotp(job.steps);
 
     for (let index = 0; index < job.steps.length; index += 1) {
       if (isAborted()) {
@@ -123,8 +124,9 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         });
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
         const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted);
-        const challenge = await detectChallenge(page, totpReady);
-        if (challenge) {
+        const challenge = await detectChallenge(page);
+        // A stored authenticator code does not hide an OTP prompt. Skip that stop only when this journey itself types the code.
+        if (challenge && !(challenge === '2fa' && fillsTotp)) {
           status = 'blocked';
           blocked = challenge;
           steps.push(finishStep(index, kind, 'blocked', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, blocked));
@@ -139,10 +141,10 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           break;
         }
         const message = redactor.redact(error instanceof Error ? error.message : String(error));
-        const reason = /allowlist|ERR_BLOCKED_BY_CLIENT|blockedbyclient|ERR_TUNNEL_CONNECTION_FAILED/i.test(message) ? 'allowlist' : undefined;
+        const reason = classifyBlockedReason(message);
         if (reason) {
           status = 'blocked';
-          blocked = 'allowlist';
+          blocked = reason;
         } else if (status === 'passed') status = 'failed';
         steps.push(
           finishStep(
@@ -166,7 +168,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         break;
       }
     }
-    if (requests >= 10 && blockedRequests / Math.max(1, requests) > 0.1) {
+    if (status === 'passed' && runnerOverload(requests, bucketRefusals, httpOverloads)) {
       status = 'rate_limited';
       blocked = 'rate_limited';
     }
@@ -183,6 +185,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   } finally {
     await context?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
+    if (existsSync(harPath)) writeFileSync(harPath, redactor.redact(readFileSync(harPath, 'utf8')));
     for (const [handle] of secrets) secrets.set(handle, '');
     secrets.clear();
   }
@@ -352,14 +355,51 @@ function finishStep(
   };
 }
 
-async function detectChallenge(page: Page, totpReady: boolean): Promise<'captcha' | '2fa' | undefined> {
-  const text = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
-  const html = (await page.content().catch(() => '')).toLowerCase();
-  if (text.includes('verify you are human') || /recaptcha|hcaptcha|turnstile|arkose/.test(html)) return 'captcha';
-  if (totpReady) return undefined;
-  const otp = await page.locator('input[autocomplete="one-time-code"]').count();
-  if (otp > 0) return '2fa';
+function journeyFillsTotp(steps: Step[]): boolean {
+  return steps.some((step) => 'fill' in step && Boolean(step.fill.totp));
+}
+
+export function classifyBlockedReason(message: string): 'allowlist' | 'proxy' | undefined {
+  if (/ERR_PROXY_CONNECTION_FAILED/i.test(message) || (/proxy/i.test(message) && /\b502\b/.test(message))) return 'proxy';
+  if (/allowlist|ERR_BLOCKED_BY_CLIENT|blockedbyclient|ERR_TUNNEL_CONNECTION_FAILED/i.test(message)) return 'allowlist';
   return undefined;
+}
+
+export function classifyChallenge(input: {
+  text: string;
+  html: string;
+  inputs: Array<{ type?: string; name?: string; autocomplete?: string; placeholder?: string; maxlength?: string }>;
+}): 'captcha' | '2fa' | undefined {
+  const text = input.text.toLowerCase();
+  const html = input.html.toLowerCase();
+  if (text.includes('verify you are human') || /recaptcha|hcaptcha|turnstile|arkose/.test(html)) return 'captcha';
+  const password = (field: { type?: string; name?: string; autocomplete?: string; placeholder?: string }) => {
+    const blob = `${field.type ?? ''} ${field.name ?? ''} ${field.autocomplete ?? ''} ${field.placeholder ?? ''}`.toLowerCase();
+    return (field.type ?? '').toLowerCase() === 'password' || blob.includes('password');
+  };
+  const other = input.inputs.filter((field) => !password(field));
+  const codeSent = /texted you a code|emailed you a code|sent you a code|code was texted|code was emailed/.test(text);
+  const oneTime = other.some((field) => {
+    const blob = `${field.autocomplete ?? ''} ${field.name ?? ''} ${field.placeholder ?? ''}`.toLowerCase();
+    return field.maxlength === '6' || blob.includes('one-time-code') || blob.includes('otp') || blob.includes('verification code');
+  });
+  if ((codeSent && other.length > 0) || oneTime) return '2fa';
+  return undefined;
+}
+
+async function detectChallenge(page: Page): Promise<'captcha' | '2fa' | undefined> {
+  const text = await page.locator('body').innerText().catch(() => '');
+  const html = await page.content().catch(() => '');
+  const inputs = await page.locator('input:visible').evaluateAll((elements) =>
+    elements.map((element) => ({
+      type: element.getAttribute('type') ?? '',
+      name: element.getAttribute('name') ?? '',
+      autocomplete: element.getAttribute('autocomplete') ?? '',
+      placeholder: element.getAttribute('placeholder') ?? '',
+      maxlength: element.getAttribute('maxlength') ?? '',
+    })),
+  );
+  return classifyChallenge({ text, html, inputs });
 }
 
 async function applyChaos(
@@ -376,12 +416,16 @@ async function applyChaos(
     if (action.kind === 'back') await page.goBack({ timeout: 10_000 }).catch(() => undefined);
     if (action.kind === 'offline') await context.setOffline(true);
     if (action.kind === 'drop' || action.kind === 'fail-api') drop(action.detail === 'twice' ? 2 : 1);
-    if (action.kind === 'double-click') applied.push('double-click:armed');
+    if (action.kind === 'double-click') {
+      await page.locator('body').dblclick({ timeout: 5_000, position: { x: 4, y: 4 } }).catch(() => undefined);
+      applied.push('click');
+      applied.push('click');
+    }
   }
 }
 
 async function maskSecrets(page: Page, secrets: SecretMap): Promise<void> {
-  const values = [...secrets.values()].filter((value) => value.length >= 4);
+  const values = [...secrets.values()].filter((value) => value.length >= 1);
   if (values.length === 0) return;
   await page.evaluate((secretsOnPage) => {
     for (const node of document.querySelectorAll('input, textarea, body *')) {

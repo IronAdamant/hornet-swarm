@@ -3,7 +3,7 @@ import { authenticator } from 'otplib';
 
 const users = new Map();
 const sessions = new Map();
-const state = { loginPosts: 0, failFlag: false, flakyLeft: 0, layout: 'steady', delayMs: 0 };
+const state = { loginPosts: 0, failFlag: false, flakyLeft: 0, layout: 'steady', delayMs: 0, otpFilled: false, pingCount: 0, offlistPages: 0, burstPages: 0, smsPosts: 0 };
 
 export function createFixture() {
   const app = express();
@@ -20,6 +20,11 @@ export function createFixture() {
     users.clear();
     sessions.clear();
     state.loginPosts = 0;
+    state.otpFilled = false;
+    state.pingCount = 0;
+    state.offlistPages = 0;
+    state.burstPages = 0;
+    state.smsPosts = 0;
     state.failFlag = Boolean(req.body.failFlag);
     state.flakyLeft = Number(req.body.flakyLeft ?? 0);
     state.layout = req.body.layout ?? 'steady';
@@ -30,17 +35,21 @@ export function createFixture() {
     res.json({ ok: true });
   });
 
-  app.get('/login', (_req, res) => {
+  app.get('/login', (req, res) => {
+    const otp = req.query.totp ? '<label>Code <input id="otp" name="otp" autocomplete="one-time-code"></label>' : '';
     res.type('html').send(page('Sign in', `
       <form method="post" action="/login">
         <label>Email <input id="email" name="email"></label>
         <label>Password <input id="password" name="password" type="password"></label>
+        <input name="backup-code" maxlength="6" hidden>
+        ${otp}
         <button type="submit">Sign in</button>
       </form>`));
   });
 
   app.post('/login', (req, res) => {
     state.loginPosts += 1;
+    if (/^\d{6}$/.test(String(req.body.otp ?? ''))) state.otpFilled = true;
     const user = users.get(String(req.body.email ?? ''));
     if (!user || user.password !== req.body.password) {
       res.status(401).type('html').send(page('Sign in failed', '<p>access denied</p><a href="/login">Try again</a>'));
@@ -89,6 +98,15 @@ export function createFixture() {
 
   app.get('/captcha-frame', (_req, res) => {
     res.type('html').send('<p>recaptcha</p>');
+  });
+
+  app.get('/sms', (_req, res) => {
+    res.type('html').send(page('Code', '<p>We texted you a code</p><form method="post" action="/sms"><label>Code <input name="code" maxlength="6"></label><button>Continue</button></form>'));
+  });
+
+  app.post('/sms', (_req, res) => {
+    state.smsPosts += 1;
+    res.type('html').send(page('Sent', '<p>posted</p>'));
   });
 
   app.get('/otp', (req, res) => {
@@ -152,8 +170,44 @@ export function createFixture() {
     res.type('html').send(page('Slow', '<p id="ready">ready</p>'));
   });
 
+  app.get('/ping', (_req, res) => {
+    state.pingCount += 1;
+    res.status(204).end();
+  });
+
+  // Twelve paced same-origin fetches stay inside the 5/s bucket. Eight off-list fetches are aborted by the runner and never arrive here.
+  app.get('/offlist-pass', (_req, res) => {
+    state.offlistPages += 1;
+    res.type('html').send(page('Off list', `
+      <p id="ready">ready</p>
+      <img alt="" src="https://off-list.invalid/pixel.png">
+      <script>
+        for (let i = 0; i < 8; i += 1) fetch('https://off-list.invalid/pixel-' + i).catch(() => {});
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        (async () => {
+          for (let i = 0; i < 12; i += 1) {
+            await fetch('/ping').catch(() => {});
+            await wait(400);
+          }
+          const done = document.createElement('p');
+          done.id = 'paced';
+          done.textContent = 'paced';
+          document.body.appendChild(done);
+        })();
+      </script>`));
+  });
+
+  app.get('/burst', (_req, res) => {
+    state.burstPages += 1;
+    res.type('html').send(page('Burst', `
+      <p id="ready">ready</p>
+      <script>
+        for (let i = 0; i < 40; i += 1) fetch('/ping').catch(() => {});
+      </script>`));
+  });
+
   app.get('/__admin/stats', (_req, res) => {
-    res.json({ loginPosts: state.loginPosts });
+    res.json({ loginPosts: state.loginPosts, otpFilled: state.otpFilled, pingCount: state.pingCount, offlistPages: state.offlistPages, burstPages: state.burstPages, smsPosts: state.smsPosts });
   });
 
   return app;

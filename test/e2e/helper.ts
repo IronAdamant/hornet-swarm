@@ -73,7 +73,9 @@ export async function containsSecret(dir: string, value = secret): Promise<strin
 
 export function latestRun(): string {
   const runs = join(home, 'runs');
-  const names = readdirSync(runs).filter((name) => name.startsWith('run_')).sort();
+  const names = readdirSync(runs)
+    .filter((name) => name.startsWith('run_') && existsSync(join(runs, name, 'run.json')))
+    .sort();
   const name = names[names.length - 1];
   if (!name) throw new Error('no run');
   return join(runs, name);

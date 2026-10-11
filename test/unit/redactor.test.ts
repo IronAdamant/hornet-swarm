@@ -57,11 +57,25 @@ describe('redactor', () => {
     expect(cleaned.nested.cookie).toBe('[REDACTED:header]');
   });
 
-  it('ignores empty and very short values', () => {
+  it('keeps a short original secret and drops a short derived form', () => {
+    const empty = new Redactor();
+    empty.register('qa-user-1.password', '');
+    expect(empty.redact('ab stays')).toBe('ab stays');
     const redactor = new Redactor();
-    redactor.register('qa-user-1.password', '');
-    redactor.register('qa-user-1.password', 'ab');
-    expect(redactor.redact('ab stays')).toBe('ab stays');
-    expect(redactor.contains('ab')).toBe(false);
+    redactor.register('qa-user-1.password', 'xyz');
+    expect(redactor.redact('pin xyz end')).toBe('pin [REDACTED:qa-user-1.password] end');
+    expect(redactor.contains('xyz')).toBe(true);
+    const spaced = new Redactor();
+    spaced.register('qa-user-1.password', ' ');
+    expect(spaced.redact('a b')).toContain('[REDACTED:qa-user-1.password]');
+    expect(spaced.contains(' ')).toBe(true);
+    expect(spaced.contains('%20')).toBe(true);
+    expect(spaced.redact('%20')).toBe('[REDACTED:qa-user-1.password]');
+    const folded = new Redactor();
+    folded.register('qa-user-1.password', password);
+    expect(folded.redact(password.toLowerCase())).toBe('[REDACTED:qa-user-1.password]');
+    const totp = new Redactor();
+    totp.register('qa-user-1.totp_secret', 'JBSWY3DPEHPK3PXP');
+    expect(totp.redact('jbswy3dpehpk3pxp')).toBe('[REDACTED:qa-user-1.totp_secret]');
   });
 });

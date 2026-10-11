@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline';
-import { HornetError, acceptBaseline, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, readSwarm, releaseKill, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin } from '@hornet-swarm/controller';
+import { HornetError, acceptBaseline, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, releaseKill, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
 import { Command } from 'commander';
 
 const program = new Command();
@@ -115,23 +115,40 @@ program
   .option('--confirm-production', 'allow a production-looking target')
   .option('--chaos <profile>', 'chaos profile')
   .option('--seed <seed>', 'chaos seed')
+  .option('--user <label...>', 'labels to run')
+  .option('--agent-id <id>', 'caller id that holds one login')
   .option('--json', 'print machine-readable JSON')
-  .action(async (opts: { project?: string; journey?: string[]; gate?: string; confirmProduction?: boolean; chaos?: string; seed?: string; json?: boolean }) => {
-    try {
-      const result = await runSuite({
-        project: opts.project ?? defaultProjectFromHome(),
-        journeyFiles: opts.journey,
-        ...(opts.gate === 'all' || opts.gate === 'per_user' ? { gate: opts.gate } : {}),
-        confirmProduction: Boolean(opts.confirmProduction),
-        ...(opts.chaos ? { chaos: { profile: opts.chaos, seed: opts.seed ?? 'seed' } } : {}),
-      });
-      if (opts.json) writeJson(result);
-      else process.stdout.write(`${result.status}\n`);
-      process.exit(result.status === 'passed' ? 0 : result.status === 'blocked' || result.status === 'rate_limited' ? 2 : result.status === 'error' ? 4 : 1);
-    } catch (error) {
-      const code = error instanceof HornetError ? error.exitCode : 4;
-      fail(opts.json, messageOf(error), code);
-    }
+  .action(async (opts: SuiteFlags) => {
+    await runCommand(opts, {
+      journeyFiles: opts.journey,
+      ...(opts.user ? { users: opts.user } : {}),
+      ...(opts.gate === 'all' || opts.gate === 'per_user' ? { gate: opts.gate } : {}),
+      confirmProduction: Boolean(opts.confirmProduction),
+      ...(opts.chaos ? { chaos: { profile: opts.chaos, seed: opts.seed ?? 'seed' } } : {}),
+    });
+  });
+
+program
+  .command('sign-in')
+  .description('Run the sign-in check for one agent')
+  .option('--project <id>', 'project id')
+  .option('--user <label...>', 'labels to sign in')
+  .option('--agent-id <id>', 'caller id that holds one login')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (opts: SuiteFlags) => {
+    await runCommand(opts, { phase1Only: true, ...(opts.user ? { users: opts.user } : {}) });
+  });
+
+program
+  .command('journey')
+  .description('Run one journey for one agent')
+  .argument('<file>', 'journey file or id')
+  .option('--project <id>', 'project id')
+  .option('--user <label...>', 'labels to run')
+  .option('--agent-id <id>', 'caller id that holds one login')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (file: string, opts: SuiteFlags) => {
+    await runCommand(opts, { journeyFiles: [file], ...(opts.user ? { users: opts.user } : {}) });
   });
 
 program
@@ -217,9 +234,9 @@ program
   .description('Show the website and personalities once the owner has pressed Ready')
   .option('--project <id>', 'project id')
   .option('--json', 'print machine-readable JSON')
-  .action((opts: { project?: string; json?: boolean }) => {
+  .action(async (opts: { project?: string; json?: boolean }) => {
     const project = opts.project ?? defaultProjectFromHome();
-    const view = readSwarm(project);
+    const view = await swarmSnapshot(project);
     if (opts.json) writeJson(view);
     else if (!view.ready) process.stdout.write('Not ready. Open http://127.0.0.1:7781/setup and press Ready.\n');
     else process.stdout.write(`${view.website}\n${view.agents.map((agent) => `${agent.label}: ${agent.personality}`).join('\n')}\n`);
@@ -314,6 +331,51 @@ function writeStatus(status: { project: string; healthy: number; expected: numbe
   process.stdout.write(`${status.project}: ${status.healthy}/${status.expected} healthy\n`);
   for (const runner of status.runners) {
     process.stdout.write(`${runner.label}\t${runner.health}\t${runner.state}\t${runner.port ?? '-'}\n`);
+  }
+}
+
+type SuiteFlags = {
+  project?: string;
+  journey?: string[];
+  user?: string[];
+  gate?: string;
+  confirmProduction?: boolean;
+  chaos?: string;
+  seed?: string;
+  agentId?: string;
+  json?: boolean;
+};
+
+async function runCommand(
+  opts: SuiteFlags,
+  extra: {
+    project?: string;
+    journeyFiles?: string[];
+    gate?: 'all' | 'per_user';
+    confirmProduction?: boolean;
+    chaos?: { profile: string; seed: string };
+    phase1Only?: boolean;
+    users?: string[];
+  },
+): Promise<void> {
+  try {
+    const result = await runSuite({
+      ...extra,
+      project: opts.project ?? extra.project ?? defaultProjectFromHome(),
+      ...(opts.agentId ? { agentId: opts.agentId } : {}),
+    });
+    if (opts.json) writeJson(result);
+    else {
+      process.stdout.write('The parent must validate this run.\n');
+      process.stdout.write(`${result.run_id}\n`);
+      process.stdout.write(`${result.parent.packet_path}\n`);
+      process.stdout.write(`${result.status}\n`);
+    }
+    const status = result.status;
+    process.exit(status === 'passed' ? 0 : status === 'blocked' || status === 'rate_limited' ? 2 : status === 'error' ? 4 : 1);
+  } catch (error) {
+    const code = error instanceof HornetError ? error.exitCode : 4;
+    fail(opts.json, messageOf(error), code);
   }
 }
 
