@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,7 +10,9 @@ const username = 'QA1@Example.TEST';
 
 describe('secret broker', () => {
   it('stores with sops, injects over HTTP, and never returns a secret value', async () => {
-    const home = mkdtempSync(join(homedir(), '.hornet-swarm', 'work-broker-'));
+    const swarmHome = join(homedir(), '.hornet-swarm');
+    mkdirSync(swarmHome, { recursive: true });
+    const home = mkdtempSync(join(swarmHome, 'work-broker-'));
     const stored = setSecret('fixture', 'qa-user-1', 'password', secret, home);
     setSecret('fixture', 'qa-user-1', 'username', username, home);
     expect(JSON.stringify(stored)).not.toContain(secret);
