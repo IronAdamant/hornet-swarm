@@ -133,7 +133,7 @@ function writeUsers(home: string, project: string, users: Record<string, SecretU
     writeFileSync(destination, encrypted, { mode: 0o600 });
   } catch (error) {
     if (error instanceof Error && error.message === 'encrypted store still contained a secret') throw error;
-    throw new Error('Could not encrypt the store.');
+    throw new Error('Could not encrypt the store.', { cause: error });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -184,7 +184,7 @@ function loadAgeSecret(): string {
       if (service === LEGACY_SERVICE) break;
       if (/item.*not be found|could not be found|SecKeychainSearch/i.test(message)) continue;
       if (!(message.includes('not an age key') || message.includes('could not be found') || message.includes('The specified item'))) {
-        if (message.includes('AGE-SECRET-KEY-')) throw new Error('Could not read the age key.');
+        if (message.includes('AGE-SECRET-KEY-')) throw new Error('Could not read the age key.', { cause: error });
       }
     }
   }

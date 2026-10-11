@@ -554,8 +554,8 @@ export function writeErrorOutcome(input: {
     // A missing store still gets a packet with a fixed summary.
   }
   for (const code of input.codes ?? []) redactor.register('totp_code', code);
-  let run = false;
-  let packet = false;
+  let run: boolean;
+  let packet: boolean;
   try {
     const result = runResultSchema.parse({
       schema_version: '1',

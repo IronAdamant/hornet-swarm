@@ -19,7 +19,7 @@ export function isProductionLooking(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (LOCAL_HOSTS.has(host) || host.endsWith('.localhost')) return false;
   if (isRfc1918Address(host)) return false;
-  const labels = host.split(/[.\-]/).filter((label) => label.length > 0);
+  const labels = host.split(/[.-]/).filter((label) => label.length > 0);
   if (labels.some((label) => NON_PRODUCTION_LABELS.has(label))) return false;
   return true;
 }

@@ -107,7 +107,7 @@ export async function startStoppedRunner(project: string, label: string): Promis
       return false;
     }
   }
-  let endpoint = '';
+  let endpoint: string;
   try {
     endpoint = await waitForEndpoint(docker, project, label);
   } catch {
@@ -300,7 +300,7 @@ function rebuildImages(): void {
   } catch (error) {
     const stderr = error && typeof error === 'object' && 'stderr' in error ? String((error as { stderr?: unknown }).stderr ?? '') : '';
     const stdout = error && typeof error === 'object' && 'stdout' in error ? String((error as { stdout?: unknown }).stdout ?? '') : '';
-    throw new Error(`Image rebuild failed. ${(stderr || stdout).slice(-2000)}`);
+    throw new Error(`Image rebuild failed. ${(stderr || stdout).slice(-2000)}`, { cause: error });
   }
 }
 
@@ -427,7 +427,7 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   const existing = await findContainer(docker, name);
   if (existing) {
     const inspected = await existing.inspect();
-    let wanted = '';
+    let wanted: string;
     try {
       wanted = (await docker.getImage(RUNNER_IMAGE).inspect()).Id;
     } catch {
@@ -565,7 +565,7 @@ async function ensureControlVolume(docker: Docker, project: string): Promise<voi
 }
 
 async function failureText(container: Docker.Container, name: string): Promise<string> {
-  let logs = '';
+  let logs: string;
   try {
     const raw = await container.logs({ stdout: true, stderr: true, tail: 40 });
     logs = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);

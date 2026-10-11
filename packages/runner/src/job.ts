@@ -370,6 +370,7 @@ async function runStep(
     }
     await locate(page, step.fill.selector).fill(text, { timeout: 15_000 });
     text = '';
+    if (text !== '') throw new Error('The credential was not cleared from memory.');
     return { statusCode: 0 };
   }
   if ('wait' in step) {

@@ -79,4 +79,12 @@ pnpm test
 pnpm test:e2e
 ```
 
-The end-to-end tests use the local fixture only.
+`pnpm test` is the unit suite. `pnpm test:e2e` is the end-to-end suite. Both use the offline fixture only. Do not point them at a live site.
+
+End-to-end tests need Docker or OrbStack, sops, age, and tesseract on this Mac. GitHub Actions runs build, lint, and unit tests on Linux for every push and pull request (`.github/workflows/ci.yml`). That Linux job does not run `pnpm test:e2e`. GitHub-hosted macOS runners do not provide Docker or OrbStack, so the end-to-end command stays manual:
+
+```bash
+pnpm test:e2e
+```
+
+The Linux job also runs `pnpm test:coverage`. That command fails the check when redactor or policy coverage drops below the gate in `vitest.config.ts`.

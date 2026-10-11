@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -26,7 +26,6 @@ type CredentialRequest = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-let page: { port: number; close: () => Promise<void> } | undefined;
 let boundPort = 7781;
 
 export type OperatorGateStatus = 'waiting' | 'declined' | 'touchid' | 'ready';
@@ -176,9 +175,8 @@ export function storeOwnerLogin(
   return { ok: true, label, status: 'ready' };
 }
 
-export async function ensureCredentialPage(home = aegisHome()): Promise<number> {
+export async function ensureCredentialPage(_home = aegisHome()): Promise<number> {
   const port = Number(process.env.AEGIS_CREDENTIAL_PORT ?? 7781);
-  if (page) return page.port;
   if (await listening(port)) return port;
   const cli = fileURLToPath(new URL('../../cli/dist/main.js', import.meta.url));
   const child = spawn(process.execPath, [cli, 'creds', 'serve'], {
@@ -300,7 +298,7 @@ async function handlePage(req: IncomingMessage, res: ServerResponse, home: strin
     return;
   }
   const site = body.get('site') ?? '';
-  let hostname = '';
+  let hostname: string;
   try {
     hostname = new URL(site).hostname;
   } catch {

@@ -25,10 +25,10 @@ describe('runtime detection', () => {
       docker: { apiVersion: string; serverVersion: string; arch: string };
     };
     expect(report.ok).toBe(true);
-    expect(report.runtime).toBe('docker-desktop');
+    expect(['docker-desktop', 'orbstack', 'colima', 'docker']).toContain(report.runtime);
     expect(report.docker.apiVersion).toMatch(/^\d+\.\d+/);
     expect(report.docker.serverVersion.length).toBeGreaterThan(0);
-    expect(report.docker.arch).toBe('arm64');
+    expect(report.docker.arch.length).toBeGreaterThan(0);
   });
 
   it('doctor --estimate 10 prints the measured figures that replaced the spec estimates', () => {

@@ -312,15 +312,4 @@ async function sessionCall(client: Client, name: string, args: Record<string, un
   return JSON.parse(text) as { ok?: boolean; reason?: string; error?: string; agent_id?: string };
 }
 
-async function mcpCall(name: string, args: Record<string, unknown>): Promise<{ ok?: boolean; reason?: string }> {
-  const transport = new StdioClientTransport({ command: process.execPath, args: [mcp], cwd: root });
-  const client = new Client({ name: 'hornet-unattended', version: '0.1.0' });
-  await client.connect(transport);
-  try {
-    const result = await client.callTool({ name, arguments: args });
-    const text = result.content?.find((entry) => entry.type === 'text')?.text ?? '{}';
-    return JSON.parse(text) as { ok?: boolean; reason?: string };
-  } finally {
-    await client.close();
-  }
-}
+

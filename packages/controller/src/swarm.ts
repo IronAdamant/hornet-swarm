@@ -50,7 +50,7 @@ export function runnerHealth(
 
 export async function swarmSnapshot(project: string, home = aegisHome()): Promise<SwarmSnapshot> {
   const view = readSwarm(project, home);
-  let runners: { label: string; health: string }[] | null = null;
+  let runners: { label: string; health: string }[] | null;
   try {
     runners = (await envStatus(project)).runners;
   } catch {

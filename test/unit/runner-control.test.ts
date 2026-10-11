@@ -56,7 +56,7 @@ describe('runner control API', () => {
             results.push({ path, reached: false });
           }
         }
-        let navigated = false;
+        let navigated: boolean;
         try {
           await fetch('http://127.0.0.1:8787/v1/jobs', {
             method: 'POST',
