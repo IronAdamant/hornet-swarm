@@ -47,6 +47,14 @@ type RunnerSettings = {
   rps: number;
 };
 
+export function prepareRunnerTokenDir(project: string, label: string, home = aegisHome()): string {
+  const tokenDir = ensureDir(join(home, 'control', project));
+  // This directory belongs to the tool. A token file that other accounts can read is still refused.
+  chmodSync(tokenDir, 0o700);
+  ensureControlToken(project, label, home);
+  return tokenDir;
+}
+
 export async function envUp(options: { project: string; count?: number }): Promise<EnvStatus> {
   const docker = createDocker();
   await assertImages(docker);
@@ -426,6 +434,8 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
 }
 
 async function ensureRunner(docker: Docker, project: string, label: string, settings: RunnerSettings): Promise<void> {
+  // A reused container returns before anything below this. The directory still has to be owner-only.
+  const tokenDir = prepareRunnerTokenDir(project, label);
   const name = containerName(project, label);
   const existing = await findContainer(docker, name);
   if (existing) {
@@ -454,9 +464,6 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   }
   const outDir = ensureDir(join(aegisHome(), 'runners', project, label));
   chmodSync(outDir, 0o777);
-  const tokenDir = ensureDir(join(aegisHome(), 'control', project));
-  chmodSync(tokenDir, 0o700);
-  ensureControlToken(project, label);
   const seccomp = JSON.stringify(JSON.parse(readFileSync(installSeccomp(), 'utf8')));
   if (!seccomp.startsWith('{')) throw new Error(`seccomp did not encode as JSON: ${seccomp.slice(0, 30)}`);
   const memory = parseMemory(settings.memory);

@@ -1,7 +1,8 @@
-import { chmodSync, cpSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { prepareRunnerTokenDir } from '../../packages/controller/src/env.ts';
 import { controlTokenDir, controlTokenPath, ensureControlToken } from '../../packages/controller/src/runner-auth.ts';
 
 describe('control token permissions', () => {
@@ -34,6 +35,24 @@ describe('control token permissions', () => {
       expect(accepted).toBe('');
     } finally {
       rmSync(loose, { recursive: true, force: true });
+    }
+  });
+
+  it('tightens a directory the tool owns and still refuses a loose token file', () => {
+    const reused = mkdtempSync(join(tmpdir(), 'hornet-token-reuse-'));
+    try {
+      const token = ensureControlToken(project, label, reused);
+      chmodSync(controlTokenDir(project, reused), 0o755);
+      const directory = prepareRunnerTokenDir(project, label, reused);
+      expect(directory).toBe(controlTokenDir(project, reused));
+      expect(mode(directory)).toBe(0o700);
+      expect(readFileSync(controlTokenPath(project, label, reused), 'utf8').trim()).toBe(token);
+      chmodSync(controlTokenPath(project, label, reused), 0o644);
+      expect(() => prepareRunnerTokenDir(project, label, reused)).toThrow('The control token file is open to other accounts.');
+      expect(mode(controlTokenPath(project, label, reused))).toBe(0o644);
+      expect(readFileSync(controlTokenPath(project, label, reused), 'utf8').trim()).toBe(token);
+    } finally {
+      rmSync(reused, { recursive: true, force: true });
     }
   });
 
