@@ -1,12 +1,13 @@
 import { createRequire } from 'node:module';
 import { request as httpRequest } from 'node:http';
 import { connect as netConnect } from 'node:net';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { mkdtempSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startControlGateway } from '../../packages/controller/src/egress-proxy.ts';
 import { controlTokenPath, rotateControlToken } from '../../packages/controller/src/runner-auth.ts';
+import { browserLaunchOptions } from '../../packages/runner/src/launch.ts';
 import { startControlServer, type ControlServer } from '../../packages/runner/src/main.ts';
 
 const require = createRequire(join(import.meta.dirname, '../../packages/runner/package.json'));
@@ -78,6 +79,7 @@ describe('runner control API', () => {
 
     const tcpOpen = await tcpListening(8787);
     expect(tcpOpen).toBe(false);
+    expect(statSync(socketPath).mode & 0o777).toBe(0o660);
     expect(control.secretValues()).toEqual([]);
     expect(control.abortRequested()).toBe(false);
 
@@ -147,6 +149,27 @@ describe('runner control API', () => {
     expect(job.body).not.toContain(password);
     expect(control.secretValues()).toEqual([]);
   }, 120_000);
+
+  it('launches the container browser through the unprivileged wrapper', () => {
+    const previousBrowser = process.env.AEGIS_BROWSER;
+    const previousUser = process.env.AEGIS_BROWSER_USER;
+    const previousLaunch = process.env.AEGIS_BROWSER_LAUNCH;
+    delete process.env.AEGIS_BROWSER;
+    process.env.AEGIS_BROWSER_USER = 'browser';
+    process.env.AEGIS_BROWSER_LAUNCH = '/opt/runner/browser-launch';
+    try {
+      expect(browserLaunchOptions().executablePath).toBe('/opt/runner/browser-launch');
+      process.env.AEGIS_BROWSER = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      expect(browserLaunchOptions().executablePath).toBe('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    } finally {
+      if (previousBrowser === undefined) delete process.env.AEGIS_BROWSER;
+      else process.env.AEGIS_BROWSER = previousBrowser;
+      if (previousUser === undefined) delete process.env.AEGIS_BROWSER_USER;
+      else process.env.AEGIS_BROWSER_USER = previousUser;
+      if (previousLaunch === undefined) delete process.env.AEGIS_BROWSER_LAUNCH;
+      else process.env.AEGIS_BROWSER_LAUNCH = previousLaunch;
+    }
+  });
 
   it('rejects the previous run token after the controller rotates it', async () => {
     const first = rotateControlToken('socket-project', 'qa-user-1', directory);

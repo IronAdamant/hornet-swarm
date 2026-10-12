@@ -452,7 +452,7 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   const outDir = ensureDir(join(aegisHome(), 'runners', project, label));
   chmodSync(outDir, 0o777);
   const tokenDir = ensureDir(join(aegisHome(), 'control', project));
-  chmodSync(tokenDir, 0o755);
+  chmodSync(tokenDir, 0o700);
   ensureControlToken(project, label);
   const seccomp = JSON.stringify(JSON.parse(readFileSync(installSeccomp(), 'utf8')));
   if (!seccomp.startsWith('{')) throw new Error(`seccomp did not encode as JSON: ${seccomp.slice(0, 30)}`);
@@ -460,7 +460,8 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   const container = await docker.createContainer({
     name,
     Image: RUNNER_IMAGE,
-    User: '10001:10001',
+    // Root keeps SETUID so entrypoint.sh can drop Node, then Chrome, to other users.
+    User: '0:0',
     Labels: { 'hornet-swarm.project': project, 'hornet-swarm.user': label, 'hornet-swarm.role': 'runner' },
     Env: [
       `AEGIS_PROXY=http://${proxyName(project)}:8888`,
@@ -475,6 +476,7 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
       Memory: memory,
       MemorySwap: memory,
       NanoCpus: Math.round(settings.cpus * 1e9),
+      CapAdd: ['SETUID', 'SETGID', 'SETPCAP'],
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges:true', `seccomp=${seccomp}`],
       PidsLimit: 512,
@@ -552,7 +554,7 @@ async function ensureControlVolume(docker: Docker, project: string): Promise<voi
   const container = await docker.createContainer({
     Image: PROXY_IMAGE,
     User: '0:0',
-    Entrypoint: ['chmod', '777', '/control'],
+    Entrypoint: ['sh', '-c', 'chown 10001:10010 /control && chmod 0770 /control'],
     HostConfig: { Binds: [`${name}:/control`] },
   });
   try {

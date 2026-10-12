@@ -22,13 +22,19 @@ RUN npm install --omit=dev \
 
 COPY images/runner/build/main.js /opt/runner/main.js
 COPY images/runner/entrypoint.sh /opt/runner/entrypoint.sh
+COPY images/runner/browser-launch /opt/runner/browser-launch
 
-RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin runner \
+RUN groupadd --gid 10010 control \
+    && groupadd --gid 10002 browsers \
+    && useradd --create-home --uid 10001 --gid 10010 --shell /usr/sbin/nologin runner \
+    && useradd --create-home --uid 10002 --gid 10002 --shell /usr/sbin/nologin browser \
     && mkdir -p /home/runner/profile \
-    && chmod 755 /opt/runner/entrypoint.sh \
-    && chown -R runner:runner /home/runner /opt/runner
+    && chmod 755 /opt/runner/entrypoint.sh /opt/runner/browser-launch \
+    && chown -R runner:control /home/runner /opt/runner \
+    && chown -R browser:browsers /home/browser
 
-USER runner
+# Root only until entrypoint.sh drops to the runner user.
+USER root
 ENV HOME=/home/runner \
     XDG_CACHE_HOME=/tmp/cache \
     XDG_CONFIG_HOME=/tmp/config

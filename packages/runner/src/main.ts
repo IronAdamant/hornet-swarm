@@ -105,7 +105,7 @@ export function startControlServer(options: { socketPath: string; token: string;
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(options.socketPath, () => {
-      chmodSync(options.socketPath, 0o777);
+      chmodSync(options.socketPath, 0o660);
       resolve({
         socketPath: options.socketPath,
         close: () =>

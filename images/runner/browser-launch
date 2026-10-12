@@ -1,0 +1,24 @@
+#!/bin/sh
+# Playwright starts this as the runner user. Drop to the browser user before Chrome.
+set -eu
+chrome=$(find /ms-playwright -type f -path '*/chrome-linux*/chrome' | head -1)
+if [ -z "$chrome" ]; then
+  echo "chromium is not installed in the runner image" >&2
+  exit 1
+fi
+prev=
+for arg in "$@"; do
+  if [ "$prev" = "--user-data-dir" ]; then
+    chmod 0777 "$arg" 2>/dev/null || true
+  fi
+  case "$arg" in
+    --user-data-dir=*) chmod 0777 "${arg#--user-data-dir=}" 2>/dev/null || true ;;
+  esac
+  prev=$arg
+done
+mkdir -p /tmp/chrome-home /tmp/cache /tmp/config
+chmod 0777 /tmp/chrome-home /tmp/cache /tmp/config
+export HOME=/tmp/chrome-home
+export XDG_CACHE_HOME=/tmp/cache
+export XDG_CONFIG_HOME=/tmp/config
+exec setpriv --reuid=10002 --regid=10002 --clear-groups --inh-caps=-all --ambient-caps=-all -- "$chrome" "$@"
