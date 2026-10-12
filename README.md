@@ -91,6 +91,6 @@ The Linux job also runs `pnpm test:coverage`. That command fails the check when 
 
 On 12 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 18 files passed and 76 tests passed.
+`pnpm test` exited 0. 18 files passed and 78 tests passed.
 
 `pnpm test:e2e` exited 0. 15 files passed and 42 tests passed.
