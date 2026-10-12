@@ -14,6 +14,17 @@ describe('control token permissions', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
+  it('creates a missing token directory as owner-only', () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'hornet-token-new-dir-'));
+    try {
+      const directory = prepareRunnerTokenDir('new-dir', label, fresh);
+      expect(mode(directory)).toBe(0o700);
+      expect(mode(controlTokenPath('new-dir', label, fresh))).toBe(0o600);
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+
   it('creates the token file as owner-only inside an owner-only directory', () => {
     const token = ensureControlToken(project, label, home);
     expect(token.length).toBeGreaterThan(0);
@@ -63,19 +74,21 @@ describe('control token permissions', () => {
     }
   });
 
-  it('tightens a directory the tool owns and still refuses a loose token file', () => {
+  it('refuses a token directory other accounts can open and leaves its mode unchanged', () => {
     const reused = mkdtempSync(join(tmpdir(), 'hornet-token-reuse-'));
     try {
       const token = ensureControlToken(project, label, reused);
+      const file = controlTokenPath(project, label, reused);
+      const before = readFileSync(file);
       chmodSync(controlTokenDir(project, reused), 0o755);
-      const directory = prepareRunnerTokenDir(project, label, reused);
-      expect(directory).toBe(controlTokenDir(project, reused));
-      expect(mode(directory)).toBe(0o700);
-      expect(readFileSync(controlTokenPath(project, label, reused), 'utf8').trim()).toBe(token);
-      chmodSync(controlTokenPath(project, label, reused), 0o644);
-      expect(() => prepareRunnerTokenDir(project, label, reused)).toThrow('The control token file is open to other accounts.');
-      expect(mode(controlTokenPath(project, label, reused))).toBe(0o644);
-      expect(readFileSync(controlTokenPath(project, label, reused), 'utf8').trim()).toBe(token);
+      let accepted = '';
+      expect(() => {
+        accepted = prepareRunnerTokenDir(project, label, reused);
+      }).toThrow('The control token directory is open to other accounts.');
+      expect(accepted).toBe('');
+      expect(mode(controlTokenDir(project, reused))).toBe(0o755);
+      expect(readFileSync(file)).toEqual(before);
+      expect(readFileSync(file, 'utf8').trim()).toBe(token);
     } finally {
       rmSync(reused, { recursive: true, force: true });
     }

@@ -48,9 +48,9 @@ type RunnerSettings = {
 };
 
 export function prepareRunnerTokenDir(project: string, label: string, home = aegisHome()): string {
-  const tokenDir = ensureDir(join(home, 'control', project));
-  // This directory belongs to the tool. A token file that other accounts can read is still refused.
-  chmodSync(tokenDir, 0o700);
+  const tokenDir = join(home, 'control', project);
+  if (!existsSync(tokenDir)) chmodSync(ensureDir(tokenDir), 0o700);
+  // An existing directory that other accounts can open is refused. Its mode is left unchanged.
   ensureControlToken(project, label, home);
   return tokenDir;
 }
@@ -434,7 +434,7 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
 }
 
 async function ensureRunner(docker: Docker, project: string, label: string, settings: RunnerSettings): Promise<void> {
-  // A reused container returns before anything below this. The directory still has to be owner-only.
+  // A reused container returns before anything below this. A loose token directory or file refuses startup.
   const tokenDir = prepareRunnerTokenDir(project, label);
   const name = containerName(project, label);
   const existing = await findContainer(docker, name);
