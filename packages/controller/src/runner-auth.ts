@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import { aegisHome, ensureDir } from './home.js';
+import { aegisHome } from './home.js';
 
 export function controlTokenDir(project: string, home = aegisHome()): string {
   return join(home, 'control', project);
@@ -13,22 +13,36 @@ export function controlTokenPath(project: string, label: string, home = aegisHom
 }
 
 export function ensureControlToken(project: string, label: string, home = aegisHome()): string {
+  const directory = controlTokenDir(project, home);
   const file = controlTokenPath(project, label, home);
-  ensureDir(controlTokenDir(project, home));
-  chmodSync(controlTokenDir(project, home), 0o755);
   if (!existsSync(file)) return rotateControlToken(project, label, home);
+  assertOwnerOnly(directory, 0o700, 'directory');
+  assertOwnerOnly(file, 0o600, 'file');
   return readFileSync(file, 'utf8').trim();
 }
 
 export function rotateControlToken(project: string, label: string, home = aegisHome()): string {
   const directory = controlTokenDir(project, home);
-  mkdirSync(directory, { recursive: true });
-  chmodSync(directory, 0o755);
+  prepareTokenDirectory(directory);
   const token = randomBytes(32).toString('hex');
   const file = join(directory, `${label}.token`);
-  writeFileSync(file, `${token}\n`, { mode: 0o644 });
-  chmodSync(file, 0o644);
+  writeFileSync(file, `${token}\n`, { mode: 0o600 });
+  chmodSync(file, 0o600);
   return token;
+}
+
+function prepareTokenDirectory(directory: string): void {
+  if (existsSync(directory)) {
+    assertOwnerOnly(directory, 0o700, 'directory');
+    return;
+  }
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
+}
+
+function assertOwnerOnly(path: string, limit: number, kind: string): void {
+  const actual = statSync(path).mode & 0o777;
+  if ((actual & ~limit) !== 0) throw new Error(`The control token ${kind} is open to other accounts.`);
 }
 
 export function readControlToken(project: string, label: string, home = aegisHome()): string {
