@@ -45,7 +45,7 @@ import { ensureCredentialPage } from './credentials.js';
 import { envStatus, startStoppedRunner, stopRunners } from './env.js';
 import { aegisHome, ensureDir } from './home.js';
 import { acquireLease, heartbeatStoredLease, releaseStoredLease } from './leases-store.js';
-import { rotateControlToken, runnerFetch } from './runner-auth.js';
+import { runWithToken, runnerFetch } from './runner-auth.js';
 
 
 export { HornetError } from './errors.js';
@@ -390,8 +390,20 @@ async function execute(
   chaos?: { profile: string; seed: string },
   codes: string[] = [],
 ): Promise<{ report: JobReport; killed: boolean }> {
+  return runWithToken(project.id, label, home, () => executeIssued(project, label, journey, runId, home, deadline, chaos, codes));
+}
+
+async function executeIssued(
+  project: Project,
+  label: string,
+  journey: Journey,
+  runId: string,
+  home: string,
+  deadline: number,
+  chaos?: { profile: string; seed: string },
+  codes: string[] = [],
+): Promise<{ report: JobReport; killed: boolean }> {
   const endpoint = await endpointFor(project.id, label);
-  rotateControlToken(project.id, label, home);
   const injected = await injectSecrets(project.id, label, endpoint, home);
   if (project.auth.totp.enabled) {
     const totp = await injectTotp(project.id, label, endpoint, home);

@@ -31,6 +31,20 @@ export function rotateControlToken(project: string, label: string, home = aegisH
   return token;
 }
 
+export function revokeControlToken(project: string, label: string, home = aegisHome()): void {
+  // The ended run does not receive this replacement. Health checks can still read the file.
+  rotateControlToken(project, label, home);
+}
+
+export async function runWithToken<T>(project: string, label: string, home: string, body: () => Promise<T>): Promise<T> {
+  rotateControlToken(project, label, home);
+  try {
+    return await body();
+  } finally {
+    revokeControlToken(project, label, home);
+  }
+}
+
 function prepareTokenDirectory(directory: string): void {
   if (existsSync(directory)) {
     assertOwnerOnly(directory, 0o700, 'directory');
