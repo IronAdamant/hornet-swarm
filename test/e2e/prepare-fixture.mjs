@@ -5,7 +5,7 @@ import { setSecret } from '../../packages/controller/dist/broker.js';
 
 const home = join(homedir(), '.hornet-swarm');
 const port = 4173;
-const password = 'FixtureOnly-s3cret"<&value>';
+const password = "FixtureOnly-s3cret\"<&value> it's (ok)!~";
 const password2 = 'FixtureOnly-other"<&value>';
 const projectDir = join(home, 'projects', 'fixture');
 mkdirSync(join(home, 'authorisations'), { recursive: true });

@@ -95,9 +95,6 @@ export async function injectSecrets(
   const response = await runnerFetch(project, endpoint, '/v1/secrets', { method: 'POST', body: JSON.stringify({ credentials }) }, home, label);
   if (!response.ok) throw new Error(`Runner rejected the login handoff (${response.status}).`);
   const body = (await response.json()) as { ok?: boolean; handles?: string[] };
-  credentials.forEach((entry) => {
-    entry.value = '';
-  });
   return { ok: true, handles: body.handles ?? credentials.map((entry) => entry.handle) };
 }
 
@@ -164,38 +161,67 @@ function ageIdentity(home: string): { secret: string; publicKey: string } {
   return { secret, publicKey };
 }
 
+let cachedAgeSecret: string | undefined;
+
+/**
+ * The key is read from the Keychain once per process and kept in memory until exit, so a
+ * screen lock after the first read does not stop the next label. A new key is generated only
+ * when both Keychain items are reported missing. A locked keychain, a timeout, or a damaged
+ * item stops with an error and leaves the Keychain unchanged, so an existing store is never
+ * orphaned by a replacement key.
+ */
 function loadAgeSecret(): string {
   if (process.platform !== 'darwin') {
     const fromEnv = process.env.SOPS_AGE_KEY;
     if (!fromEnv) throw new Error('SOPS_AGE_KEY is required when the Keychain is unavailable.');
     return fromEnv;
   }
+  if (cachedAgeSecret) return cachedAgeSecret;
   const account = process.env.USER || userInfo().username;
   for (const service of [SERVICE, LEGACY_SERVICE]) {
-    try {
-      return unpackAgeSecret(
-        execFileSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
-          encoding: 'utf8',
-          timeout: 15_000,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        }),
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      if (service === LEGACY_SERVICE) break;
-      if (/item.*not be found|could not be found|SecKeychainSearch/i.test(message)) continue;
-      if (!(message.includes('not an age key') || message.includes('could not be found') || message.includes('The specified item'))) {
-        if (message.includes('AGE-SECRET-KEY-')) throw new Error('Could not read the age key.', { cause: error });
-      }
+    const found = readKeychainItem(service, account);
+    if (found.kind === 'found') {
+      cachedAgeSecret = found.secret;
+      return found.secret;
     }
+    if (found.kind === 'error') throw new Error(found.message);
   }
   const generated = execFileSync('age-keygen', { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
   const packed = Buffer.from(generated, 'utf8').toString('base64');
-  execFileSync('security', ['add-generic-password', '-U', '-A', '-s', SERVICE, '-a', account, '-w', packed], {
+  execFileSync('security', ['add-generic-password', '-A', '-s', SERVICE, '-a', account, '-w', packed], {
     timeout: 15_000,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  return generated.endsWith('\n') ? generated.slice(0, -1) : generated;
+  cachedAgeSecret = generated.endsWith('\n') ? generated.slice(0, -1) : generated;
+  return cachedAgeSecret;
+}
+
+type KeychainRead = { kind: 'found'; secret: string } | { kind: 'missing' } | { kind: 'error'; message: string };
+
+/** `security` exits 44 (errSecItemNotFound) when the item does not exist. Every other failure is an error. */
+export function classifyKeychainFailure(status: number | null | undefined, stderr: string): 'missing' | 'error' {
+  if (status === 44 || /could not be found in the keychain/i.test(stderr)) return 'missing';
+  return 'error';
+}
+
+function readKeychainItem(service: string, account: string): KeychainRead {
+  let stored: string;
+  try {
+    stored = execFileSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
+      encoding: 'utf8',
+      timeout: 15_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    const failed = error as { status?: number | null; stderr?: unknown };
+    if (classifyKeychainFailure(failed.status, String(failed.stderr ?? '')) === 'missing') return { kind: 'missing' };
+    return { kind: 'error', message: `Could not read the Keychain item ${service}. Unlock the login keychain and try again. Nothing was changed.` };
+  }
+  try {
+    return { kind: 'found', secret: unpackAgeSecret(stored) };
+  } catch {
+    return { kind: 'error', message: `The Keychain item ${service} is not an age key. It was left unchanged.` };
+  }
 }
 
 function unpackAgeSecret(stored: string): string {

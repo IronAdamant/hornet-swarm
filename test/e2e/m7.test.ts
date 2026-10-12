@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
@@ -24,17 +24,30 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
     expect(failedReport.summary).not.toContain(secret);
     expect(failedReport.summary).not.toMatch(/run_\d/);
     await resetFixture({ failFlag: false });
-    for (let pass = 1; pass <= 3; pass += 1) {
+    // While open, the regression copy joins a suite run that did not name it.
+    const withRegression = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'chaos.journey.yaml')]);
+    expect(withRegression.status, withRegression.stdout).toBe(0);
+    const openIds = (readRun().result.users as { journeys: { id: string }[] }[])[0]?.journeys.map((journey) => journey.id);
+    expect(openIds).toContain('flag-check');
+    // A single-journey run leaves it out.
+    const single = hornet(['journey', join(journeys, 'chaos.journey.yaml'), '--project', 'fixture', '--json']);
+    expect(single.status, single.stdout).toBe(0);
+    expect((readRun().result.users as { journeys: { id: string }[] }[])[0]?.journeys.map((journey) => journey.id)).not.toContain('flag-check');
+    // The same id from the named file is not run twice, and its passes count toward fixed.
+    for (let pass = 2; pass <= 3; pass += 1) {
       const ok = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'flag.journey.yaml')]);
       expect(ok.status, `pass ${pass} ${ok.stdout}`).toBe(0);
+      const ids = (readRun().result.users as { journeys: { id: string }[] }[])[0]?.journeys.map((journey) => journey.id) ?? [];
+      expect(ids.filter((id) => id === 'flag-check')).toHaveLength(1);
     }
     const ledger = JSON.parse(readFileSync(join(home, 'regressions/fixture/flag-check.json'), 'utf8')) as { state: string; consecutive: number };
     expect(ledger.state).toBe('fixed');
     expect(ledger.consecutive).toBe(3);
+    expect(existsSync(join(home, 'regressions/fixture/flag-check.journey.yaml'))).toBe(false);
     const again = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'chaos.journey.yaml')]);
     expect(again.status).toBe(0);
     const ids = (readRun().result.users as { journeys: { id: string }[] }[])[0]?.journeys.map((journey) => journey.id);
-    expect(ids).toContain('flag-check');
+    expect(ids).not.toContain('flag-check');
   });
 
   it('repeats a chaos seed and refuses chaos without permission', () => {

@@ -1,6 +1,6 @@
 # Kill when the job response still returns
 
-Status: open. No code change in this note.
+Status: done. `applyReturnedJob` treats a kill file or a kill abort on the success path the same as the catch path: it stops the project runners and returns `killed: true` with `blocked_reason: kill`. `test/unit/kill-success.test.ts` covers it.
 
 ## What the source does
 

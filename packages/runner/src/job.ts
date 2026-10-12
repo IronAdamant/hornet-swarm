@@ -17,6 +17,8 @@ export type JobRequest = {
   authEndpoints: string[];
   minStepDelayMs: number;
   rps: number;
+  /** Requests allowed at once before pacing starts. Defaults to rps. */
+  burst?: number;
   accessDeniedMarkers: string[];
   chaosActions: ChaosAction[];
   outDir: string;
@@ -24,6 +26,8 @@ export type JobRequest = {
   users: TemplateContext['users'];
   deadline?: number;
   operatorPollUrl?: string;
+  /** The longest the run waits for the owner to type a texted or emailed code. */
+  operatorWaitMs?: number;
 };
 
 export type OperatorSettlement = { action: 'continue'; code: string } | { action: 'block'; reason: '2fa' } | { action: 'abort'; reason: 'kill' };
@@ -113,20 +117,34 @@ async function gateRequest(pollUrl: string, method: 'GET' | 'POST'): Promise<{ o
   });
 }
 
-async function askOperator(job: JobRequest, isAborted: () => boolean): Promise<OperatorSettlement> {
-  const deadline = job.deadline ?? Date.now();
-  if (job.operatorPollUrl) return pollOperatorGate(job.operatorPollUrl, deadline, isAborted);
-  if (isAborted()) return { action: 'abort', reason: 'kill' };
-  while (Date.now() < deadline - 750) {
-    if (isAborted()) return { action: 'abort', reason: 'kill' };
-    await delay(200);
-  }
-  if (isAborted()) return { action: 'abort', reason: 'kill' };
-  return { action: 'block', reason: '2fa' };
+/** The wait ends at the run deadline or the operator wait limit, whichever comes first. With no code page, nobody can answer, so the journey stops at once. */
+export function operatorDeadline(job: Pick<JobRequest, 'deadline' | 'operatorWaitMs'>, now = Date.now()): number {
+  const cap = now + (job.operatorWaitMs ?? 600_000);
+  return Math.min(job.deadline ?? cap, cap);
 }
 
+async function askOperator(job: JobRequest, isAborted: () => boolean): Promise<OperatorSettlement> {
+  if (isAborted()) return { action: 'abort', reason: 'kill' };
+  if (!job.operatorPollUrl) return { action: 'block', reason: '2fa' };
+  return pollOperatorGate(job.operatorPollUrl, operatorDeadline(job), isAborted);
+}
+
+const CODE_FIELDS = [
+  'input[autocomplete="one-time-code"]:visible',
+  'input[name*="otp" i]:visible:not([type="password"])',
+  'input[name*="code" i]:visible:not([type="password"])',
+  'input[id*="code" i]:visible:not([type="password"])',
+  'input:visible:not([type="password"]):not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"])',
+];
+
 async function fillVisibleCode(page: Page, code: string): Promise<void> {
-  await page.locator('input:visible:not([type="password"])').first().fill(code, { timeout: 15_000 });
+  for (const selector of CODE_FIELDS) {
+    const field = page.locator(selector).first();
+    if ((await field.count()) === 0) continue;
+    await field.fill(code, { timeout: 15_000 });
+    return;
+  }
+  throw new Error('no visible code field');
 }
 
 function delay(ms: number): Promise<void> {
@@ -166,10 +184,11 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   const harPath = join(job.outDir, 'network.har');
   const tracePath = join(job.outDir, 'trace.zip');
   let requests = 0;
-  let bucketRefusals = 0;
   let httpOverloads = 0;
   let dropLeft = 0;
-  const bucket = createBucket(job.rps);
+  let closing = false;
+  const bucket = createBucket(job.rps, job.burst ?? job.rps);
+  const stopWaiting = () => closing || isAborted();
 
   try {
     browser = await chromium.launch(browserLaunchOptions());
@@ -190,20 +209,40 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         return;
       }
       requests += 1;
-      if (!bucket.take()) {
-        bucketRefusals += 1;
-        await route.abort('failed');
+      // The per-runner limit paces requests. It never drops one, so a busy page loads
+      // slowly instead of loading broken, and the site is not blamed for the harness.
+      if (!(await bucket.wait(stopWaiting))) {
+        await route.abort('aborted').catch(() => undefined);
         return;
       }
-      await route.continue();
+      await route.continue().catch(() => undefined);
     });
     const page = await context.newPage();
     const consoleLogs: string[] = [];
     const networkErrors: { method: string; url: string; status: number }[] = [];
     page.on('console', (message) => consoleLogs.push(redactor.redact(message.text())));
     page.on('pageerror', (error) => consoleLogs.push(redactor.redact(error.message)));
+    const nav = { status: 0, count: 0, mark: 0, inflight: 0, lastActivity: Date.now() };
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) nav.count += 1;
+    });
+    page.on('request', () => {
+      nav.inflight += 1;
+      nav.lastActivity = Date.now();
+    });
+    const settled = () => {
+      nav.inflight = Math.max(0, nav.inflight - 1);
+      nav.lastActivity = Date.now();
+    };
+    page.on('requestfinished', settled);
+    page.on('requestfailed', settled);
     page.on('response', (response) => {
-      if (response.status() === 429 || response.status() === 503) httpOverloads += 1;
+      const request = response.request();
+      // A click that navigates updates the page status too, not only a navigate step.
+      if (request.isNavigationRequest() && response.frame() === page.mainFrame()) nav.status = response.status();
+      // The harness's own proxy marks its refusals. Only the site's 429 and 503 count against the site.
+      const fromHarness = Boolean(response.headers()['x-hornet-swarm']);
+      if (!fromHarness && (response.status() === 429 || response.status() === 503)) httpOverloads += 1;
       if (response.status() < 400) return;
       networkErrors.push({
         method: response.request().method(),
@@ -211,7 +250,6 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         status: response.status(),
       });
     });
-    const nav = { status: 0 };
     const fillsTotp = journeyFillsTotp(job.steps);
 
     for (let index = 0; index < job.steps.length; index += 1) {
@@ -233,6 +271,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           dropLeft += count;
         });
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
+        if (!('wait' in step) && !('assert' in step) && !('screenshot' in step)) nav.mark = nav.count;
         const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted);
         const challenge = await detectChallenge(page);
         const decision = await resolveChallenge({
@@ -288,10 +327,11 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         break;
       }
     }
-    if (status === 'passed' && runnerOverload(requests, bucketRefusals, httpOverloads)) {
+    if (status === 'passed' && runnerOverload(requests, 0, httpOverloads)) {
       status = 'rate_limited';
       blocked = 'rate_limited';
     }
+    closing = true;
     await context.tracing.stop({ path: tracePath });
     await context.close();
     context = undefined;
@@ -303,6 +343,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
       steps.push(finishStep(0, 'launch', 'error', Date.now(), [], [], [], [], [], redactor, undefined, undefined, message));
     }
   } finally {
+    closing = true;
     await context?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
     if (existsSync(harPath)) writeFileSync(harPath, redactor.redact(readFileSync(harPath, 'utf8')));
@@ -338,7 +379,7 @@ async function runStep(
   selectors: string[],
   assertions: string[],
   screenshots: string[],
-  nav: { status: number },
+  nav: NavState,
   isAborted: () => boolean,
 ): Promise<{ statusCode: number; httpStatus?: number }> {
   if ('navigate' in step) {
@@ -369,8 +410,6 @@ async function runStep(
       text = value;
     }
     await locate(page, step.fill.selector).fill(text, { timeout: 15_000 });
-    text = '';
-    if (text !== '') throw new Error('The credential was not cleared from memory.');
     return { statusCode: 0 };
   }
   if ('wait' in step) {
@@ -379,7 +418,7 @@ async function runStep(
       return { statusCode: 0 };
     }
     if (step.wait.for === 'navigation') {
-      await page.waitForLoadState('domcontentloaded', { timeout: 15_000 });
+      await waitForNavigationOrSettle(page, nav, isAborted, step.wait.ms ?? 15_000);
       return { statusCode: 0 };
     }
     selectors.push(step.wait.selector ?? '');
@@ -389,15 +428,22 @@ async function runStep(
   if ('assert' in step) {
     const value = step.assert.value ? renderTemplate(step.assert.value, template) : '';
     assertions.push(`${step.assert.type}${value ? ` ${value}` : ''}`);
-    const body = await page.locator('body').innerText().catch(() => '');
-    if (step.assert.type === 'url_contains' && !page.url().includes(value)) throw new Error('url did not match');
-    if (step.assert.type === 'text_visible' && !body.includes(value)) throw new Error('text was not visible');
+    const bodyText = () => page.locator('body').innerText().catch(() => '');
+    // Pages that render after the first paint get the same 10 seconds a person would wait.
+    if (step.assert.type === 'url_contains' && !(await pollUntil(() => page.url().includes(value), ASSERT_TIMEOUT_MS, isAborted))) {
+      throw new Error('url did not match');
+    }
+    if (step.assert.type === 'text_visible' && !(await pollUntil(async () => (await bodyText()).includes(value), ASSERT_TIMEOUT_MS, isAborted))) {
+      throw new Error('text was not visible');
+    }
     if (step.assert.type === 'selector_visible') {
       selectors.push(value);
-      await locate(page, value).waitFor({ state: 'visible', timeout: 10_000 });
+      await locate(page, value).waitFor({ state: 'visible', timeout: ASSERT_TIMEOUT_MS });
     }
     if (step.assert.type === 'selector_absent') {
       selectors.push(value);
+      // Let late content arrive first, so a leak that renders after the first paint is still seen.
+      await page.waitForLoadState('networkidle', { timeout: 3_000 }).catch(() => undefined);
       if ((await locate(page, value).count()) > 0 && (await locate(page, value).first().isVisible().catch(() => false))) {
         throw new Error('selector was still visible');
       }
@@ -407,14 +453,18 @@ async function runStep(
       return { statusCode: nav.status, httpStatus: nav.status };
     }
     if (step.assert.type === 'access_denied') {
-      const statusCode = nav.status;
-      const denied =
-        statusCode === 401 ||
-        statusCode === 403 ||
-        page.url().includes('/login') ||
-        job.accessDeniedMarkers.some((marker) => body.toLowerCase().includes(marker.toLowerCase()));
+      const denied = await pollUntil(
+        async () => {
+          if (nav.status === 401 || nav.status === 403) return true;
+          const here = new URL(page.url());
+          if (/\/(login|signin|sign-in)(\/|$|\?)/i.test(`${here.pathname}${here.hash.replace(/^#/, '')}`)) return true;
+          return deniedByMarker(await bodyText(), job.accessDeniedMarkers);
+        },
+        5_000,
+        isAborted,
+      );
       if (!denied) throw new Error('access was not denied');
-      return { statusCode, httpStatus: statusCode };
+      return { statusCode: nav.status, httpStatus: nav.status };
     }
     return { statusCode: 0 };
   }
@@ -486,23 +536,63 @@ export function classifyBlockedReason(message: string): 'allowlist' | 'proxy' | 
   return undefined;
 }
 
+export type ChallengeFrame = { src?: string; title?: string; width: number; height: number; visible: boolean; badge?: boolean };
+export type ChallengeWidget = { width: number; height: number; visible: boolean; size?: string };
+export type ChallengeInput = {
+  type?: string;
+  name?: string;
+  id?: string;
+  autocomplete?: string;
+  placeholder?: string;
+  maxlength?: string;
+  inputmode?: string;
+  label?: string;
+};
+
+const CAPTCHA_PROVIDER = /recaptcha|hcaptcha|turnstile|challenges\.cloudflare\.com|arkoselabs|funcaptcha/i;
+const CODE_TOKEN = /^(otp|totp|mfa|2fa|passcode|onetime)$/;
+const CODE_PHRASE = /one[\s_-]?time[\s_-]?(code|pass(word|code)?)|verification[\s_-]?code|security[\s_-]?code|auth(entication|enticator)?[\s_-]?code|login[\s_-]?code|sign[\s_-]?in[\s_-]?code/;
+const NOT_A_SECOND_CODE = /^(post|zip|promo|coupon|discount|referral|gift|voucher|country|area|postal)$/;
+const CODE_SENT =
+  /(texted|emailed|sent|messaged) you (a|an|the|your) ([\w-]+ )?code|code (was|has been) (texted|emailed|sent)|enter the (\d+[\s-]digit )?code (we|that was) (sent|texted|emailed)|we('ve| have) sent (a|an|the) ([\w-]+ )?code/;
+
+function words(value: string): string[] {
+  return value
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Only a challenge a person can see stops the journey. Invisible reCAPTCHA v3, the reCAPTCHA
+ * badge, and a Turnstile or hCaptcha script that never shows a widget are ignored. A second-code
+ * prompt needs a one-time-code field, a field named for a code, or wording that a code was sent.
+ */
 export function classifyChallenge(input: {
   text: string;
-  html: string;
-  inputs: Array<{ type?: string; name?: string; autocomplete?: string; placeholder?: string; maxlength?: string }>;
+  frames?: ChallengeFrame[];
+  widgets?: ChallengeWidget[];
+  inputs: ChallengeInput[];
 }): 'captcha' | '2fa' | undefined {
   const text = input.text.toLowerCase();
-  const html = input.html.toLowerCase();
-  if (text.includes('verify you are human') || /recaptcha|hcaptcha|turnstile|arkose/.test(html)) return 'captcha';
-  const password = (field: { type?: string; name?: string; autocomplete?: string; placeholder?: string }) => {
-    const blob = `${field.type ?? ''} ${field.name ?? ''} ${field.autocomplete ?? ''} ${field.placeholder ?? ''}`.toLowerCase();
-    return (field.type ?? '').toLowerCase() === 'password' || blob.includes('password');
-  };
-  const other = input.inputs.filter((field) => !password(field));
-  const codeSent = /texted you a code|emailed you a code|sent you a code|code was texted|code was emailed/.test(text);
+  if (text.includes('verify you are human')) return 'captcha';
+  const shown = (box: { width: number; height: number; visible: boolean }) => box.visible && box.width >= 100 && box.height >= 50;
+  const captchaFrame = (input.frames ?? []).some(
+    (frame) => shown(frame) && !frame.badge && !/size=invisible/i.test(frame.src ?? '') && CAPTCHA_PROVIDER.test(`${frame.src ?? ''} ${frame.title ?? ''}`),
+  );
+  const captchaWidget = (input.widgets ?? []).some((widget) => shown(widget) && widget.size !== 'invisible');
+  if (captchaFrame || captchaWidget) return 'captcha';
+  const isPassword = (field: ChallengeInput) => (field.type ?? '').toLowerCase() === 'password' || words(`${field.name ?? ''} ${field.id ?? ''} ${field.autocomplete ?? ''}`).includes('password');
+  const other = input.inputs.filter((field) => !isPassword(field));
+  const codeSent = CODE_SENT.test(text);
   const oneTime = other.some((field) => {
-    const blob = `${field.autocomplete ?? ''} ${field.name ?? ''} ${field.placeholder ?? ''}`.toLowerCase();
-    return field.maxlength === '6' || blob.includes('one-time-code') || blob.includes('otp') || blob.includes('verification code');
+    if ((field.autocomplete ?? '').toLowerCase().includes('one-time-code')) return true;
+    const described = `${field.name ?? ''} ${field.id ?? ''} ${field.placeholder ?? ''} ${field.label ?? ''}`;
+    const tokens = words(described);
+    if (tokens.some((token) => NOT_A_SECOND_CODE.test(token))) return false;
+    if (tokens.some((token) => CODE_TOKEN.test(token)) || CODE_PHRASE.test(described.toLowerCase())) return true;
+    return field.maxlength === '6' && tokens.includes('code');
   });
   if ((codeSent && other.length > 0) || oneTime) return '2fa';
   return undefined;
@@ -510,17 +600,58 @@ export function classifyChallenge(input: {
 
 async function detectChallenge(page: Page): Promise<'captcha' | '2fa' | undefined> {
   const text = await page.locator('body').innerText().catch(() => '');
-  const html = await page.content().catch(() => '');
-  const inputs = await page.locator('input:visible').evaluateAll((elements) =>
-    elements.map((element) => ({
-      type: element.getAttribute('type') ?? '',
-      name: element.getAttribute('name') ?? '',
-      autocomplete: element.getAttribute('autocomplete') ?? '',
-      placeholder: element.getAttribute('placeholder') ?? '',
-      maxlength: element.getAttribute('maxlength') ?? '',
-    })),
-  );
-  return classifyChallenge({ text, html, inputs });
+  // Each callback runs inside the page. It is written out in full rather than built with
+  // new Function, which a strict Content-Security-Policy would block.
+  const frames = await page
+    .locator('iframe')
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          src: element.getAttribute('src') ?? '',
+          title: element.getAttribute('title') ?? '',
+          badge: Boolean(element.closest('.grecaptcha-badge')),
+          width: rect.width,
+          height: rect.height,
+          visible:
+            style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') > 0 && rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0,
+        };
+      }),
+    )
+    .catch(() => [] as ChallengeFrame[]);
+  const widgets = await page
+    .locator('.g-recaptcha, .h-captcha, .cf-turnstile, #FunCaptcha, [data-hcaptcha-widget-id]')
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          size: element.getAttribute('data-size') ?? '',
+          width: rect.width,
+          height: rect.height,
+          visible:
+            style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') > 0 && rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0,
+        };
+      }),
+    )
+    .catch(() => [] as ChallengeWidget[]);
+  const inputs = await page
+    .locator('input:visible')
+    .evaluateAll((elements) =>
+      elements.map((element) => ({
+        type: element.getAttribute('type') ?? '',
+        name: element.getAttribute('name') ?? '',
+        id: element.getAttribute('id') ?? '',
+        autocomplete: element.getAttribute('autocomplete') ?? '',
+        placeholder: element.getAttribute('placeholder') ?? '',
+        maxlength: element.getAttribute('maxlength') ?? '',
+        inputmode: element.getAttribute('inputmode') ?? '',
+        label: element.getAttribute('aria-label') ?? (element as HTMLInputElement).labels?.[0]?.textContent ?? '',
+      })),
+    )
+    .catch(() => [] as ChallengeInput[]);
+  return classifyChallenge({ text, frames, widgets, inputs });
 }
 
 async function applyChaos(
@@ -581,19 +712,69 @@ function parseMs(detail: string): number {
   return match ? Number(match[1]) : 300;
 }
 
-function createBucket(rps: number): { take: () => boolean } {
-  let tokens = Math.max(1, rps);
+type NavState = { status: number; count: number; mark: number; inflight: number; lastActivity: number };
+
+const ASSERT_TIMEOUT_MS = 10_000;
+
+export function createBucket(rps: number, burst = rps): { take: () => boolean; wait: (stop: () => boolean) => Promise<boolean> } {
+  const capacity = Math.max(1, burst);
+  let tokens = capacity;
   let updated = Date.now();
+  const refill = () => {
+    const now = Date.now();
+    tokens = Math.min(capacity, tokens + ((now - updated) / 1000) * rps);
+    updated = now;
+  };
+  const take = () => {
+    refill();
+    if (tokens < 1) return false;
+    tokens -= 1;
+    return true;
+  };
   return {
-    take() {
-      const now = Date.now();
-      tokens = Math.min(rps, tokens + ((now - updated) / 1000) * rps);
-      updated = now;
-      if (tokens < 1) return false;
-      tokens -= 1;
-      return true;
+    take,
+    async wait(stop) {
+      for (;;) {
+        if (take()) return true;
+        if (stop()) return false;
+        await delay(Math.max(10, Math.ceil(((1 - tokens) / Math.max(rps, 0.001)) * 1000)));
+      }
     },
   };
+}
+
+async function pollUntil(check: () => boolean | Promise<boolean>, timeoutMs: number, isAborted: () => boolean): Promise<boolean> {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    if (await check()) return true;
+    if (Date.now() >= end) return false;
+    if (isAborted()) throw new AbortJob('kill');
+    await delay(150);
+  }
+}
+
+/**
+ * Waits for the main frame to navigate after the last action, including a single-page app
+ * route change, then for that page's DOM. A login that renders in place without changing the
+ * URL never navigates, so the wait also ends once the network has been quiet for half a second.
+ * The assertions that follow decide whether the page is right.
+ */
+async function waitForNavigationOrSettle(page: Page, nav: NavState, isAborted: () => boolean, timeoutMs: number): Promise<void> {
+  const started = Date.now();
+  await pollUntil(
+    () => nav.count > nav.mark || (Date.now() - started > 300 && nav.inflight === 0 && Date.now() - nav.lastActivity > 500),
+    timeoutMs,
+    isAborted,
+  );
+  await page.waitForLoadState('domcontentloaded', { timeout: timeoutMs }).catch(() => undefined);
+}
+
+export function deniedByMarker(body: string, markers: string[]): boolean {
+  const lower = body.toLowerCase();
+  return markers.some((marker) => {
+    const escaped = marker.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(lower);
+  });
 }
 
 async function interruptible(ms: number, isAborted: () => boolean): Promise<void> {

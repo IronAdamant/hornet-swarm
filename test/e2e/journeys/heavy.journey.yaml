@@ -1,0 +1,13 @@
+version: 1
+id: heavy-page
+name: A page with many resources and invisible captcha scripts
+users: [qa-user-1]
+requires_phase1: false
+tags: [reliability]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/heavy" }
+  - wait: { for: selector, selector: "#ready", ms: 30000 }
+  - assert: { type: selector_absent, value: "#broken" }
+  - screenshot: { name: "heavy" }

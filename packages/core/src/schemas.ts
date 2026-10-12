@@ -77,6 +77,8 @@ export const projectSchema = z
             enabled: z.boolean().default(false),
           })
           .default({ enabled: false }),
+        /** How long a run waits for the owner to type a texted or emailed code. The run deadline still applies. */
+        operator_code_wait_sec: z.number().int().positive().max(3600).default(600),
         access_denied_markers: z
           .array(z.string())
           .default(['access denied', 'not authorised', 'not authorized', 'forbidden', 'not found']),
@@ -93,6 +95,8 @@ export const projectSchema = z
       .object({
         max_parallel_runners: z.number().int().min(1).max(30).default(10),
         max_requests_per_second_per_runner: z.number().positive().default(5),
+        /** How many requests one runner may send at once before the per-second rate applies. A single page load is a burst. */
+        request_burst_per_runner: z.number().int().positive().max(200).default(20),
         max_requests_per_second_total: z.number().positive().default(20),
         min_step_delay_ms: z.number().int().nonnegative().default(250),
         max_run_duration_min: z.number().positive().default(30),
@@ -255,7 +259,7 @@ export const stepResultSchema = z
     error: z.string().optional(),
     screenshot: z.string().optional(),
     blocked_reason: z
-      .enum(['captcha', '2fa', 'allowlist', 'rate_limited', 'kill', 'signin_limit', 'duration', 'totp_missing', 'proxy'])
+      .enum(['captcha', '2fa', 'allowlist', 'rate_limited', 'kill', 'signin_limit', 'duration', 'totp_missing', 'proxy', 'lease_busy'])
       .optional(),
     console_error_count: z.number().int().nonnegative().optional(),
     network_errors: z

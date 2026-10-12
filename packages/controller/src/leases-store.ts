@@ -1,26 +1,34 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { decideAcquire, heartbeatLease, releaseLease, type AcquireDecision, type Lease } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
 import { aegisHome, ensureDir } from './home.js';
 
 const held = new Set<string>();
-let sigtermHooked = false;
+let signalsHooked = false;
 
 function heldKey(home: string, project: string, agentId: string): string {
   return `${home}\0${project}\0${agentId}`;
 }
 
-function hookSigterm(): void {
-  if (sigtermHooked || process.env.VITEST) return;
-  sigtermHooked = true;
-  process.once('SIGTERM', () => {
-    try {
-      releaseHeldLeases();
-    } finally {
-      process.exit(143);
-    }
-  });
+/** Ctrl-C, a closed terminal, and SIGTERM all release this process's logins. Only SIGKILL leaves one until its TTL. */
+function hookSignals(): void {
+  if (signalsHooked || process.env.VITEST) return;
+  signalsHooked = true;
+  const exits: [NodeJS.Signals, number][] = [
+    ['SIGTERM', 143],
+    ['SIGINT', 130],
+    ['SIGHUP', 129],
+  ];
+  for (const [signal, code] of exits) {
+    process.once(signal, () => {
+      try {
+        releaseHeldLeases();
+      } finally {
+        process.exit(code);
+      }
+    });
+  }
 }
 
 export function releaseHeldLeases(): void {
@@ -65,7 +73,7 @@ export function acquireLease(input: {
   });
   if (decision.ok) {
     held.add(heldKey(home, input.project, input.agentId));
-    hookSigterm();
+    hookSignals();
   }
   writeAudit(
     {
@@ -104,6 +112,20 @@ export function heartbeatStoredLease(
   writeAudit({ interface: via, agent: agentId, action: 'lease_renew', project, result: 'renewed' }, undefined, home);
 }
 
+/** The agent that holds a label right now, if any. */
+export function leaseHolder(project: string, label: string, home = aegisHome()): string | undefined {
+  const now = Date.now();
+  return readLeases(home).find((lease) => lease.project === project && lease.label === label && Date.parse(lease.expiresAt) > now)?.agentId;
+}
+
+/** Labels another agent holds in this project right now. */
+export function leasesHeldByOthers(project: string, agentId: string, home = aegisHome()): string[] {
+  const now = Date.now();
+  return readLeases(home)
+    .filter((lease) => lease.project === project && lease.agentId !== agentId && Date.parse(lease.expiresAt) > now)
+    .map((lease) => lease.label);
+}
+
 function readLeases(home: string): Lease[] {
   const file = join(home, 'leases.json');
   if (!existsSync(file)) return [];
@@ -119,12 +141,24 @@ function readLeases(home: string): Lease[] {
 
 function writeLeases(home: string, leases: Lease[]): void {
   ensureDir(home);
-  writeFileSync(join(home, 'leases.json'), `${JSON.stringify(leases)}\n`);
+  writeFileAtomic(join(home, 'leases.json'), `${JSON.stringify(leases)}\n`);
+}
+
+/** Writes beside the target and renames over it, so a crash never leaves half a file. */
+export function writeFileAtomic(file: string, body: string, mode = 0o600): void {
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temp, body, { mode });
+  renameSync(temp, file);
 }
 
 function withLock<T>(home: string, fn: () => T): T {
+  return withFileLock(home, 'leases', fn);
+}
+
+/** A cross-process lock on `<home>/<name>.lock`. A lock left by a dead process is taken over. */
+export function withFileLock<T>(home: string, name: string, fn: () => T): T {
   ensureDir(home);
-  const lock = join(home, 'leases.lock');
+  const lock = join(home, `${name}.lock`);
   const started = Date.now();
   for (;;) {
     try {
@@ -136,7 +170,7 @@ function withLock<T>(home: string, fn: () => T): T {
         rmSync(lock, { recursive: true, force: true });
         continue;
       }
-      if (Date.now() - started > 5_000) throw new Error('Timed out waiting for the lease lock.');
+      if (Date.now() - started > 5_000) throw new Error(`Timed out waiting for the ${name} lock.`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
   }

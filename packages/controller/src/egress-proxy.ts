@@ -11,9 +11,39 @@ export type ProxyOptions = {
   log?: (entry: Record<string, unknown>) => void;
 };
 
-export function hostAllowed(host: string, allow: string[]): boolean {
-  const name = host.trim().toLowerCase().replace(/\.+$/, '');
-  return allow.some((entry) => entry.trim().toLowerCase() === name);
+/** Refusals from the harness carry this header, so the runner never counts them against the site. */
+export const HARNESS_HEADER = 'x-hornet-swarm';
+const QUEUE_LIMIT_MS = 30_000;
+
+function normalHost(host: string): string {
+  return host.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+}
+
+/** An entry is `host` or `host:port`. A bare host allows any port. IPv6 hosts are written `[::1]:443`. */
+export function splitAllowEntry(entry: string): { host: string; port?: number } {
+  const trimmed = entry.trim();
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(trimmed);
+  if (bracketed) return { host: normalHost(bracketed[1] ?? ''), ...(bracketed[2] ? { port: Number(bracketed[2]) } : {}) };
+  const withPort = /^([^:]+):(\d+)$/.exec(trimmed);
+  if (withPort) return { host: normalHost(withPort[1] ?? ''), port: Number(withPort[2]) };
+  return { host: normalHost(trimmed) };
+}
+
+export function hostAllowed(host: string, allow: string[], port?: number): boolean {
+  const name = normalHost(host);
+  return allow.some((entry) => {
+    const allowed = splitAllowEntry(entry);
+    if (allowed.host !== name) return false;
+    return allowed.port === undefined || allowed.port === port;
+  });
+}
+
+function splitTarget(target: string): { host: string; port: number } {
+  const bracketed = /^\[([^\]]+)\]:(\d+)$/.exec(target);
+  if (bracketed) return { host: bracketed[1] ?? '', port: Number(bracketed[2]) };
+  const index = target.lastIndexOf(':');
+  if (index < 0) return { host: target, port: 443 };
+  return { host: target.slice(0, index), port: Number(target.slice(index + 1)) || 443 };
 }
 
 export function startEgressProxy(options: ProxyOptions): Promise<{ port: number; close: () => Promise<void> }> {
@@ -26,31 +56,7 @@ export function startEgressProxy(options: ProxyOptions): Promise<{ port: number;
   });
 
   server.on('connect', (req: IncomingMessage, socket: Socket, head: Buffer) => {
-    const target = req.url ?? '';
-    const [host, portText] = target.split(':');
-    const port = Number(portText ?? 443);
-    if (!host || !hostAllowed(host, allow)) {
-      log({ event: 'deny', host: host ?? '', port, proto: 'connect' });
-      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-      socket.end();
-      return;
-    }
-    if (!bucket.take()) {
-      log({ event: 'rate_limited', host, port, proto: 'connect' });
-      socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
-      socket.end();
-      return;
-    }
-    log({ event: 'allow', host, port, proto: 'connect' });
-    const upstream = netConnect(port, host, () => {
-      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      if (head.length > 0) upstream.write(head);
-      socket.pipe(upstream);
-      upstream.pipe(socket);
-    });
-    upstream.on('error', () => {
-      socket.end();
-    });
+    void openTunnel(req, socket, head, allow, bucket, log);
   });
 
   return new Promise((resolve, reject) => {
@@ -66,6 +72,40 @@ export function startEgressProxy(options: ProxyOptions): Promise<{ port: number;
           }),
       });
     });
+  });
+}
+
+async function openTunnel(
+  req: IncomingMessage,
+  socket: Socket,
+  head: Buffer,
+  allow: string[],
+  bucket: TokenBucket,
+  log: (entry: Record<string, unknown>) => void,
+): Promise<void> {
+  const { host, port } = splitTarget(req.url ?? '');
+  socket.on('error', () => undefined);
+  if (!host || !hostAllowed(host, allow, port)) {
+    log({ event: 'deny', host: host ?? '', port, proto: 'connect' });
+    socket.write(`HTTP/1.1 403 Forbidden\r\n${HARNESS_HEADER}: denied\r\n\r\n`);
+    socket.end();
+    return;
+  }
+  if (!(await bucket.wait(QUEUE_LIMIT_MS))) {
+    log({ event: 'rate_limited', host, port, proto: 'connect' });
+    socket.write(`HTTP/1.1 429 Too Many Requests\r\n${HARNESS_HEADER}: rate_limited\r\n\r\n`);
+    socket.end();
+    return;
+  }
+  log({ event: 'allow', host, port, proto: 'connect' });
+  const upstream = netConnect(port, host, () => {
+    socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+    if (head.length > 0) upstream.write(head);
+    socket.pipe(upstream);
+    upstream.pipe(socket);
+  });
+  upstream.on('error', () => {
+    socket.end();
   });
 }
 
@@ -85,15 +125,17 @@ async function forwardHttp(
     res.end('bad request');
     return;
   }
-  if (!hostAllowed(target.hostname, allow)) {
-    log({ event: 'deny', host: target.hostname, port: target.port, proto: 'http' });
-    res.writeHead(403);
+  const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
+  if (!hostAllowed(target.hostname, allow, port)) {
+    log({ event: 'deny', host: target.hostname, port, proto: 'http' });
+    res.writeHead(403, { [HARNESS_HEADER]: 'denied' });
     res.end('blocked');
     return;
   }
-  if (!bucket.take()) {
+  // Over the project total, a request waits its turn. It is refused only after a long wait.
+  if (!(await bucket.wait(QUEUE_LIMIT_MS))) {
     log({ event: 'rate_limited', host: target.hostname, proto: 'http' });
-    res.writeHead(429);
+    res.writeHead(429, { [HARNESS_HEADER]: 'rate_limited' });
     res.end('rate limited');
     return;
   }
@@ -104,7 +146,7 @@ async function forwardHttp(
   const upstream = httpRequest(
     {
       host: target.hostname,
-      port: Number(target.port || 80),
+      port,
       method: req.method,
       path: `${target.pathname}${target.search}`,
       headers,
@@ -133,10 +175,19 @@ class TokenBucket {
     const now = Date.now();
     const elapsed = (now - this.updated) / 1000;
     this.updated = now;
-    this.tokens = Math.min(this.rps, this.tokens + elapsed * this.rps);
+    this.tokens = Math.min(Math.max(1, this.rps), this.tokens + elapsed * this.rps);
     if (this.tokens < 1) return false;
     this.tokens -= 1;
     return true;
+  }
+
+  async wait(limitMs: number): Promise<boolean> {
+    const end = Date.now() + limitMs;
+    for (;;) {
+      if (this.take()) return true;
+      if (Date.now() >= end) return false;
+      await new Promise((resolve) => setTimeout(resolve, Math.max(10, Math.ceil(((1 - this.tokens) / Math.max(this.rps, 0.001)) * 1000))));
+    }
   }
 }
 

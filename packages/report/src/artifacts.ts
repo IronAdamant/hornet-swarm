@@ -1,12 +1,13 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import JSZip from 'jszip';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import { Redactor } from '@hornet-swarm/core';
+import { matchGlob, Redactor } from '@hornet-swarm/core';
 
 const PLACEHOLDER_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -23,8 +24,10 @@ export function walkFiles(dir: string): string[] {
   }
   for (const entry of entries) {
     const path = join(dir, entry.name);
+    // A link written by a runner could point anywhere on this Mac. It is never read or rewritten.
+    if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) found.push(...walkFiles(path));
-    else found.push(path);
+    else if (entry.isFile()) found.push(path);
   }
   return found;
 }
@@ -51,8 +54,8 @@ export async function scanTree(dir: string, redactor: Redactor): Promise<string[
       for (const name of Object.keys(zip.files)) {
         const entry = zip.files[name];
         if (!entry || entry.dir) continue;
-        const text = await entry.async('string');
-        if (redactor.contains(text)) hits.push(`${file}!${name}`);
+        const data = await entry.async('nodebuffer');
+        if (redactor.contains(data.toString('utf8')) || redactor.contains(data.toString('latin1'))) hits.push(`${file}!${name}`);
       }
     } catch {
       hits.push(file);
@@ -111,30 +114,77 @@ function redactPng(file: string, redactor: Redactor): void {
   if (redactor.contains(text)) writeFileSync(file, PLACEHOLDER_PNG);
 }
 
+const IMAGE_ENTRY = /\.(png|jpe?g|webp)$/i;
+
+/**
+ * Rewrites only the entries that still hold a secret. Text entries are redacted in place.
+ * Image entries, including the screencast JPEG frames, are read with OCR and replaced when
+ * they show a secret. Any other binary entry that holds a secret is dropped. Every other
+ * entry keeps its original bytes, so the trace viewer can still open the file.
+ */
 async function redactZip(file: string, redactor: Redactor): Promise<void> {
   const zip = await JSZip.loadAsync(readFileSync(file));
+  let changed = false;
+  const images: { name: string; bytes: Buffer }[] = [];
   for (const name of Object.keys(zip.files)) {
     const entry = zip.files[name];
     if (!entry || entry.dir) continue;
-    if (name.endsWith('.png')) {
-      const bytes = await entry.async('nodebuffer');
-      const temp = `${file}.${name.replace(/[^\w.]+/g, '_')}.ocr.png`;
-      writeFileSync(temp, bytes);
-      const text = ocr(temp);
-      unlinkSync(temp);
-      if (redactor.contains(text) || redactor.contains(bytes.toString('latin1'))) zip.file(name, PLACEHOLDER_PNG);
+    const bytes = await entry.async('nodebuffer');
+    if (IMAGE_ENTRY.test(name)) {
+      images.push({ name, bytes });
       continue;
     }
-    const text = await entry.async('string');
-    zip.file(name, redactor.redact(text));
+    const text = strictUtf8(bytes);
+    if (text !== undefined) {
+      if (!redactor.contains(text)) continue;
+      zip.file(name, redactor.redact(text));
+      changed = true;
+      continue;
+    }
+    if (redactor.contains(bytes.toString('latin1'))) {
+      zip.remove(name);
+      zip.file(`${name}.dropped`, 'dropped because it held a secret\n');
+      changed = true;
+    }
   }
-  const next = await zip.generateAsync({ type: 'nodebuffer' });
+  const flagged = await mapLimit(images, 4, async ({ name, bytes }) =>
+    redactor.contains(bytes.toString('latin1')) || redactor.contains(await ocrBuffer(bytes, name)) ? name : undefined,
+  );
+  for (const name of flagged) {
+    if (!name) continue;
+    zip.file(name, PLACEHOLDER_PNG);
+    changed = true;
+  }
+  if (!changed) return;
+  const next = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   if (redactor.contains(next.toString('latin1'))) {
     unlinkSync(file);
     writeFileSync(`${file}.dropped`, 'trace dropped because redaction could not clean it\n');
     return;
   }
   writeFileSync(file, next);
+}
+
+function strictUtf8(bytes: Buffer): string | undefined {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await worker(items[index] as T);
+    }
+  });
+  await Promise.all(lanes);
+  return results;
 }
 
 function ocr(file: string): string {
@@ -147,4 +197,104 @@ function ocr(file: string): string {
   } catch {
     return '';
   }
+}
+
+async function ocrBuffer(bytes: Buffer, name: string): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'hornet-swarm-ocr-'));
+  const file = join(dir, `frame${/\.[a-z]+$/i.exec(name)?.[0] ?? '.png'}`);
+  try {
+    writeFileSync(file, bytes, { mode: 0o600 });
+    return await new Promise<string>((done) => {
+      execFile('tesseract', [file, 'stdout', '-l', 'eng'], { encoding: 'utf8', timeout: 30_000 }, (error, stdout) => done(error ? '' : stdout));
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const SESSION_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'proxy-authorization']);
+const AUTH_BODY = '[REDACTED:auth_endpoint]';
+
+type HarLike = {
+  request?: { url?: string; headers?: { name: string; value: string }[]; cookies?: unknown[]; postData?: Record<string, unknown> };
+  response?: { headers?: { name: string; value: string }[]; cookies?: unknown[]; content?: Record<string, unknown> };
+};
+
+/**
+ * Masks session headers and cookies in every request, and drops request and response bodies
+ * for URLs that match the project's auth_endpoints. Applies to network.har files and to the
+ * network log inside trace.zip. Returns how many bodies were dropped.
+ */
+export async function sanitizeNetworkLogs(dir: string, authEndpoints: string[]): Promise<number> {
+  let dropped = 0;
+  for (const file of walkFiles(dir)) {
+    if (file.endsWith('.har')) {
+      let har: { log?: { entries?: HarLike[] } };
+      try {
+        har = JSON.parse(readFileSync(file, 'utf8')) as typeof har;
+      } catch {
+        continue;
+      }
+      const sha1s = new Set<string>();
+      for (const entry of har.log?.entries ?? []) dropped += sanitizeEntry(entry, authEndpoints, sha1s);
+      writeFileSync(file, JSON.stringify(har));
+      continue;
+    }
+    if (!file.endsWith('.zip')) continue;
+    let zip: JSZip;
+    try {
+      zip = await JSZip.loadAsync(readFileSync(file));
+    } catch {
+      continue;
+    }
+    const sha1s = new Set<string>();
+    let changed = false;
+    for (const name of Object.keys(zip.files)) {
+      if (!name.endsWith('.network') || zip.files[name]?.dir) continue;
+      const lines = (await zip.files[name]!.async('string')).split('\n');
+      const next = lines.map((line) => {
+        if (!line.trim()) return line;
+        try {
+          const event = JSON.parse(line) as { snapshot?: HarLike };
+          if (!event.snapshot) return line;
+          dropped += sanitizeEntry(event.snapshot, authEndpoints, sha1s);
+          return JSON.stringify(event);
+        } catch {
+          return line;
+        }
+      });
+      zip.file(name, next.join('\n'));
+      changed = true;
+    }
+    for (const sha1 of sha1s) {
+      for (const name of Object.keys(zip.files)) {
+        if (name === `resources/${sha1}` || name.startsWith(`resources/${sha1}.`)) zip.remove(name);
+      }
+    }
+    if (changed) writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  }
+  return dropped;
+}
+
+function sanitizeEntry(entry: HarLike, authEndpoints: string[], sha1s: Set<string>): number {
+  for (const side of [entry.request, entry.response]) {
+    if (!side) continue;
+    side.headers = (side.headers ?? []).map((header) =>
+      SESSION_HEADERS.has(header.name.toLowerCase()) ? { ...header, value: '[REDACTED:header]' } : header,
+    );
+    if (side.cookies) side.cookies = [];
+  }
+  const url = entry.request?.url ?? '';
+  if (!authEndpoints.some((pattern) => matchGlob(pattern, url))) return 0;
+  const request = entry.request;
+  if (request?.postData) {
+    if (typeof request.postData._sha1 === 'string') sha1s.add(request.postData._sha1);
+    request.postData = { mimeType: request.postData.mimeType ?? '', text: AUTH_BODY };
+  }
+  const response = entry.response;
+  if (response?.content) {
+    if (typeof response.content._sha1 === 'string') sha1s.add(response.content._sha1);
+    response.content = { size: 0, mimeType: response.content.mimeType ?? '', text: AUTH_BODY };
+  }
+  return 1;
 }

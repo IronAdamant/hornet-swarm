@@ -153,11 +153,13 @@ export function runnerOverload(requests: number, bucketRefusals: number, httpOve
   return overRateLimit(bucketRefusals + httpOverloads, requests);
 }
 
+/** `**` crosses slashes and `*` does not. A URL also matches when only its query or fragment differs. */
 export function matchGlob(pattern: string, value: string): boolean {
   const expression = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replace(/\*\*/g, '§§')
     .replace(/\*/g, '[^/]*')
     .replace(/§§/g, '.*');
-  return new RegExp(`^${expression}$`).test(value) || new RegExp(expression).test(value);
+  const anchored = new RegExp(`^${expression}$`);
+  return anchored.test(value) || anchored.test(value.replace(/[?#].*$/, ''));
 }

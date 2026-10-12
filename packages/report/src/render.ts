@@ -26,21 +26,68 @@ export type RichUser = {
   journeys: RichJourney[];
 };
 
+type StopReason = 'kill' | 'duration' | 'captcha' | '2fa' | 'lease_busy' | 'rate_limited' | 'signin_limit' | 'totp_missing' | 'allowlist' | 'proxy';
+
+function anyReason(users: RichUser[], reason: string): boolean {
+  return users.some(
+    (user) =>
+      user.phase1.blocked_reason === reason ||
+      user.journeys.some((journey) => journey.blocked_reason === reason || journey.steps.some((step) => step.blocked_reason === reason)),
+  );
+}
+
+const DENIAL_CHECK = /^(access_denied\b|http_status (401|403|404)\b)/;
+
+/**
+ * A cross-account finding needs a failed access check, not a journey name. The failed step must be
+ * an access_denied assertion, an http_status assertion that expected 401, 403, or 404, or a
+ * selector_absent assertion in a journey that also ran an access_denied check. A failed positive
+ * control, such as the user opening their own resource, is an ordinary failure.
+ */
+export function isolationBreach(users: RichUser[]): { label: string; journey: string; step: number } | undefined {
+  for (const user of users) {
+    for (const journey of user.journeys) {
+      const deniedCheckRan = journey.steps.some((step) => (step.assertion ?? '').startsWith('access_denied'));
+      for (const step of journey.steps) {
+        if (step.status !== 'fail' || !step.assertion) continue;
+        if (DENIAL_CHECK.test(step.assertion) || (deniedCheckRan && step.assertion.startsWith('selector_absent'))) {
+          return { label: user.label, journey: journey.name, step: step.index };
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 export function summaryMarkdown(users: RichUser[], status: RunResult['status']): string {
   const flaky = users.some((user) => user.journeys.some((journey) => journey.status === 'flaky' || journey.steps.some((step) => step.status === 'flaky')));
-  const phaseFailed = users.some((user) => user.phase1.status !== 'pass');
-  const blockedCaptcha = users.some((user) => user.phase1.blocked_reason === 'captcha' || user.journeys.some((journey) => journey.steps.some((step) => step.blocked_reason === 'captcha')));
-  const blockedCode = users.some((user) => user.phase1.blocked_reason === '2fa' || user.journeys.some((journey) => journey.steps.some((step) => step.blocked_reason === '2fa')));
-  const isolationFailed = users.some((user) => user.journeys.some((journey) => journey.name.toLowerCase().includes('denied') && journey.status === 'fail'));
+  const phaseFailed = users.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
+  const has = (reason: StopReason) => anyReason(users, reason);
+  const breach = isolationBreach(users);
+  const rateLimited = status === 'rate_limited' || has('rate_limited');
   let paragraph: string;
   if (status === 'redaction_failure') {
     paragraph = 'A saved file still contained something that should have stayed hidden. This is critical. Do not share these results until that file is removed.';
-  } else if (isolationFailed) {
+  } else if (breach) {
     paragraph = 'A test account could open another account\'s page. This is critical. Fix that access before anything else.';
-  } else if (blockedCaptcha) {
+  } else if (has('kill')) {
+    paragraph = 'The run was stopped with the kill switch before it finished. Nothing after that point was checked. Release the switch with `hornet-swarm kill --release` before the next run.';
+  } else if (has('duration')) {
+    paragraph = 'The run reached its time limit before it finished. The checks that did not run are marked blocked. Raise `limits.max_run_duration_min` or run fewer checks at once.';
+  } else if (has('captcha')) {
     paragraph = 'The site asked for a human check, so the checks stopped. This is high. A person needs to look at that page.';
-  } else if (blockedCode) {
+  } else if (has('2fa')) {
     paragraph = 'The site asked for a second code, so the checks stopped. This is high. A person needs to look at that page.';
+  } else if (has('lease_busy')) {
+    paragraph = 'Another agent was using one of these logins, so that account was not checked. Run it again when the login is free.';
+  } else if (rateLimited) {
+    paragraph = 'The site answered "too many requests" or "unavailable" (HTTP 429 or 503) to more than one request in ten, so the checks stopped to avoid overloading it. This is high. Check the site\'s capacity or its rate limits.';
+  } else if (has('signin_limit')) {
+    paragraph = 'The hourly sign-in limit for this account was reached, so it was not signed in again. Wait, or raise `limits.max_signin_attempts_per_user_per_hour`.';
+  } else if (has('totp_missing')) {
+    paragraph = 'This project uses an authenticator code, but no authenticator secret is stored for this account. Store it with `hornet-swarm creds add`.';
+  } else if (has('allowlist') || has('proxy')) {
+    paragraph = 'A page needed a site outside the allowed list, or the egress proxy failed, so the checks stopped. This is high. Check `targets.allowed_origins` and the proxy.';
   } else if (phaseFailed) {
     paragraph = 'Sign-in did not work, so the later checks were not run. This is high. Fix sign-in first.';
   } else if (flaky) {
@@ -50,17 +97,122 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status']):
   } else {
     paragraph = 'Sign-in worked and the checks that followed passed. Nothing needs fixing. This is low.';
   }
+  const signedIn = users.some((user) => user.phase1.status === 'pass');
   const findings = ['Sign-in was checked.'];
-  if (!phaseFailed) findings.push('The test account got in.');
+  if (signedIn && !phaseFailed) findings.push('The test account got in.');
   if (users.some((user) => user.journeys.some((journey) => journey.steps.length > 0 && journey.status === 'pass'))) {
     findings.push('The later checks passed.');
   }
   if (flaky) findings.push('One check had to be tried again, and the overall result stays failed.');
-  if (isolationFailed) findings.push('One account could see a page that belongs to someone else.');
-  if (blockedCaptcha) findings.push('A human check stopped the run.');
-  if (blockedCode) findings.push('A second code stopped the run.');
+  if (breach) findings.push('One account could see a page that belongs to someone else.');
+  if (has('captcha')) findings.push('A human check stopped the run.');
+  if (has('2fa')) findings.push('A second code stopped the run.');
+  if (rateLimited) findings.push('The site pushed back with HTTP 429 or 503.');
+  const first = diagnose(users, status);
+  if (status !== 'passed') findings.push(`First problem: ${first.suspected}`);
   if (status === 'passed' && !flaky) findings.push('Nothing needs a change.');
   return `${paragraph}\n\nFindings:\n${findings.map((line) => `- ${line}`).join('\n')}\n`;
+}
+
+const REASON_TEXT: Record<string, string> = {
+  kill: 'the kill switch stopped it',
+  duration: 'the run reached its time limit',
+  captcha: 'the site showed a human check',
+  '2fa': 'the site asked for a texted or emailed code',
+  lease_busy: 'another agent held this login',
+  rate_limited: 'the site answered HTTP 429 or 503 too often',
+  signin_limit: 'the hourly sign-in limit was reached',
+  totp_missing: 'no authenticator secret is stored',
+  allowlist: 'a page needed a site outside the allowed list',
+  proxy: 'the egress proxy failed',
+};
+
+const NEXT_ACTION: Record<string, string> = {
+  kill: 'Release the kill switch with `hornet-swarm kill --release` when it is safe, then run again.',
+  duration: 'Raise `limits.max_run_duration_min`, or split the checks across more agents.',
+  captcha: 'Open the screenshot. A person has to clear the human check, or the test environment has to turn it off for these accounts.',
+  '2fa': 'Turn on TOTP for these accounts, or answer the code page when the run asks.',
+  lease_busy: 'Wait for the other agent to finish, or ask for a free label with `acquire_test_user`.',
+  rate_limited: 'Check the site\'s rate limits and capacity, or lower `limits.max_requests_per_second_per_runner`.',
+  signin_limit: 'Wait an hour, or raise `limits.max_signin_attempts_per_user_per_hour`.',
+  totp_missing: 'Store the authenticator secret with `hornet-swarm creds add`.',
+  allowlist: 'Add the needed origin to `targets.allowed_origins` if it is in the authorisation, or remove it from the page.',
+  proxy: 'Run `hornet-swarm env status`, then `hornet-swarm env reset` if the proxy is down.',
+};
+
+/**
+ * Names the first real problem from the step evidence. Confidence says how directly that evidence
+ * names the cause: a known stop reason or a passing run is high, a single failed assertion is
+ * fairly high, a crash or several unrelated failures is lower, and a check that passed only on a
+ * retry is lowest.
+ */
+export function diagnose(users: RichUser[], status: RunResult['status']): { suspected: string; confidence: number; repro: string[]; next: string[] } {
+  if (status === 'passed') {
+    return { suspected: 'Nothing failed.', confidence: 0.95, repro: ['Sign in with the test account.', 'Repeat the same checks.'], next: ['No change is needed.'] };
+  }
+  if (status === 'redaction_failure') {
+    return {
+      suspected: 'A saved file still contained something that should have stayed hidden.',
+      confidence: 0.95,
+      repro: ['Run the same checks again after the hidden text is removed.'],
+      next: ['Do not share these results.', 'Remove the hidden text and run the check again.'],
+    };
+  }
+  const breach = isolationBreach(users);
+  const problems: { text: string; reason?: string; repro: string[]; flaky: boolean; error: boolean }[] = [];
+  for (const user of users) {
+    if (user.phase1.status !== 'pass') {
+      const reason = user.phase1.blocked_reason;
+      problems.push({
+        text: reason
+          ? `${user.label} · sign-in stopped: ${REASON_TEXT[reason] ?? reason}.`
+          : `${user.label} · sign-in ${user.phase1.status === 'error' ? 'could not run' : 'failed'}${user.phase1.error ? `: ${user.phase1.error}` : '.'}`,
+        ...(reason ? { reason } : {}),
+        repro: [`Open the sign-in page as ${user.label}.`, 'Enter the stored username and password and submit.', 'Check that the success condition in `auth.success` appears.'],
+        flaky: false,
+        error: user.phase1.status === 'error',
+      });
+      continue;
+    }
+    for (const journey of user.journeys) {
+      if (journey.status === 'pass' || journey.status === 'skipped') continue;
+      const step = journey.steps.find((entry) => entry.status !== 'pass') ?? journey.steps[journey.steps.length - 1];
+      const reason = step?.blocked_reason ?? journey.blocked_reason;
+      const what = step ? `step ${step.index} (${describeStep(step)})` : 'before its first step';
+      const outcome = reason ? `stopped: ${REASON_TEXT[reason] ?? reason}` : journey.status === 'flaky' ? 'passed only on a retry' : step?.error ? `failed: ${step.error}` : 'failed';
+      problems.push({
+        text: `${user.label} · ${journey.name} · ${what} ${outcome}${outcome.endsWith('.') ? '' : '.'}`,
+        ...(reason ? { reason } : {}),
+        repro: [
+          `Sign in as ${user.label}.`,
+          ...journey.steps.filter((entry) => !step || entry.index <= step.index).map((entry) => `Step ${entry.index}: ${describeStep(entry)}.`),
+        ],
+        flaky: journey.status === 'flaky',
+        error: journey.status === 'error',
+      });
+    }
+  }
+  const first = problems[0];
+  if (!first) {
+    return { suspected: 'The run did not finish every check.', confidence: 0.5, repro: ['Run the same checks again.'], next: ['Read run.json for the account that did not finish.'] };
+  }
+  const suspected = breach ? `${breach.label} · ${breach.journey} · step ${breach.step}: another account's data was reachable.` : first.text;
+  let confidence = first.reason ? 0.95 : first.flaky ? 0.5 : first.error ? 0.6 : 0.8;
+  if (!first.reason && new Set(problems.map((problem) => problem.text)).size > 2) confidence = Math.min(confidence, 0.6);
+  const next = breach
+    ? ['Fix the access check on that page before anything else.', 'Run the isolation journey again to confirm the fix.']
+    : first.reason
+      ? [NEXT_ACTION[first.reason] ?? 'Look at the screenshot for that step.']
+      : first.flaky
+        ? ['Look for a race on that page: content that appears late, or a request that sometimes fails.', 'Run the journey several times and compare with `hornet-swarm stats`.']
+        : ['Open the screenshot and trace for that step.', 'Fix the first failed check and run it again.'];
+  return { suspected, confidence, repro: first.repro, next };
+}
+
+function describeStep(step: RichStep): string {
+  if (step.assertion) return `${step.type} ${step.assertion}`;
+  if (step.selector) return `${step.type} ${step.selector}`;
+  return step.type;
 }
 
 export function buildAnalysis(input: {

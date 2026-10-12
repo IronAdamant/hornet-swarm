@@ -19,6 +19,13 @@ output.invalid = await call('validate_journey', {
   journey_yaml: 'version: 1\nid: bad\nname: Bad\nusers: [qa-user-1]\nsteps:\n  - navigate: { url: "https://example.com/" }\n',
 });
 output.byId = await call('validate_journey', { project: 'fixture', journey_id: 'signin-dashboard' });
+output.subA = await call('register_agent', { name: 'sub-agent A' });
+output.subB = await call('register_agent', { name: 'sub-agent B' });
+output.subLeaseA = await call('acquire_test_user', { project: 'fixture', label: 'qa-user-1', agent_id: output.subA.agent_id });
+output.subLeaseB = await call('acquire_test_user', { project: 'fixture', label: 'qa-user-2', agent_id: output.subB.agent_id });
+output.resetWhileBusy = await call('reset_environment', { project: 'fixture', agent_id: output.subA.agent_id });
+await call('release_test_user', { project: 'fixture', agent_id: output.subA.agent_id });
+await call('release_test_user', { project: 'fixture', agent_id: output.subB.agent_id });
 output.lease = await call('acquire_test_user', { project: 'fixture', label: 'qa-user-1' });
 output.second = await call('acquire_test_user', { project: 'fixture', label: 'qa-user-2' });
 output.released = await call('release_test_user', { project: 'fixture' });
@@ -29,7 +36,7 @@ output.leasesUnchanged = leasesText() === leasesBefore;
 output.signin = await call('run_signin_check', { project: 'fixture', users: ['qa-user-1'], wait: true });
 const summaryPath = join(homedir(), '.hornet-swarm', 'runs', output.signin.run_id, 'summary.md');
 const originalSummary = readFileSync(summaryPath, 'utf8');
-writeFileSync(summaryPath, `${originalSummary}\nFixtureOnly-s3cret"<&value>\n`);
+writeFileSync(summaryPath, `${originalSummary}\nFixtureOnly-s3cret"<&value> it's (ok)!~\n`);
 try {
   output.summary = await call('get_results', { run_id: output.signin.run_id, detail: 'summary' });
   output.full = await call('get_results', { run_id: output.signin.run_id, detail: 'full' });
@@ -50,6 +57,19 @@ output.suite = await call('run_suite', {
   wait: true,
 });
 output.latest = await call('get_results', { project: 'fixture' });
+output.traversal = await call('get_results', { run_id: '../../projects/fixture' });
+output.written = await call('run_journey', {
+  project: 'fixture',
+  journey_yaml: 'version: 1\nid: agent-written-flag\nname: Agent written flag\nusers: [qa-user-1]\nsteps:\n  - navigate: { url: "/flag" }\n  - assert: { type: selector_visible, value: "#ready" }\n',
+  wait: true,
+});
+output.writtenOffsite = await call('run_journey', {
+  project: 'fixture',
+  journey_yaml: 'version: 1\nid: agent-offsite\nname: Off site\nusers: [qa-user-1]\nsteps:\n  - navigate: { url: "https://example.com/" }\n',
+  wait: true,
+});
+output.reliability = await call('get_reliability', { project: 'fixture', last: 50 });
+output.notes = await call('get_agent_notes', { project: 'fixture', label: 'qa-user-1' });
 output.reset = await call('reset_environment', { project: 'fixture' });
 output.blocked = await call('run_suite', { project: 'unauth', journeys: ['signin-dashboard'], wait: true });
 output.killed = await call('reset_environment', { project: 'fixture', kill: true });
@@ -57,6 +77,7 @@ output.killFileAfterEngage = existsSync(join(homedir(), '.hornet-swarm', 'KILL')
 output.afterKill = await call('run_suite', { project: 'fixture', journeys: ['signin-dashboard'], wait: true });
 output.releasedKill = await call('reset_environment', { project: 'fixture', release: true });
 output.killFileAfterRelease = existsSync(join(homedir(), '.hornet-swarm', 'KILL'));
+output.hardReset = await call('reset_environment', { project: 'fixture', hard: true });
 await client.close();
 process.stdout.write(`${JSON.stringify(output)}\n`);
 

@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
-import { homedir } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import type { Project } from '@hornet-swarm/core';
-import { projectSchema } from '@hornet-swarm/core';
+import { projectSchema, rewriteForContainer } from '@hornet-swarm/core';
 import type Docker from 'dockerode';
 import { createDocker } from './docker.js';
 import { aegisHome, ensureDir, ensureHome } from './home.js';
@@ -145,25 +145,14 @@ export async function envStatus(project: string): Promise<EnvStatus> {
     all: true,
     filters: { label: [`hornet-swarm.project=${project}`, 'hornet-swarm.role=runner'] },
   });
-  const runners: RunnerStatus[] = [];
-  for (const label of settings.labels) {
-    const name = containerName(project, label);
-    const found = listed.find((container) => container.Names.some((entry) => entry === `/${name}` || entry === name));
-    if (!found) {
-      runners.push({ label, name, state: 'absent', health: 'absent', port: null, endpoint: null });
-      continue;
-    }
-    const container = docker.getContainer(found.Id);
-    const inspected = await container.inspect();
-    const port = await controlPort(docker, project);
-    const endpoint = port ? `http://127.0.0.1:${port}/r/${label}` : null;
-    const state = inspected.State.Running ? 'running' : inspected.State.Status;
-    let health: RunnerStatus['health'] = 'unhealthy';
-    if (inspected.State.Running && endpoint) {
-      health = (await pingHealth(project, endpoint)) ? 'healthy' : 'unhealthy';
-    }
-    runners.push({ label, name, state, health, port, endpoint });
-  }
+  const port = await controlPort(docker, project);
+  const runners = await Promise.all(
+    settings.labels.map((label) => {
+      const name = containerName(project, label);
+      const found = listed.find((container) => container.Names.some((entry) => entry === `/${name}` || entry === name));
+      return describeRunner(docker, project, label, found ? docker.getContainer(found.Id) : null, port);
+    }),
+  );
   return {
     ok: true,
     project,
@@ -173,6 +162,26 @@ export async function envStatus(project: string): Promise<EnvStatus> {
     healthy: runners.filter((runner) => runner.health === 'healthy').length,
     expected: settings.labels.length,
   };
+}
+
+/** One runner's state and health. A job only needs its own runner, so it does not ping the whole fleet. */
+export async function runnerStatus(project: string, label: string): Promise<RunnerStatus> {
+  const docker = createDocker();
+  const container = await findContainer(docker, containerName(project, label));
+  return describeRunner(docker, project, label, container, container ? await controlPort(docker, project) : null);
+}
+
+async function describeRunner(docker: Docker, project: string, label: string, container: Docker.Container | null, port: number | null): Promise<RunnerStatus> {
+  const name = containerName(project, label);
+  if (!container) return { label, name, state: 'absent', health: 'absent', port: null, endpoint: null };
+  const inspected = await container.inspect();
+  const endpoint = port ? `http://127.0.0.1:${port}/r/${label}` : null;
+  const state = inspected.State.Running ? 'running' : inspected.State.Status;
+  let health: RunnerStatus['health'] = 'unhealthy';
+  if (inspected.State.Running && endpoint) {
+    health = (await pingHealth(project, endpoint)) ? 'healthy' : 'unhealthy';
+  }
+  return { label, name, state, health, port, endpoint };
 }
 
 export async function measureResources(project: string): Promise<Record<string, unknown>> {
@@ -370,7 +379,7 @@ function loadSettings(project: string, countOverride?: number): RunnerSettings {
     memory: loaded?.runners.memory ?? '1g',
     cpus: loaded?.runners.cpus ?? 1,
     labels: labelsForCount(count, loaded?.users.map((user) => user.label) ?? []),
-    allowHosts: allowHostsFrom(loaded),
+    allowHosts: allowHostsFrom(loaded, localAddresses()),
     rps: loaded?.limits.max_requests_per_second_total ?? 20,
   };
 }
@@ -384,12 +393,27 @@ function exists(path: string): boolean {
   }
 }
 
-function allowHostsFrom(project: Project | null): string[] {
-  const hosts = new Set<string>(['host.docker.internal', 'localhost']);
+/**
+ * The egress proxy allows exact host and port pairs. A local origin is also allowed under the
+ * name the container uses for this Mac. The credential page port is allowed so a runner can
+ * wait for a texted or emailed code. No other port on this Mac is reachable.
+ */
+export function allowHostsFrom(project: Project | null, localAddresses: readonly string[] = [], credentialPort = Number(process.env.AEGIS_CREDENTIAL_PORT ?? 7781)): string[] {
+  const hosts = new Set<string>([`host.docker.internal:${credentialPort}`]);
   if (!project) return [...hosts];
-  for (const origin of project.targets.allowed_origins) hosts.add(new URL(origin).hostname);
-  for (const third of project.targets.allowed_third_party) hosts.add(new URL(third.origin).hostname);
+  const origins = [project.targets.base_url, ...project.targets.allowed_origins, ...project.targets.allowed_third_party.map((third) => third.origin)];
+  for (const origin of origins) {
+    for (const url of [origin, rewriteForContainer(origin, localAddresses)]) {
+      const parsed = new URL(url);
+      const host = parsed.hostname.includes(':') && !parsed.hostname.startsWith('[') ? `[${parsed.hostname}]` : parsed.hostname;
+      hosts.add(`${host}:${parsed.port || (parsed.protocol === 'https:' ? '443' : '80')}`);
+    }
+  }
   return [...hosts];
+}
+
+function localAddresses(): string[] {
+  return Object.values(networkInterfaces()).flatMap((entries) => (entries ?? []).map((entry) => entry.address));
 }
 
 async function ensureNetwork(docker: Docker, project: string): Promise<void> {
@@ -409,8 +433,19 @@ async function ensureNetwork(docker: Docker, project: string): Promise<void> {
 
 async function ensureProxy(docker: Docker, project: string, settings: RunnerSettings): Promise<void> {
   const name = proxyName(project);
+  const env = [
+    'AEGIS_PROXY_MAIN=1',
+    'AEGIS_PROXY_PORT=8888',
+    'AEGIS_CONTROL_PORT=8899',
+    `AEGIS_PROJECT=${project}`,
+    `AEGIS_ALLOW_HOSTS=${settings.allowHosts.join(',')}`,
+    `AEGIS_RPS=${settings.rps}`,
+    'AEGIS_CONTROL_DIR=/control',
+  ];
   const existing = await findContainer(docker, name);
   if (existing) {
+    // A running proxy with the same image and settings is kept, so env up does not cut off runs in flight.
+    if (await proxyCurrent(docker, existing, env, project)) return;
     try {
       await existing.remove({ force: true });
     } catch {
@@ -421,15 +456,7 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
     name,
     Image: PROXY_IMAGE,
     Labels: { 'hornet-swarm.project': project, 'hornet-swarm.role': 'proxy' },
-    Env: [
-      'AEGIS_PROXY_MAIN=1',
-      'AEGIS_PROXY_PORT=8888',
-      'AEGIS_CONTROL_PORT=8899',
-      `AEGIS_PROJECT=${project}`,
-      `AEGIS_ALLOW_HOSTS=${settings.allowHosts.join(',')}`,
-      `AEGIS_RPS=${settings.rps}`,
-      'AEGIS_CONTROL_DIR=/control',
-    ],
+    Env: env,
     ExposedPorts: { '8888/tcp': {}, '8899/tcp': {} },
     HostConfig: {
       NetworkMode: 'bridge',
@@ -444,6 +471,24 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
   // Bind 8899 to the bridge address before the project network exists, so the browser cannot open it.
   await waitForBridgeGateway(docker, project);
   await docker.getNetwork(networkName(project)).connect({ Container: container.id });
+}
+
+async function proxyCurrent(docker: Docker, container: Docker.Container, env: string[], project: string): Promise<boolean> {
+  try {
+    const inspected = await container.inspect();
+    const wanted = (await docker.getImage(PROXY_IMAGE).inspect()).Id;
+    const current = new Set(inspected.Config.Env ?? []);
+    const networks = Object.keys(inspected.NetworkSettings?.Networks ?? {});
+    return (
+      inspected.State.Running &&
+      inspected.Image === wanted &&
+      env.every((entry) => current.has(entry)) &&
+      networks.includes(networkName(project)) &&
+      (await controlPort(docker, project)) !== null
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function ensureRunner(docker: Docker, project: string, label: string, settings: RunnerSettings): Promise<void> {
@@ -494,7 +539,8 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
     HostConfig: {
       ReadonlyRootfs: true,
       Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=256m' },
-      Binds: [`${volume}:/home/runner/profile`, `${outDir}:/out`, `${controlVolume(project)}:/control`, `${tokenDir}:/tokens`],
+      // Only this label's token is mounted, read-only. A runner cannot read another runner's token.
+      Binds: [`${volume}:/home/runner/profile`, `${outDir}:/out`, `${controlVolume(project)}:/control`, `${join(tokenDir, `${label}.token`)}:/tokens/${label}.token:ro`],
       Memory: memory,
       MemorySwap: memory,
       NanoCpus: Math.round(settings.cpus * 1e9),

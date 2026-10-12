@@ -13,8 +13,8 @@ export class Redactor {
     addDerived(forms, value, keepShort);
     const foldCase = label.endsWith('.username') || label.endsWith('.password') || label.endsWith('.totp_secret');
     if (foldCase) addDerived(forms, value.toLowerCase(), keepShort);
-    const originals = new Set<string>([value, encodeURIComponent(value)]);
-    if (foldCase) originals.add(value.toLowerCase());
+    const originals = new Set<string>([value, ...urlEncodings(value)]);
+    if (foldCase) for (const form of [value.toLowerCase(), ...urlEncodings(value.toLowerCase())]) originals.add(form);
     for (const form of forms) {
       if (!form) continue;
       if (!keepShort && form.length < 4 && !originals.has(form)) continue;
@@ -77,13 +77,27 @@ function textNodeEscape(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * The ways a browser or HTTP client percent-encodes a value. An HTML form posts
+ * application/x-www-form-urlencoded, which encodes `!'()~` and turns a space into `+`.
+ * encodeURIComponent leaves those characters alone, so both spellings are needed.
+ */
+export function urlEncodings(value: string): string[] {
+  const component = encodeURIComponent(value);
+  const form = new URLSearchParams([['', value]]).toString().slice(1);
+  const strict = component.replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  const forms = new Set([component, form, form.replace(/\+/g, '%20'), strict, strict.replace(/%20/g, '+')]);
+  for (const form of [...forms]) forms.add(form.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase()));
+  return [...forms];
+}
+
 function addDerived(forms: Set<string>, value: string, keepShort: boolean): void {
   forms.add(value);
-  forms.add(encodeURIComponent(value));
+  for (const encoded of urlEncodings(value)) forms.add(encoded);
   forms.add(Buffer.from(value, 'utf8').toString('base64'));
   forms.add(htmlEscape(value));
   forms.add(textNodeEscape(value));
-  for (const base of [value, htmlEscape(value), textNodeEscape(value), encodeURIComponent(value)]) addJsonEscapes(forms, base, keepShort);
+  for (const base of [value, htmlEscape(value), textNodeEscape(value), ...urlEncodings(value)]) addJsonEscapes(forms, base, keepShort);
 }
 
 function addJsonEscapes(forms: Set<string>, value: string, keepShort: boolean): void {

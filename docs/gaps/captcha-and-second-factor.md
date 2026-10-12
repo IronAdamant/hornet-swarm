@@ -1,6 +1,6 @@
 # Captcha and a second code
 
-Status: open. No code change in this note.
+Status: done. The parent packet carries `stop_note` when a journey ended on a human check or a second code: that journey is finished, and the screenshot is for a person. Detection now needs a challenge a person can see, so invisible reCAPTCHA v3 and idle Turnstile scripts no longer stop a run. A texted or emailed code waits on the local code page for up to `auth.operator_code_wait_sec`. Nothing solves a captcha.
 
 ## What the source does
 

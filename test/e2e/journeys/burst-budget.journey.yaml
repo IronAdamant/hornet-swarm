@@ -1,6 +1,6 @@
 version: 1
 id: burst-budget
-name: Burst trips the request bucket
+name: A burst is paced, not dropped
 users: [qa-user-1]
 requires_phase1: false
 tags: [safety]
@@ -9,4 +9,5 @@ retries: 0
 steps:
   - navigate: { url: "/burst" }
   - assert: { type: selector_visible, value: "#ready" }
-  - wait: { for: timeout, ms: 2500 }
+  - wait: { for: selector, selector: "#all", ms: 30000 }
+  - assert: { type: selector_absent, value: "#dropped" }

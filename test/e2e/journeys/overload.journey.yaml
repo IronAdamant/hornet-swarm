@@ -1,0 +1,11 @@
+version: 1
+id: overload
+name: An overloaded site answers 429
+users: [qa-user-1]
+requires_phase1: false
+tags: [reliability]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/overload" }
+  - wait: { for: selector, selector: "#done", ms: 20000 }

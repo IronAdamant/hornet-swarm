@@ -3,7 +3,7 @@ import { authenticator } from 'otplib';
 
 const users = new Map();
 const sessions = new Map();
-const state = { loginPosts: 0, failFlag: false, flakyLeft: 0, layout: 'steady', delayMs: 0, otpFilled: false, pingCount: 0, offlistPages: 0, burstPages: 0, smsPosts: 0 };
+const state = { loginPosts: 0, failFlag: false, flakyLeft: 0, layout: 'steady', delayMs: 0, otpFilled: false, pingCount: 0, offlistPages: 0, burstPages: 0, smsPosts: 0, assetHits: 0, busyHits: 0, spaLogins: 0 };
 
 export function createFixture() {
   const app = express();
@@ -25,6 +25,9 @@ export function createFixture() {
     state.offlistPages = 0;
     state.burstPages = 0;
     state.smsPosts = 0;
+    state.assetHits = 0;
+    state.busyHits = 0;
+    state.spaLogins = 0;
     state.failFlag = Boolean(req.body.failFlag);
     state.flakyLeft = Number(req.body.flakyLeft ?? 0);
     state.layout = req.body.layout ?? 'steady';
@@ -197,17 +200,115 @@ export function createFixture() {
       </script>`));
   });
 
+  // Forty requests at once. The runner paces them. Every one must still arrive.
   app.get('/burst', (_req, res) => {
     state.burstPages += 1;
     res.type('html').send(page('Burst', `
       <p id="ready">ready</p>
       <script>
-        for (let i = 0; i < 40; i += 1) fetch('/ping').catch(() => {});
+        Promise.all(Array.from({ length: 40 }, () => fetch('/ping').then((response) => response.status))).then((codes) => {
+          const id = codes.every((code) => code === 204) ? 'all' : 'dropped';
+          document.body.insertAdjacentHTML('beforeend', '<p id="' + id + '">' + id + '</p>');
+        }, () => document.body.insertAdjacentHTML('beforeend', '<p id="dropped">dropped</p>'));
       </script>`));
   });
 
+  // A single-page app sign-in. The form posts JSON with fetch, the app changes the URL with
+  // history.pushState, and the dashboard renders late. No full page navigation happens.
+  app.get(['/spa', '/spa/dashboard'], (_req, res) => {
+    res.type('html').send(page('App', `
+      <div id="app"></div>
+      <script>
+        const app = document.getElementById('app');
+        const later = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        async function showDashboard() {
+          app.innerHTML = '<p>Loading</p>';
+          await later(700);
+          app.innerHTML = '<p data-testid="user-menu">Account</p><p>QA Smoke Project</p>';
+        }
+        function showLogin() {
+          app.innerHTML = '<form id="f"><label>Email <input id="email" name="email"></label><label>Password <input id="password" name="password" type="password"></label><button type="submit">Sign in</button></form>';
+          document.getElementById('f').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const response = await fetch('/api/spa-login', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('password').value }),
+            });
+            if (!response.ok) {
+              app.insertAdjacentHTML('beforeend', '<p>access denied</p>');
+              return;
+            }
+            history.pushState({}, '', '/spa/dashboard');
+            await showDashboard();
+          });
+        }
+        if (location.pathname === '/spa/dashboard' && document.cookie.includes('spa=1')) showDashboard();
+        else showLogin();
+      </script>`));
+  });
+
+  app.post('/api/spa-login', async (req, res) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const user = users.get(String(req.body.email ?? ''));
+    if (!user || user.password !== req.body.password) return res.status(401).json({ error: 'access denied' });
+    state.spaLogins += 1;
+    res.setHeader('set-cookie', 'spa=1; Path=/');
+    res.json({ ok: true });
+  });
+
+  // A page like a real site: 65 same-origin resources, an invisible reCAPTCHA v3 badge, a
+  // Turnstile script that never shows a widget, and a promo-code field with maxlength 6.
+  // #ready appears only when every image and script loaded.
+  app.get('/heavy', (_req, res) => {
+    const images = Array.from({ length: 50 }, (_, index) => `<img alt="" width="8" height="8" src="/asset/img-${index}.svg">`).join('');
+    const scripts = Array.from({ length: 10 }, (_, index) => `<script src="/asset/lib-${index}.js"></script>`).join('');
+    const styles = Array.from({ length: 5 }, (_, index) => `<link rel="stylesheet" href="/asset/style-${index}.css">`).join('');
+    res.type('html').send(`<!doctype html><html><head><title>Heavy</title>${styles}${scripts}
+      <script src="https://www.google.com/recaptcha/api.js?render=site-key" async></script>
+      <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async></script></head><body>
+      <h1>Heavy</h1>${images}
+      <div class="grecaptcha-badge" style="width:256px;height:60px;position:fixed;bottom:14px;right:0"><iframe title="reCAPTCHA" src="/captcha-frame?size=invisible" width="256" height="60"></iframe></div>
+      <div class="cf-turnstile" data-size="invisible" style="width:0;height:0"></div>
+      <label>Promo code <input name="promoCode" maxlength="6"></label>
+      <script>
+        window.addEventListener('load', () => {
+          const loaded = [...document.images].filter((image) => image.complete && image.naturalWidth > 0).length;
+          const ok = loaded === 50 && window.libsLoaded === 10;
+          document.body.insertAdjacentHTML('beforeend', ok ? '<p id="ready">ready</p>' : '<p id="broken">broken ' + loaded + ' ' + window.libsLoaded + '</p>');
+        });
+      </script>
+      </body></html>`);
+  });
+
+  app.get('/asset/:name', (req, res) => {
+    state.assetHits += 1;
+    const name = req.params.name;
+    if (name.endsWith('.svg')) return res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#9ecbff"/></svg>');
+    if (name.endsWith('.js')) return res.type('application/javascript').send('window.libsLoaded = (window.libsLoaded || 0) + 1;');
+    if (name.endsWith('.css')) return res.type('text/css').send('h1 { letter-spacing: 0.01em; }');
+    return res.status(404).end();
+  });
+
+  // A site that is overloaded: every API call answers 429.
+  app.get('/overload', (_req, res) => {
+    res.type('html').send(page('Busy', `
+      <p id="ready">ready</p>
+      <script>
+        (async () => {
+          for (let i = 0; i < 12; i += 1) await fetch('/busy').catch(() => {});
+          document.body.insertAdjacentHTML('beforeend', '<p id="done">done</p>');
+        })();
+      </script>`));
+  });
+
+  app.get('/busy', (_req, res) => {
+    state.busyHits += 1;
+    res.status(429).set('retry-after', '1').end();
+  });
+
   app.get('/__admin/stats', (_req, res) => {
-    res.json({ loginPosts: state.loginPosts, otpFilled: state.otpFilled, pingCount: state.pingCount, offlistPages: state.offlistPages, burstPages: state.burstPages, smsPosts: state.smsPosts });
+    res.json({ loginPosts: state.loginPosts, otpFilled: state.otpFilled, pingCount: state.pingCount, offlistPages: state.offlistPages, burstPages: state.burstPages, smsPosts: state.smsPosts, assetHits: state.assetHits, busyHits: state.busyHits, spaLogins: state.spaLogins });
   });
 
   return app;

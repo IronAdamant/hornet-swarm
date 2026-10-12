@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
@@ -12,6 +12,7 @@ import { writeAudit } from './audit.js';
 import { setSecret } from './broker.js';
 import { HornetError } from './errors.js';
 import { aegisHome, ensureDir } from './home.js';
+import { withFileLock, writeFileAtomic } from './leases-store.js';
 import { cardsFromForm, saveSwarmBoard, swarmBoardHtml } from './swarm.js';
 
 type CredentialRequest = {
@@ -28,6 +29,12 @@ type CredentialRequest = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 let boundPort = 7781;
 
+/** Embedded in the setup form. A page on another site cannot read it, so it cannot post the form. */
+const SETUP_FORM_TOKEN = randomBytes(24).toString('hex');
+const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+const RUNNER_HOST = /^host\.docker\.internal(:\d+)?$/i;
+const LOOPBACK_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+
 export type OperatorGateStatus = 'waiting' | 'declined' | 'touchid' | 'ready';
 
 type OperatorGate = {
@@ -39,11 +46,14 @@ type OperatorGate = {
   notified: boolean;
   status: OperatorGateStatus;
   code?: string;
+  createdAt: number;
 };
 
 const operatorGates = new Map<string, OperatorGate>();
 
 export function openOperatorGate(input: { project: string; label: string; reason: string }): { id: string; token: string } {
+  const now = Date.now();
+  for (const [id, gate] of operatorGates) if (now - gate.createdAt > DAY_MS) operatorGates.delete(id);
   const token = randomBytes(24).toString('hex');
   const id = randomUUID();
   operatorGates.set(id, {
@@ -54,8 +64,21 @@ export function openOperatorGate(input: { project: string; label: string; reason
     tokenHash: hashToken(token),
     notified: false,
     status: 'waiting',
+    createdAt: now,
   });
   return { id, token };
+}
+
+/** The run closes its gate when the job ends, so an unused code page does not stay open. */
+export function closeOperatorGate(id: string, token: string): boolean {
+  const gate = findGate(id, token);
+  if (!gate) return false;
+  operatorGates.delete(id);
+  return true;
+}
+
+export function operatorGateCount(): number {
+  return operatorGates.size;
 }
 
 export function operatorGateView(id: string, token: string): { status: OperatorGateStatus; code?: string } | undefined {
@@ -138,22 +161,21 @@ export async function requestCredentials(input: unknown, home = aegisHome()): Pr
     tokenHash: hashToken(token),
     tokenUsed: false,
   };
-  const requests = readRequests(home);
-  requests.push(record);
-  writeRequests(home, requests);
+  updateRequests(home, (requests) => {
+    requests.push(record);
+  });
   notifyOwner(home, project, label, reason, port, token);
   writeAudit({ interface: 'cli', action: 'request_credentials', project, labels: [label], result: 'pending' }, undefined, home);
   return { id: record.id, waiting: true };
 }
 
 export function credentialStatus(id: string, home = aegisHome()): { id: string; waiting?: true; status?: 'ready' | 'declined' | 'expired' } {
-  const requests = readRequests(home);
-  const record = requests.find((entry) => entry.id === id);
+  const record = updateRequests(home, (requests) => {
+    const found = requests.find((entry) => entry.id === id);
+    if (found && found.status === 'pending' && Date.now() - found.createdAt > DAY_MS) found.status = 'expired';
+    return found ? { ...found } : undefined;
+  });
   if (!record) return { id, status: 'expired' };
-  if (record.status === 'pending' && Date.now() - record.createdAt > DAY_MS) {
-    record.status = 'expired';
-    writeRequests(home, requests);
-  }
   if (record.status === 'pending') return { id, waiting: true };
   return { id, status: record.status };
 }
@@ -229,8 +251,32 @@ export function startCredentialPage(home = aegisHome(), port = 7781): Promise<{ 
   });
 }
 
+/**
+ * The page answers only to loopback names, so a DNS-rebinding site cannot reach it. The runner
+ * reaches the operator-code API as host.docker.internal. That API refuses browser requests.
+ */
+export function admitPageRequest(input: { host?: string; origin?: string; path: string }): { ok: true } | { ok: false; status: number; message: string } {
+  const host = input.host ?? '';
+  const operatorApi = input.path.startsWith('/v1/operator-code');
+  if (!LOOPBACK_HOST.test(host) && !(operatorApi && RUNNER_HOST.test(host))) return { ok: false, status: 421, message: 'This page only answers on 127.0.0.1.' };
+  if (operatorApi && input.origin) return { ok: false, status: 403, message: 'Browser requests are refused.' };
+  if (input.origin && !LOOPBACK_ORIGIN.test(input.origin)) return { ok: false, status: 403, message: 'Requests from other sites are refused.' };
+  return { ok: true };
+}
+
+function sameToken(given: string, expected: string): boolean {
+  const left = Buffer.from(given);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
 async function handlePage(req: IncomingMessage, res: ServerResponse, home: string): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  const admitted = admitPageRequest({ host: req.headers.host, ...(req.headers.origin ? { origin: req.headers.origin } : {}), path: url.pathname });
+  if (!admitted.ok) {
+    send(res, admitted.status, admitted.message);
+    return;
+  }
   if (url.pathname === '/v1/operator-code' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req)) as { project?: string; label?: string; reason?: string };
     if (!body.project || !body.label) {
@@ -261,6 +307,11 @@ async function handlePage(req: IncomingMessage, res: ServerResponse, home: strin
         return;
       }
       sendJson(res, 200, view);
+      return;
+    }
+    if (req.method === 'DELETE') {
+      const closed = closeOperatorGate(id, token);
+      send(res, closed ? 200 : 404, closed ? 'closed' : 'Not found.');
       return;
     }
     send(res, 405, 'Method not allowed.');
@@ -341,7 +392,7 @@ async function handlePage(req: IncomingMessage, res: ServerResponse, home: strin
 
 async function handleSetup(req: IncomingMessage, res: ServerResponse, home: string, url: URL): Promise<void> {
   if (req.method === 'GET') {
-    send(res, 200, swarmBoardHtml(url.searchParams.get('project') ?? 'fixture', home), 'text/html; charset=utf-8');
+    send(res, 200, swarmBoardHtml(url.searchParams.get('project') ?? 'fixture', home, SETUP_FORM_TOKEN), 'text/html; charset=utf-8');
     return;
   }
   if (req.method !== 'POST') {
@@ -349,6 +400,10 @@ async function handleSetup(req: IncomingMessage, res: ServerResponse, home: stri
     return;
   }
   const body = new URLSearchParams(await readBody(req));
+  if (!sameToken(body.get('form_token') ?? '', SETUP_FORM_TOKEN)) {
+    send(res, 403, 'This form has expired. Reload the page and try again. Nothing was saved.');
+    return;
+  }
   const confirmed = attemptTouchId(touchLog(home));
   if (!confirmed) {
     send(res, 401, 'Touch ID was not confirmed. Nothing was saved.');
@@ -518,21 +573,22 @@ function findToken(home: string, token: string): CredentialRequest | undefined {
 }
 
 function consume(home: string, id: string, status: CredentialRequest['status']): void {
-  const requests = readRequests(home);
-  const record = requests.find((entry) => entry.id === id);
+  const record = updateRequests(home, (requests) => {
+    const found = requests.find((entry) => entry.id === id);
+    if (!found) return undefined;
+    found.tokenUsed = true;
+    if (status !== 'pending') found.status = status;
+    return { ...found };
+  });
   if (!record) return;
-  record.tokenUsed = true;
-  if (status !== 'pending') record.status = status;
-  writeRequests(home, requests);
   if (status === 'declined') writeAudit({ interface: 'cli', action: 'credential_declined', project: record.project, labels: [record.label], result: 'declined' }, undefined, home);
 }
 
 function mark(home: string, project: string, label: string, status: 'ready'): void {
-  const requests = readRequests(home);
-  const record = [...requests].reverse().find((entry) => entry.project === project && entry.label === label && entry.status === 'pending');
-  if (!record) return;
-  record.status = status;
-  writeRequests(home, requests);
+  updateRequests(home, (requests) => {
+    const record = [...requests].reverse().find((entry) => entry.project === project && entry.label === label && entry.status === 'pending');
+    if (record) record.status = status;
+  });
 }
 
 function hashToken(token: string): string {
@@ -547,9 +603,17 @@ function readRequests(home: string): CredentialRequest[] {
   }
 }
 
-function writeRequests(home: string, requests: CredentialRequest[]): void {
+/** Settled requests older than a week are dropped, so the file does not grow without end. */
+function updateRequests<T>(home: string, change: (requests: CredentialRequest[]) => T): T {
   ensureDir(home);
-  writeFileSync(join(home, 'credential-requests.json'), `${JSON.stringify(requests)}\n`);
+  return withFileLock(home, 'credential-requests', () => {
+    const requests = readRequests(home);
+    const result = change(requests);
+    const cutoff = Date.now() - 7 * DAY_MS;
+    const kept = requests.filter((entry) => entry.status === 'pending' || entry.createdAt >= cutoff);
+    writeFileAtomic(join(home, 'credential-requests.json'), `${JSON.stringify(kept)}\n`);
+    return result;
+  });
 }
 
 function readBody(req: IncomingMessage): Promise<string> {

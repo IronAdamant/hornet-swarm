@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
@@ -26,11 +26,15 @@ import {
   analysisMarkdown,
   buildAnalysis,
   compareScreenshots,
+  diagnose,
   htmlReport,
   junitXml,
   quarantineFile,
   redactTree,
+  sanitizeNetworkLogs,
   scanTree,
+  summarizeReliability,
+  type ReliabilityReport,
   summaryMarkdown,
   timingChanged,
   writeEvidenceZip,
@@ -42,9 +46,9 @@ import { writeAudit } from './audit.js';
 import { injectSecrets, injectTotp, listFields, projectSecretValues, registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
 import { ensureCredentialPage } from './credentials.js';
-import { envStatus, startStoppedRunner, stopRunners } from './env.js';
+import { runnerStatus, startStoppedRunner, stopRunners } from './env.js';
 import { aegisHome, ensureDir } from './home.js';
-import { acquireLease, heartbeatStoredLease, releaseStoredLease } from './leases-store.js';
+import { acquireLease, heartbeatStoredLease, releaseStoredLease, withFileLock, writeFileAtomic } from './leases-store.js';
 import { runWithToken, runnerFetch } from './runner-auth.js';
 
 
@@ -69,6 +73,8 @@ export type SuiteRequest = {
   via?: 'cli' | 'mcp';
   phase1Only?: boolean;
   users?: string[];
+  /** Open regression copies join a suite run. A single-journey run leaves them out. Defaults to true. */
+  includeRegressions?: boolean;
   /** Test hook. Production runs keep the 30 minute lease. */
   leaseTtlMs?: number;
 };
@@ -87,7 +93,14 @@ export type ParentPacket = {
   packet_path: string;
   instruction: string;
   killed: boolean;
+  max_run_duration_min: number;
+  deadline: string;
+  /** Set when a journey ended on a human check or a second code. That journey is finished. */
+  stop_note?: string;
 };
+
+const STOP_NOTE =
+  'A journey ended on a human check or a second code. That journey is finished and will not resume. The screenshot is for a person to look at. Do not try to solve the challenge.';
 
 const PARENT_INSTRUCTION =
   "The parent Grok Build session or Grok Bot reads this packet, checks it against the task, and only then tells the owner the outcome. The harness does not grade a site's AI replies.";
@@ -112,6 +125,11 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   const gate = request.gate ?? project.phase2.gate;
   const agentId = request.agentId ?? `cli-${process.pid}`;
   if (existsSync(join(home, 'KILL'))) throw new HornetError('The kill switch is on.', 2);
+  try {
+    cleanupRetention(home);
+  } catch {
+    // Retention is housekeeping. A failure to prune old runs does not stop this one.
+  }
   const domains = projectDomainsAuthorised(project, auth);
   if (!domains.ok) throw new HornetError(domains.reason, 3);
   const production = productionDecision(project, auth, Boolean(request.confirmProduction));
@@ -120,7 +138,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
     const allowed = chaosPermitted(auth, project);
     if (!allowed.ok) throw new HornetError(allowed.reason, 3);
   }
-  const journeys = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? []);
+  const journeys = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? [], request.includeRegressions ?? true);
   const knownSecrets = projectSecretValues(project.id, home);
   for (const journey of journeys) {
     const checked = validateJourneyYaml(journey.text, project, knownSecrets);
@@ -144,7 +162,15 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   let durationStop = false;
   const phaseResults: { label: string; report: JobReport }[] = [];
   const totpCodes: string[] = [];
-  const hold = (label: string, work: () => Promise<void>): Promise<void> => {
+  const renewQuietly = () => {
+    try {
+      heartbeatStoredLease(project.id, agentId, home, ttlMs, via);
+    } catch {
+      // A missed renewal is retried on the next tick. It must never crash the process that holds the lease.
+    }
+  };
+  /** Returns false when another agent holds the label. */
+  const hold = async (label: string, work: () => Promise<void>): Promise<boolean> => {
     const lease = acquireLease({
       project: project.id,
       label,
@@ -155,16 +181,21 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
       via,
       ...(request.leaseTtlMs ? { ttlMs: request.leaseTtlMs } : {}),
     });
-    if (!lease.ok) throw new HornetError(lease.reason === 'busy' ? `busy until ${lease.busyUntil ?? 'later'}` : 'agent already holds a login', 3);
+    if (!lease.ok) {
+      if (lease.reason === 'agent_already_holds') throw new HornetError('agent already holds a login', 3);
+      if (phaseResults.length === 0) throw new HornetError(`busy until ${lease.busyUntil ?? 'later'}`, 3);
+      return false;
+    }
     const intervalMs = Math.max(20, Math.min(60_000, Math.floor(ttlMs / 3)));
-    const renew = setInterval(() => {
-      heartbeatStoredLease(project.id, agentId, home, ttlMs, via);
-    }, intervalMs);
-    return work().finally(() => {
+    const renew = setInterval(renewQuietly, intervalMs);
+    try {
+      await work();
+    } finally {
       clearInterval(renew);
-      heartbeatStoredLease(project.id, agentId, home, ttlMs, via);
+      renewQuietly();
       releaseStoredLease(project.id, agentId, home, via);
-    });
+    }
+    return true;
   };
   try {
     for (const label of labels) {
@@ -173,12 +204,14 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         phaseResults.push({ label, report: durationReport() });
         break;
       }
-      await hold(label, async () => {
+      const held = await hold(label, async () => {
         const phase1 = await runPhase1(project, label, runId, home, agentId, deadline, totpCodes);
         phaseResults.push({ label, report: phase1.report });
         if (phase1.killed) killed = true;
         if (phase1.report.blocked_reason === 'duration') durationStop = true;
       });
+      // A login another agent took mid-run is recorded for that label. The labels already checked keep their results.
+      if (!held) phaseResults.push({ label, report: leaseBusyReport() });
       if (killed || durationStop) break;
     }
     const everyPhasePassed = phaseResults.length === labels.length && phaseResults.every((item) => item.report.status === 'passed');
@@ -187,8 +220,9 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
       const phaseOk = item.report.status === 'passed';
       const blockedByGate = gate === 'all' && !everyPhasePassed;
       const userJourneys: RichJourney[] = [];
+      let leaseLost = false;
       if (!killed && !durationStop && phaseOk && !blockedByGate && entries.length > 0) {
-        await hold(item.label, async () => {
+        leaseLost = !(await hold(item.label, async () => {
           for (const entry of entries) {
             if (killed || durationStop) break;
             const played = await runJourney(project, item.label, entry.journey as Journey, runId, home, deadline, totpCodes, request.chaos);
@@ -197,18 +231,18 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
             userJourneys.push(played.journey);
             rememberRegression(home, project.id, entry, played.journey);
           }
-        });
+        }));
       }
       for (const entry of entries) {
         if (userJourneys.some((journey) => journey.id === entry.journey?.id)) continue;
-        if (durationStop) {
+        if (durationStop || leaseLost) {
           userJourneys.push({
             id: entry.journey?.id ?? 'journey',
             name: entry.journey?.name ?? 'Check',
             status: 'blocked',
             duration_ms: 0,
             steps: [],
-            blocked_reason: 'duration',
+            blocked_reason: durationStop ? 'duration' : 'lease_busy',
           });
           continue;
         }
@@ -230,6 +264,8 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
       gate,
       message,
       codes: totpCodes,
+      maxRunDurationMin: project.limits.max_run_duration_min,
+      deadline,
     });
     if (!wrote.run && !wrote.packet) rmSync(runDir, { recursive: true, force: true });
     const code = error instanceof HornetError ? error.exitCode : 4;
@@ -263,22 +299,16 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   });
   applyBaselines(home, project.id, rich);
   const loggedChaos = rich.flatMap((user) => user.journeys.flatMap((journey) => journey.chaosApplied ?? []));
-  const suspected = durationStop
-    ? 'The run reached its time limit.'
-    : status === 'passed'
-      ? 'Nothing failed.'
-      : killed
-        ? 'The run was stopped.'
-        : 'A check did not match what we expected.';
+  const diagnosis = diagnose(rich, status);
   const analysis = buildAnalysis({
     result,
     users: rich,
     chaos: request.chaos ? { profile: request.chaos.profile, seed: request.chaos.seed, actions: loggedChaos } : null,
-    suspected,
-    confidence: status === 'passed' ? 0.9 : 0.6,
-    repro: status === 'passed' ? ['Sign in with the test account.', 'Repeat the same checks.'] : ['Sign in with the test account.', 'Repeat the check that failed.'],
+    suspected: diagnosis.suspected,
+    confidence: diagnosis.confidence,
+    repro: diagnosis.repro,
     regressions: listRegressions(home, project.id),
-    next: status === 'passed' ? ['No change is needed.'] : ['Fix the first failed check and run it again.'],
+    next: diagnosis.next,
   });
   const summary = summaryMarkdown(rich, status);
   const artifacts = collectArtifacts(runDir);
@@ -311,8 +341,43 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
     redactor,
     artifacts: collectArtifacts(runDir),
     redactionFailed: hits.length > 0,
+    maxRunDurationMin: project.limits.max_run_duration_min,
+    deadline,
+    challengeStop: rich.some((user) => hasChallengeStop(user)),
   });
   return { ...result, parent };
+}
+
+function hasChallengeStop(user: RichUser): boolean {
+  const challenge = (reason?: string) => reason === 'captcha' || reason === '2fa';
+  return (
+    challenge(user.phase1.blocked_reason) ||
+    user.journeys.some((journey) => challenge(journey.blocked_reason) || journey.steps.some((step) => challenge(step.blocked_reason)))
+  );
+}
+
+function leaseBusyReport(): JobReport {
+  return { ok: false, status: 'blocked', blocked_reason: 'lease_busy', steps: [], chaosApplied: [] };
+}
+
+/** A runner that is missing, unhealthy, or drops the connection becomes an error for that label only. The other labels keep running. */
+async function contained(work: () => Promise<{ report: JobReport; killed: boolean }>): Promise<{ report: JobReport; killed: boolean }> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof HornetError && error.exitCode === 3) throw error;
+    const message = error instanceof Error ? error.message : 'The runner failed.';
+    const now = isoOffset();
+    return {
+      killed: false,
+      report: {
+        ok: false,
+        status: 'error',
+        steps: [{ index: 0, type: 'runner', status: 'error', duration_ms: 0, started_at: now, finished_at: now, error: message }],
+        chaosApplied: [],
+      },
+    };
+  }
 }
 
 async function runPhase1(
@@ -354,7 +419,7 @@ async function runPhase1(
     retries: 0,
     steps,
   };
-  return execute(project, label, journey, runId, home, deadline, undefined, codes);
+  return contained(() => execute(project, label, journey, runId, home, deadline, undefined, codes));
 }
 
 async function runJourney(
@@ -367,11 +432,11 @@ async function runJourney(
   codes: string[],
   chaos?: { profile: string; seed: string },
 ): Promise<{ journey: RichJourney; killed: boolean; duration: boolean }> {
-  let played = await execute(project, label, journey, runId, home, deadline, chaos, codes);
+  let played = await contained(() => execute(project, label, journey, runId, home, deadline, chaos, codes));
   let tries = 0;
   while (!played.killed && played.report.blocked_reason !== 'duration' && played.report.status === 'failed' && tries < journey.retries) {
     tries += 1;
-    played = await execute(project, label, journey, runId, home, deadline, chaos, codes);
+    played = await contained(() => execute(project, label, journey, runId, home, deadline, chaos, codes));
   }
   return {
     killed: played.killed,
@@ -411,7 +476,8 @@ async function executeIssued(
   }
   const target = containerTarget(project);
   const actions = chaos ? chaosSequence(chaos.seed, chaos.profile, journey.steps.length) : [];
-  const pollUrl = await operatorPollUrl(project.id, label, home);
+  const gate = await openOperatorGate(project.id, label, home);
+  const pollUrl = gate?.pollUrl;
   const body = {
     runId,
     label,
@@ -422,12 +488,14 @@ async function executeIssued(
     authEndpoints: project.auth.auth_endpoints,
     minStepDelayMs: project.limits.min_step_delay_ms,
     rps: project.limits.max_requests_per_second_per_runner,
+    burst: project.limits.request_burst_per_runner,
     accessDeniedMarkers: project.auth.access_denied_markers,
     chaosActions: actions,
     outDir: `/out/${runId}/${journey.id}`,
     vars: journey.vars,
     users: Object.fromEntries(project.users.map((user) => [user.label, { vars: user.vars }])),
     deadline,
+    operatorWaitMs: project.auth.operator_code_wait_sec * 1000,
     ...(pollUrl ? { operatorPollUrl: pollUrl } : {}),
   };
   const controller = new AbortController();
@@ -456,7 +524,7 @@ async function executeIssued(
       signal: controller.signal,
     }, home);
     const report = (await response.json()) as JobReport;
-    copyArtifacts(home, project.id, label, runId, journey.id);
+    await moveArtifacts(home, project, label, runId, journey.id);
     rewriteArtifacts(home, project.id, label, runId, journey.id, report);
     void injected;
     if (arming) await arming;
@@ -470,6 +538,7 @@ async function executeIssued(
     });
   } catch (error) {
     if (arming) await arming;
+    await moveArtifacts(home, project, label, runId, journey.id).catch(() => undefined);
     const killPresent = existsSync(join(home, 'KILL'));
     if (abortReason || killPresent) {
       return applyReturnedJob({
@@ -484,6 +553,7 @@ async function executeIssued(
     throw error;
   } finally {
     clearInterval(timer);
+    if (gate) await closeOperatorGate(gate).catch(() => undefined);
   }
 }
 
@@ -507,7 +577,9 @@ export async function applyReturnedJob(input: {
   return { report: input.report, killed: false };
 }
 
-async function operatorPollUrl(project: string, label: string, home: string): Promise<string | undefined> {
+type OperatorGateHandle = { port: number; id: string; token: string; pollUrl: string };
+
+async function openOperatorGate(project: string, label: string, home: string): Promise<OperatorGateHandle | undefined> {
   try {
     const port = await ensureCredentialPage(home);
     const response = await fetch(`http://127.0.0.1:${port}/v1/operator-code`, {
@@ -521,22 +593,28 @@ async function operatorPollUrl(project: string, label: string, home: string): Pr
     if (!opened.id || !opened.token) return undefined;
     const id = encodeURIComponent(opened.id);
     const token = encodeURIComponent(opened.token);
-    return `http://host.docker.internal:${port}/v1/operator-code/${id}?token=${token}`;
+    return { port, id: opened.id, token: opened.token, pollUrl: `http://host.docker.internal:${port}/v1/operator-code/${id}?token=${token}` };
   } catch {
     return undefined;
   }
 }
 
+async function closeOperatorGate(gate: OperatorGateHandle): Promise<void> {
+  await fetch(`http://127.0.0.1:${gate.port}/v1/operator-code/${encodeURIComponent(gate.id)}?token=${encodeURIComponent(gate.token)}`, {
+    method: 'DELETE',
+    signal: AbortSignal.timeout(2_000),
+  });
+}
+
 async function endpointFor(projectId: string, label: string): Promise<string> {
-  const current = await envStatus(projectId);
-  const runner = current.runners.find((entry) => entry.label === label);
-  if (runner?.health === 'healthy' && runner.endpoint) return runner.endpoint;
+  const missing = `No healthy runner for ${label}. Start one with: hornet-swarm env up --project ${projectId}`;
+  const runner = await runnerStatus(projectId, label);
+  if (runner.health === 'healthy' && runner.endpoint) return runner.endpoint;
   const started = await startStoppedRunner(projectId, label);
-  if (!started) throw new HornetError(`No healthy runner for ${label}.`, 4);
-  const again = await envStatus(projectId);
-  const next = again.runners.find((entry) => entry.label === label);
-  if (next?.health === 'healthy' && next.endpoint) return next.endpoint;
-  throw new HornetError(`No healthy runner for ${label}.`, 4);
+  if (!started) throw new HornetError(missing, 4);
+  const again = await runnerStatus(projectId, label);
+  if (again.health === 'healthy' && again.endpoint) return again.endpoint;
+  throw new HornetError(missing, 4);
 }
 
 async function postAbort(projectId: string, endpoint: string, home: string): Promise<void> {
@@ -558,6 +636,8 @@ export function writeErrorOutcome(input: {
   gate: 'all' | 'per_user';
   message: string;
   codes?: string[];
+  maxRunDurationMin?: number;
+  deadline?: number;
 }): { run: boolean; packet: boolean; message: string } {
   const redactor = new Redactor();
   try {
@@ -605,6 +685,8 @@ export function writeErrorOutcome(input: {
       packet_path: packetPath,
       instruction: PARENT_INSTRUCTION,
       killed: false,
+      max_run_duration_min: input.maxRunDurationMin ?? 30,
+      deadline: input.deadline ? new Date(input.deadline).toISOString() : '',
     };
     let encoded = JSON.stringify(body, null, 2);
     if (redactor.contains(encoded) || redactor.contains(input.message)) encoded = redactor.redact(encoded);
@@ -726,6 +808,25 @@ function retentionDays(home: string): number {
   }
 }
 
+/** Reliability for one project across its saved runs, newest `last` runs only. */
+export function reliabilityReport(projectId: string, last = 20, home = aegisHome()): ReliabilityReport {
+  if (!/^[a-z0-9-]+$/.test(projectId)) throw new HornetError('Unknown project.', 3);
+  const root = join(home, 'runs');
+  const runs: RunResult[] = [];
+  if (existsSync(root)) {
+    for (const name of readdirSync(root).filter((entry) => entry.startsWith('run_')).sort()) {
+      try {
+        const parsed = runResultSchema.safeParse(JSON.parse(readFileSync(join(root, name, 'run.json'), 'utf8')));
+        if (parsed.success && parsed.data.project === projectId) runs.push(parsed.data);
+      } catch {
+        // A run folder without a readable run.json is skipped.
+      }
+    }
+  }
+  const size = Math.max(1, Math.min(500, Math.trunc(last)));
+  return summarizeReliability(projectId, runs.sort((left, right) => left.started_at.localeCompare(right.started_at)).slice(-size));
+}
+
 export function listProjectUsers(projectId: string, home = aegisHome()): { label: string; role: string; tenant: string }[] {
   const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
   return project.users.map((user) => ({ label: user.label, role: user.role, tenant: user.tenant }));
@@ -746,30 +847,94 @@ function fileContainsSecret(file: string, redactor: Redactor): boolean {
   }
 }
 
-function copyArtifacts(home: string, project: string, label: string, runId: string, journeyId: string): void {
-  const source = join(home, 'runners', project, label, runId, journeyId);
+/**
+ * Moves a job's files out of the runner folder into the run folder. Symbolic links written by
+ * the runner are skipped. Session headers are masked and auth endpoint bodies are dropped
+ * before anything else reads the files. The runner copy is deleted, so no unredacted trace
+ * stays behind in the runner folder.
+ */
+async function moveArtifacts(home: string, project: Project, label: string, runId: string, journeyId: string): Promise<void> {
+  const source = join(home, 'runners', project.id, label, runId, journeyId);
   if (!existsSync(source)) return;
   const destination = ensureDir(join(home, 'runs', runId, label, journeyId));
-  cpSync(source, destination, { recursive: true });
+  cpSync(source, destination, { recursive: true, filter: (path) => !lstatSync(path).isSymbolicLink() });
+  rmSync(source, { recursive: true, force: true });
+  const runRoot = join(home, 'runners', project.id, label, runId);
+  try {
+    if (readdirSync(runRoot).length === 0) rmSync(runRoot, { recursive: true, force: true });
+  } catch {
+    // Already gone.
+  }
+  await sanitizeNetworkLogs(destination, project.auth.auth_endpoints);
 }
 
-function loadJourneys(home: string, project: Project, files: string[]): { text: string; file: string; journey?: Journey }[] {
+function loadJourneys(home: string, project: Project, files: string[], includeRegressions: boolean): { text: string; file: string; journey?: Journey }[] {
   const selected = (files.length > 0 ? files : readdirSync(resolveJourneys(home, project)).filter((name) => name.endsWith('.yaml')).map((name) => join(resolveJourneys(home, project), name))).map((file) => resolveJourneyArg(home, project, file));
-  const regressions = regressionFiles(home, project.id);
-  return [...selected, ...regressions].map((file) => ({ file, text: readFileSync(file, 'utf8') }));
+  const loaded = selected.map((file) => ({ file, text: readFileSync(file, 'utf8') }));
+  if (!includeRegressions) return loaded;
+  // An open regression joins the run once. It is skipped when the run already has a journey with that id.
+  const ids = new Set(loaded.map((entry) => journeyIdOf(entry.text)));
+  const regressions = regressionFiles(home, project.id)
+    .map((file) => ({ file, text: readFileSync(file, 'utf8') }))
+    .filter((entry) => !ids.has(journeyIdOf(entry.text)));
+  return [...loaded, ...regressions];
+}
+
+function journeyIdOf(text: string): string | undefined {
+  try {
+    const parsed = parse(text) as { id?: unknown };
+    return typeof parsed?.id === 'string' ? parsed.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function agentJourneysDir(home: string, project: string): string {
+  return join(home, 'projects', project, 'agent-journeys');
+}
+
+/**
+ * Saves a journey an agent wrote, after the same checks as any journey: the schema, the
+ * allowlist and passive origins, no literal secret, and fixture paths inside the fixtures
+ * folder. It cannot replace an owner journey with the same id. Returns the saved path.
+ */
+export function saveAgentJourney(projectId: string, yamlText: string, home = aegisHome()): { path: string; id: string } {
+  const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
+  const checked = validateJourneyYaml(yamlText, project, projectSecretValues(project.id, home));
+  if (!checked.valid || !checked.journey) throw new HornetError(checked.errors.join('; '), 3);
+  const id = checked.journey.id;
+  const ownerDir = resolveJourneys(home, project);
+  if (existsSync(join(ownerDir, `${id}.journey.yaml`)) || ownerJourneyIds(ownerDir).has(id)) {
+    throw new HornetError(`A project journey already uses the id ${id}. Pick another id.`, 3);
+  }
+  const dir = agentJourneysDir(home, project.id);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const path = join(dir, `${id}.journey.yaml`);
+  writeFileAtomic(path, yamlText.endsWith('\n') ? yamlText : `${yamlText}\n`);
+  return { path, id };
+}
+
+function ownerJourneyIds(dir: string): Set<string> {
+  if (!existsSync(dir)) return new Set();
+  return new Set(
+    readdirSync(dir)
+      .filter((name) => name.endsWith('.yaml'))
+      .map((name) => journeyIdOf(readFileSync(join(dir, name), 'utf8')))
+      .filter((id): id is string => Boolean(id)),
+  );
 }
 
 function resolveJourneyArg(home: string, project: Project, file: string): string {
   if (file.endsWith('.yaml') || file.endsWith('.yml') || file.includes('/')) return file;
-  const dir = resolveJourneys(home, project);
-  const direct = join(dir, `${file}.journey.yaml`);
-  if (existsSync(direct)) return direct;
-  if (!existsSync(dir)) throw new HornetError(`Unknown journey ${file}.`, 3);
-  for (const name of readdirSync(dir)) {
-    if (!name.endsWith('.yaml')) continue;
-    const path = join(dir, name);
-    const parsed = parse(readFileSync(path, 'utf8')) as { id?: string };
-    if (parsed.id === file) return path;
+  for (const dir of [resolveJourneys(home, project), agentJourneysDir(home, project.id)]) {
+    const direct = join(dir, `${file}.journey.yaml`);
+    if (existsSync(direct)) return direct;
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.yaml')) continue;
+      const path = join(dir, name);
+      if (journeyIdOf(readFileSync(path, 'utf8')) === file) return path;
+    }
   }
   throw new HornetError(`Unknown journey ${file}.`, 3);
 }
@@ -785,21 +950,28 @@ function regressionFiles(home: string, project: string): string[] {
   return readdirSync(dir).filter((name) => name.endsWith('.journey.yaml')).map((name) => join(dir, name));
 }
 
+/**
+ * A failed, erroring, or flaky journey is copied into the regression folder and joins later
+ * suite runs. Three passes in a row of that journey id, from either copy, mark it fixed and
+ * retire the copy. The ledger stays as the record.
+ */
 function rememberRegression(home: string, project: string, entry: { file: string; journey?: Journey }, played: RichJourney): void {
   if (!entry.journey) return;
   const dir = ensureDir(join(home, 'regressions', project));
   const file = join(dir, `${entry.journey.id}.journey.yaml`);
   const ledgerPath = join(dir, `${entry.journey.id}.json`);
   if (played.status === 'fail' || played.status === 'error' || played.status === 'flaky') {
-    writeFileSync(file, readFileSync(entry.file));
+    if (entry.file !== file) writeFileSync(file, readFileSync(entry.file));
     writeFileSync(ledgerPath, `${JSON.stringify({ state: 'open', consecutive: 0 })}\n`);
     return;
   }
-  // Only the stored regression copy advances the three-pass counter.
-  if (played.status !== 'pass' || !existsSync(ledgerPath) || entry.file !== file) return;
+  if (played.status !== 'pass' || !existsSync(ledgerPath)) return;
   const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8')) as { state: string; consecutive: number };
+  if (ledger.state !== 'open') return;
   const consecutive = ledger.consecutive + 1;
-  writeFileSync(ledgerPath, `${JSON.stringify({ state: consecutive >= 3 ? 'fixed' : 'open', consecutive })}\n`);
+  const fixed = consecutive >= 3;
+  writeFileSync(ledgerPath, `${JSON.stringify({ state: fixed ? 'fixed' : 'open', consecutive })}\n`);
+  if (fixed) rmSync(file, { force: true });
 }
 
 function listRegressions(home: string, project: string): string[] {
@@ -838,11 +1010,15 @@ function signinState(home: string, project: Project, label: string): { allowed: 
   return signinBudget(stamps, Date.now(), project.limits.max_signin_attempts_per_user_per_hour);
 }
 
+/** Entries older than the hour window are dropped, and parallel runs take a lock, so the file stays small and no attempt is lost. */
 function recordSignin(home: string, project: string, label: string): void {
   const file = join(home, 'projects', project, 'signin.json');
-  const current = readSignins(home, project);
-  current.push({ label, at: Date.now() });
-  writeFileSync(file, `${JSON.stringify(current)}\n`);
+  withFileLock(home, `signin-${project}`, () => {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    const current = readSignins(home, project).filter((entry) => entry.at >= cutoff);
+    current.push({ label, at: Date.now() });
+    writeFileAtomic(file, `${JSON.stringify(current)}\n`);
+  });
 }
 
 function readSignins(home: string, project: string): { label: string; at: number }[] {
@@ -886,8 +1062,10 @@ export function foldRunStatus(input: {
     journeys: ReadonlyArray<{ status: string; blocked_reason?: string; steps: ReadonlyArray<{ blocked_reason?: string }> }>;
   }>;
 }): RunResult['status'] {
-  const phaseProblem = input.users.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
-  const journeyProblem = input.users.some((user) => user.journeys.some((journey) => journey.status === 'fail' || journey.status === 'error' || journey.status === 'flaky'));
+  const phaseProblem = input.users.some((user) => user.phase1.status === 'fail');
+  const journeyProblem = input.users.some((user) => user.journeys.some((journey) => journey.status === 'fail' || journey.status === 'flaky'));
+  // An error is the harness failing, such as a missing runner or a browser that did not start. It is not a site failure.
+  const harnessError = input.users.some((user) => user.phase1.status === 'error' || user.journeys.some((journey) => journey.status === 'error'));
   const rateLimited = input.users.some(
     (user) =>
       user.phase1.blocked_reason === 'rate_limited' ||
@@ -898,6 +1076,7 @@ export function foldRunStatus(input: {
   const blocked =
     input.killed || input.users.some((user) => user.phase1.status === 'blocked' || user.journeys.some((journey) => journey.status === 'blocked'));
   if (phaseProblem || journeyProblem) return 'failed';
+  if (harnessError) return 'error';
   if (rateLimited) return 'rate_limited';
   if (blocked || input.durationStop) return 'blocked';
   if (!input.gatePassed) return 'failed';
@@ -998,6 +1177,9 @@ export async function publishParent(input: {
   redactor: Redactor;
   artifacts: { screenshots: string[]; traces: string[] };
   redactionFailed: boolean;
+  maxRunDurationMin?: number;
+  deadline?: number;
+  challengeStop?: boolean;
 }): Promise<ParentPacket> {
   let evidenceZip = '';
   if (!input.redactionFailed) {
@@ -1023,6 +1205,9 @@ export async function publishParent(input: {
     packet_path: packetPath,
     instruction: PARENT_INSTRUCTION,
     killed: input.killed,
+    max_run_duration_min: input.maxRunDurationMin ?? 30,
+    deadline: input.deadline ? new Date(input.deadline).toISOString() : '',
+    ...(input.challengeStop ? { stop_note: STOP_NOTE } : {}),
   };
   let encoded = JSON.stringify(packet, null, 2);
   if (input.redactor.contains(encoded)) {

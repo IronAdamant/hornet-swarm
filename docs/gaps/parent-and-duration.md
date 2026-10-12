@@ -1,6 +1,6 @@
 # Local parent and one run
 
-Status: open. No code change in this note.
+Status: done. The parent packet carries `max_run_duration_min` and `deadline`. A missing runner names `hornet-swarm env up --project <id>`. No daemon, cron job, or follow-up suite was added.
 
 ## What the source does
 

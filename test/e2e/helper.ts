@@ -9,7 +9,8 @@ import { Redactor } from '../../packages/core/dist/index.js';
 export const root = join(import.meta.dirname, '..', '..');
 export const cli = join(root, 'packages/cli/dist/main.js');
 export const home = join(homedir(), '.hornet-swarm');
-export const secret = 'FixtureOnly-s3cret"<&value>';
+// Spaces, an apostrophe, parentheses, ! and ~ are spelled differently by an HTML form post and by encodeURIComponent.
+export const secret = "FixtureOnly-s3cret\"<&value> it's (ok)!~";
 export const otherSecret = 'FixtureOnly-other"<&value>';
 export const journeys = join(root, 'test/e2e/journeys');
 

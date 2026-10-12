@@ -1,6 +1,6 @@
 # Lid close and the locked screen
 
-Status: open. No code change in this note.
+Status: done. The age key is read once per process and kept in memory until exit. A new key is generated only when the Keychain reports no item, so a locked keychain no longer risks replacing the key. `hornet-swarm doctor` reports whether system sleep is allowed and that a closed lid still freezes a run. Sleep and the lock screen stay with the owner.
 
 ## What the source does
 

@@ -1,0 +1,17 @@
+version: 1
+id: spa-login
+name: Single-page app sign-in
+users: [qa-user-1]
+requires_phase1: false
+tags: [reliability]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/spa" }
+  - fill: { selector: "#email", credential: "qa-user-1.username" }
+  - fill: { selector: "#password", credential: "qa-user-1.password" }
+  - click: { selector: "role=button[name='Sign in']" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/spa/dashboard" }
+  - assert: { type: text_visible, value: "QA Smoke Project" }
+  - assert: { type: selector_visible, value: "[data-testid='user-menu']" }

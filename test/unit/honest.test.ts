@@ -27,21 +27,19 @@ describe('honest swarm', () => {
     expect(
       classifyChallenge({
         text: 'We texted you a code',
-        html: '<form></form>',
         inputs: [{ name: 'code', maxlength: '6' }],
       }),
     ).toBe('2fa');
     expect(
       classifyChallenge({
-        text: 'Sign in',
-        html: '<p>access denied</p>',
+        text: 'Sign in access denied',
         inputs: [{ type: 'password', name: 'password' }],
       }),
     ).toBeUndefined();
     expect(
       classifyChallenge({
         text: 'verify you are human',
-        html: '<iframe title="recaptcha"></iframe>',
+        frames: [{ src: '/captcha-frame', title: 'recaptcha', width: 300, height: 150, visible: true }],
         inputs: [],
       }),
     ).toBe('captcha');
@@ -59,12 +57,15 @@ describe('honest swarm', () => {
     expect(totp.redact('jbswy3dpehpk3pxp')).toBe('[REDACTED:qa-user-1.totp_secret]');
   });
 
-  it('a blocked journey named like tenant isolation returns the human-check sentence and a failed one returns the cross-account sentence', () => {
+  it('a blocked isolation journey returns the human-check sentence, and only a failed access check returns the cross-account sentence', () => {
     const blocked = summaryMarkdown([user('blocked', 'captcha')], 'blocked');
     expect(blocked).toContain('The site asked for a human check, so the checks stopped.');
     expect(blocked).not.toContain('another account');
-    const failed = summaryMarkdown([user('fail')], 'failed');
-    expect(failed).toContain("A test account could open another account's page.");
+    const breached = summaryMarkdown([user('fail', undefined, 'access_denied')], 'failed');
+    expect(breached).toContain("A test account could open another account's page.");
+    const ownPageFailed = summaryMarkdown([user('fail', undefined, "selector_visible [data-testid='resource-view']")], 'failed');
+    expect(ownPageFailed).not.toContain('another account');
+    expect(ownPageFailed).toContain('A check did not pass.');
   });
 
   it("a blocked step's JUnit contains <failure", () => {
@@ -281,7 +282,7 @@ describe('honest swarm', () => {
   });
 });
 
-function user(status: 'blocked' | 'fail', reason?: string): RichUser {
+function user(status: 'blocked' | 'fail', reason?: string, assertion?: string): RichUser {
   return {
     label: 'qa-user-1',
     phase1: { status: 'pass', duration_ms: 1 },
@@ -300,6 +301,7 @@ function user(status: 'blocked' | 'fail', reason?: string): RichUser {
             started_at: '2026-10-11T00:00:00+11:00',
             finished_at: '2026-10-11T00:00:01+11:00',
             ...(reason ? { blocked_reason: reason as 'captcha' } : {}),
+            ...(assertion ? { assertion } : {}),
           },
         ],
       },

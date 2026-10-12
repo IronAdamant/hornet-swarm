@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
@@ -7,8 +7,16 @@ import { listLabels, registerProjectSecrets, setSecret } from './broker.js';
 import { envStatus } from './env.js';
 import { HornetError } from './errors.js';
 import { aegisHome, ensureDir } from './home.js';
+import { leaseHolder, withFileLock, writeFileAtomic } from './leases-store.js';
 
-export type SwarmAgent = { label: string; personality: string };
+/** One sub-agent: its login label, the personality it plays, and the owner's rules for it. */
+export type SwarmAgent = { label: string; personality: string; rules?: string };
+
+export type AgentNote = { at: string; agent: string; text: string };
+
+const NOTE_LIMIT = 2_000;
+const NOTES_KEPT = 50;
+const NOTES_SHOWN = 10;
 
 export type SwarmView = {
   ready: boolean;
@@ -17,12 +25,13 @@ export type SwarmView = {
   agents: SwarmAgent[];
 };
 
-export type SwarmSnapshot = SwarmView & {
+export type SwarmSnapshot = Omit<SwarmView, 'agents'> & {
+  agents: (SwarmAgent & { rules: string; notes: AgentNote[] })[];
   kill_switch: boolean;
   runners: { label: string; healthy: boolean }[];
 };
 
-export type SwarmCard = { username: string; password: string; personality: string };
+export type SwarmCard = { username: string; password: string; personality: string; rules?: string };
 
 export type SwarmSelectors = { username: string; password: string; submit: string; success: string };
 
@@ -56,7 +65,52 @@ export async function swarmSnapshot(project: string, home = aegisHome()): Promis
   } catch {
     runners = null;
   }
-  return { ...view, kill_switch: existsSync(join(home, 'KILL')), runners: runnerHealth(view.agents, runners) };
+  return {
+    ...view,
+    agents: view.agents.map((agent) => ({ ...agent, rules: agent.rules ?? '', notes: readAgentNotes(project, agent.label, home).slice(-NOTES_SHOWN) })),
+    kill_switch: existsSync(join(home, 'KILL')),
+    runners: runnerHealth(view.agents, runners),
+  };
+}
+
+function notesPath(home: string, project: string, label: string): string {
+  return join(home, 'projects', project, 'notes', `${label}.json`);
+}
+
+export function readAgentNotes(project: string, label: string, home = aegisHome()): AgentNote[] {
+  try {
+    const parsed = JSON.parse(readFileSync(notesPath(home, project, label), 'utf8')) as unknown;
+    return Array.isArray(parsed) ? (parsed as AgentNote[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Notes are what a sub-agent learned about the site, kept with its label for the next session.
+ * A note is redacted before it is stored. The last 50 notes are kept. A label that another agent
+ * holds right now cannot be written to.
+ */
+export function addAgentNote(project: string, label: string, agentId: string, text: string, home = aegisHome()): { ok: true; notes: number } {
+  if (!/^[a-z0-9-]+$/.test(project)) throw new HornetError('Unknown project.', 3);
+  if (!/^qa-user-\d+$/.test(label)) throw new HornetError('label must look like qa-user-1', 3);
+  if (!readSwarm(project, home).agents.some((agent) => agent.label === label)) throw new HornetError(`${label} is not on the swarm board.`, 3);
+  const trimmed = text.trim();
+  if (!trimmed) throw new HornetError('A note cannot be empty.', 3);
+  if (trimmed.length > NOTE_LIMIT) throw new HornetError(`A note can be at most ${NOTE_LIMIT} characters.`, 3);
+  const holder = leaseHolder(project, label, home);
+  if (holder && holder !== agentId) throw new HornetError(`${label} is in use by another agent.`, 3);
+  const redactor = new Redactor();
+  registerProjectSecrets(project, redactor, home);
+  const note: AgentNote = { at: new Date().toISOString(), agent: agentId, text: redactor.redact(trimmed) };
+  const file = notesPath(home, project, label);
+  mkdirSync(join(home, 'projects', project, 'notes'), { recursive: true, mode: 0o700 });
+  const count = withFileLock(home, `notes-${project}-${label}`, () => {
+    const notes = [...readAgentNotes(project, label, home), note].slice(-NOTES_KEPT);
+    writeFileAtomic(file, `${JSON.stringify(notes, null, 2)}\n`);
+    return notes.length;
+  });
+  return { ok: true, notes: count };
 }
 
 export function readSwarm(project: string, home = aegisHome()): SwarmView {
@@ -69,7 +123,11 @@ export function readSwarm(project: string, home = aegisHome()): SwarmView {
       website: typeof stored.website === 'string' ? stored.website : '',
       agents: agents
         .filter((agent): agent is SwarmAgent => Boolean(agent) && typeof agent.label === 'string')
-        .map((agent) => ({ label: agent.label, personality: typeof agent.personality === 'string' ? agent.personality : '' })),
+        .map((agent) => ({
+          label: agent.label,
+          personality: typeof agent.personality === 'string' ? agent.personality : '',
+          rules: typeof agent.rules === 'string' ? agent.rules : '',
+        })),
     };
   } catch {
     return { ready: false, project, website: '', agents: [] };
@@ -93,8 +151,8 @@ export function saveSwarmBoard(
   }
   const filled = input.cards
     .slice(0, CARD_COUNT)
-    .map((card) => ({ username: card.username.trim(), password: card.password, personality: card.personality.trim() }))
-    .filter((card) => card.username.length > 0 || card.password.length > 0 || card.personality.length > 0);
+    .map((card) => ({ username: card.username.trim(), password: card.password, personality: card.personality.trim(), rules: (card.rules ?? '').trim() }))
+    .filter((card) => card.username.length > 0 || card.password.length > 0 || card.personality.length > 0 || card.rules.length > 0);
   if (filled.length === 0) throw new HornetError('Enter at least one login.', 3);
   for (const card of filled) {
     if (!card.username || !card.password) throw new HornetError('Each login needs a username and a password.', 3);
@@ -118,11 +176,14 @@ export function saveSwarmBoard(
     const label = `qa-user-${index + 1}`;
     setSecret(projectId, label, 'username', card.username, home);
     setSecret(projectId, label, 'password', card.password, home);
-    return { label, personality: card.personality };
+    return { label, personality: card.personality, rules: card.rules };
   });
   const redactor = new Redactor();
   registerProjectSecrets(projectId, redactor, home);
-  for (const agent of agents) agent.personality = redactor.redact(agent.personality);
+  for (const agent of agents) {
+    agent.personality = redactor.redact(agent.personality);
+    agent.rules = redactor.redact(agent.rules ?? '');
+  }
 
   const origins = new Set<string>([website.origin]);
   if (containerHost(website.hostname, localAddresses()) === 'host.docker.internal') {
@@ -153,11 +214,11 @@ export function saveSwarmBoard(
   writeFileSync(file, stringify(projectSchema.parse(project)));
   const view: SwarmView = { ready: true, project: projectId, website: website.toString(), agents };
   ensureDir(join(home, 'projects', projectId));
-  writeFileSync(swarmPath(home, projectId), `${JSON.stringify(view, null, 2)}\n`);
+  writeFileAtomic(swarmPath(home, projectId), `${JSON.stringify(view, null, 2)}\n`);
   return view;
 }
 
-export function swarmBoardHtml(project: string, home = aegisHome()): string {
+export function swarmBoardHtml(project: string, home = aegisHome(), formToken = ''): string {
   const view = readSwarm(project, home);
   const selectors = selectorsForHtml(project, home);
   let stored: string[] = [];
@@ -176,6 +237,7 @@ export function swarmBoardHtml(project: string, home = aegisHome()): string {
       <label>Username <input name="username_${index + 1}" autocomplete="off"></label>
       <label>Password <input name="password_${index + 1}" type="password" autocomplete="off"></label>
       <label>Personality <textarea name="personality_${index + 1}">${escapeText(agent?.personality ?? '')}</textarea></label>
+      <label>Rules <textarea name="rules_${index + 1}" placeholder="What this sub-agent must and must not do">${escapeText(agent?.rules ?? '')}</textarea></label>
     </section>`;
   }).join('');
   return `<!doctype html><html><head><title>Hornet Swarm</title><style>
@@ -189,8 +251,9 @@ export function swarmBoardHtml(project: string, home = aegisHome()): string {
     button { font-weight: 700; padding: 12px 20px; cursor: pointer; }
   </style></head><body><main>
     <h1>Prepare the swarm</h1>
-    <p>Put the website address in first. Then fill up to ten logins, in order. A personality is the note the sub-agent keeps. Do not type a password into the personality. Agents never see the passwords.</p>
+    <p>Put the website address in first. Then fill up to ten logins, in order. A personality is who the sub-agent plays. Rules are what it must and must not do. Agents can also keep notes for their label. Do not type a password into any of these. Agents never see the passwords.</p>
     <form method="post" action="/setup">
+      <input type="hidden" name="form_token" value="${escapeText(formToken)}">
       <label>Project <input name="project" value="${escapeText(project)}" required></label>
       <label>Website <input name="website" type="url" required value="${escapeText(view.website)}" placeholder="http://127.0.0.1:4173"></label>
       <label>Username selector <input name="selector_username" value="${escapeText(selectors.username)}" required></label>
@@ -208,6 +271,7 @@ export function cardsFromForm(body: URLSearchParams): SwarmCard[] {
     username: body.get(`username_${index + 1}`) ?? '',
     password: body.get(`password_${index + 1}`) ?? '',
     personality: body.get(`personality_${index + 1}`) ?? '',
+    rules: body.get(`rules_${index + 1}`) ?? '',
   }));
 }
 

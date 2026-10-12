@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline';
-import { HornetError, acceptBaseline, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, releaseKill, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
+import { HornetError, acceptBaseline, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
 import { Command } from 'commander';
 
 const program = new Command();
@@ -28,6 +28,8 @@ program
             `Engine memory: ${report.docker.memoryBytes} bytes`,
             '',
             report.estimate.summary,
+            '',
+            report.power.summary,
             '',
           ].join('\n'),
         );
@@ -148,7 +150,7 @@ program
   .option('--agent-id <id>', 'refused unless it is this process')
   .option('--json', 'print machine-readable JSON')
   .action(async (file: string, opts: SuiteFlags) => {
-    await runCommand(opts, { journeyFiles: [file], ...(opts.user ? { users: opts.user } : {}) });
+    await runCommand(opts, { journeyFiles: [file], includeRegressions: false, ...(opts.user ? { users: opts.user } : {}) });
   });
 
 program
@@ -216,10 +218,11 @@ creds
   .option('--json', 'print machine-readable JSON')
   .action(async (project: string, label: string, opts: { json?: boolean }) => {
     try {
-      const lines = (await readHidden()).split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
-      const username = lines[0];
+      // A password is kept exactly as typed, including leading or trailing spaces. Only the username and TOTP secret are trimmed.
+      const lines = (await readHidden()).split(/\r?\n/);
+      const username = lines[0]?.trim();
       const password = lines[1];
-      const totp = lines[2];
+      const totp = lines[2]?.trim() || undefined;
       if (!username || !password) fail(opts.json, 'Type the username, then the password.', 3);
       const stored = storeOwnerLogin(project, label, username, password, totp);
       if (opts.json) writeJson(stored);
@@ -240,6 +243,24 @@ program
     if (opts.json) writeJson(view);
     else if (!view.ready) process.stdout.write('Not ready. Open http://127.0.0.1:7781/setup and press Ready.\n');
     else process.stdout.write(`${view.website}\n${view.agents.map((agent) => `${agent.label}: ${agent.personality}`).join('\n')}\n`);
+  });
+
+program
+  .command('stats')
+  .description('Show how reliable the site has been across recent runs')
+  .option('--project <id>', 'project id')
+  .option('--last <n>', 'how many recent runs to include', '20')
+  .option('--json', 'print machine-readable JSON')
+  .action((opts: { project?: string; last: string; json?: boolean }) => {
+    const last = Number(opts.last);
+    if (!Number.isInteger(last) || last < 1 || last > 500) fail(opts.json, 'last must be an integer from 1 to 500', 3);
+    try {
+      const report = reliabilityReport(opts.project ?? defaultProjectFromHome(), last);
+      if (opts.json) writeJson(report);
+      else process.stdout.write(reliabilityMarkdown(report));
+    } catch (error) {
+      fail(opts.json, messageOf(error), 3);
+    }
   });
 
 program
@@ -356,6 +377,7 @@ async function runCommand(
     chaos?: { profile: string; seed: string };
     phase1Only?: boolean;
     users?: string[];
+    includeRegressions?: boolean;
   },
 ): Promise<void> {
   const ownId = `cli-${process.pid}`;
