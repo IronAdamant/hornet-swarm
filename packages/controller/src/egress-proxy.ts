@@ -1,5 +1,6 @@
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect as netConnect, type Socket } from 'node:net';
+import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -139,13 +140,40 @@ class TokenBucket {
   }
 }
 
+export function externalIpv4(): string | undefined {
+  const nets = networkInterfaces();
+  const preferred = nets.eth0?.find((entry) => isExternalIpv4(entry));
+  if (preferred) return preferred.address;
+  for (const entries of Object.values(nets)) {
+    for (const entry of entries ?? []) {
+      if (isExternalIpv4(entry)) return entry.address;
+    }
+  }
+  return undefined;
+}
+
+export async function waitForExternalIpv4(): Promise<string> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const host = externalIpv4();
+    if (host) return host;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('The control relay could not find its bridge address.');
+}
+
+function isExternalIpv4(entry: NetworkInterfaceInfo): boolean {
+  return entry.family === 'IPv4' && !entry.internal;
+}
+
 export function startControlGateway(options: {
   port: number;
   project: string;
   upstreamHost?: string;
   upstreamPort?: number;
   controlDir?: string;
-}): Promise<{ port: number; close: () => Promise<void> }> {
+  host?: string;
+}): Promise<{ port: number; host: string; close: () => Promise<void> }> {
   const server = createServer((req, res) => {
     const requested = req.url ?? '/';
     const pathOnly = requested.split('?')[0] ?? '/';
@@ -187,13 +215,16 @@ export function startControlGateway(options: {
     });
     req.pipe(upstream);
   });
+  const listenHost = options.host ?? '0.0.0.0';
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options.port, '0.0.0.0', () => {
+    server.listen(options.port, listenHost, () => {
       const address = server.address();
       const port = typeof address === 'object' && address ? address.port : options.port;
+      const bound = typeof address === 'object' && address ? address.address : listenHost;
       resolve({
         port,
+        host: bound,
         close: () =>
           new Promise((done, fail) => {
             server.close((error) => (error ? fail(error) : done()));
@@ -210,17 +241,26 @@ function isDirectRun(): boolean {
   return import.meta.url === pathToFileURL(entry).href;
 }
 
-if (isDirectRun()) {
+async function serveProxy(): Promise<void> {
   const allow = (process.env.AEGIS_ALLOW_HOSTS ?? '')
     .split(',')
     .map((host) => host.trim())
     .filter(Boolean);
   const port = Number(process.env.AEGIS_PROXY_PORT ?? 8888);
   const rps = Number(process.env.AEGIS_RPS ?? 20);
-  void startEgressProxy({ port, allow, rps });
-  void startControlGateway({
+  await startEgressProxy({ port, allow, rps });
+  const host = await waitForExternalIpv4();
+  await startControlGateway({
     port: Number(process.env.AEGIS_CONTROL_PORT ?? 8899),
     project: process.env.AEGIS_PROJECT ?? 'default',
     controlDir: process.env.AEGIS_CONTROL_DIR ?? '/control',
+    host,
+  });
+}
+
+if (isDirectRun()) {
+  void serveProxy().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
   });
 }

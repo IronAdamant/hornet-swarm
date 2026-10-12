@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { connect as netConnect } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -419,6 +420,8 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
     },
   });
   await container.start();
+  // Bind 8899 to the bridge address before the project network exists, so the browser cannot open it.
+  await waitForBridgeGateway(docker, project);
   await docker.getNetwork(networkName(project)).connect({ Container: container.id });
 }
 
@@ -512,6 +515,29 @@ async function controlPort(docker: Docker, project: string): Promise<number | nu
   const binding = inspected.NetworkSettings?.Ports?.[CONTROL_PORT]?.[0]?.HostPort;
   const port = Number(binding);
   return Number.isInteger(port) && port > 0 ? port : null;
+}
+
+async function waitForBridgeGateway(docker: Docker, project: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const port = await controlPort(docker, project);
+    if (port && (await tcpOpen(port))) return;
+    await delay(200);
+  }
+  throw new Error('Control gateway did not listen on the bridge address.');
+}
+
+function tcpOpen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = netConnect({ host: '127.0.0.1', port });
+    const finish = (open: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(open);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
 }
 
 async function waitForEndpoint(docker: Docker, project: string, label: string): Promise<string> {
