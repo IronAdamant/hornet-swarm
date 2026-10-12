@@ -8,6 +8,7 @@ import {
   chaosPermitted,
   chaosSequence,
   globalConfigSchema,
+  practiceLimits,
   productionGate,
   projectDomainsAuthorised,
   projectSchema,
@@ -103,7 +104,7 @@ const STOP_NOTE =
   'A journey ended on a human check or a second code. That journey is finished and will not resume. The screenshot is for a person to look at. Do not try to solve the challenge.';
 
 const PARENT_INSTRUCTION =
-  "The parent Grok Build session or Grok Bot reads this packet, checks it against the task, and only then tells the owner the outcome. The harness does not grade a site's AI replies.";
+  "The parent agent (a Grok Build session, Grok Bot, Claude, or another MCP client) reads this packet, checks it against the task, and only then tells the owner the outcome. The harness does not grade a site's AI replies.";
 
 export function selectRunLabels(input: {
   phase1Only: boolean;
@@ -134,6 +135,8 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   if (!domains.ok) throw new HornetError(domains.reason, 3);
   const production = productionDecision(project, auth, Boolean(request.confirmProduction));
   if (!production.ok) throw new HornetError(production.reason, 3);
+  const polite = practiceLimits(project, auth);
+  if (!polite.ok) throw new HornetError(polite.reason, 3);
   if (request.chaos) {
     const allowed = chaosPermitted(auth, project);
     if (!allowed.ok) throw new HornetError(allowed.reason, 3);
@@ -489,6 +492,7 @@ async function executeIssued(
     minStepDelayMs: project.limits.min_step_delay_ms,
     rps: project.limits.max_requests_per_second_per_runner,
     burst: project.limits.request_burst_per_runner,
+    http2: project.runners.http2,
     accessDeniedMarkers: project.auth.access_denied_markers,
     chaosActions: actions,
     outDir: `/out/${runId}/${journey.id}`,

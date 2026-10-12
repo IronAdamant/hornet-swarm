@@ -120,7 +120,28 @@ export function projectDomainsAuthorised(project: Project, auth: Authorisation, 
   return { ok: true };
 }
 
+/**
+ * A public practice site is shared by everyone who practises on it. These caps keep one swarm
+ * polite: at most 10 requests a second to the site across every runner, 5 per runner, a burst
+ * of 20, and 6 runners.
+ */
+export const PUBLIC_PRACTICE_LIMITS = { requestsPerSecondTotal: 10, requestsPerSecondPerRunner: 5, burstPerRunner: 20, runners: 6 } as const;
+
+export function practiceLimits(project: Project, auth: Authorisation): PolicyResult {
+  if (auth.basis !== 'public_practice') return { ok: true };
+  if (project.environment !== 'test') return { ok: false, reason: 'public_practice_environment_must_be_test' };
+  const caps = PUBLIC_PRACTICE_LIMITS;
+  if (project.limits.max_requests_per_second_total > caps.requestsPerSecondTotal) return { ok: false, reason: `public_practice_limit:max_requests_per_second_total<=${caps.requestsPerSecondTotal}` };
+  if (project.limits.max_requests_per_second_per_runner > caps.requestsPerSecondPerRunner) return { ok: false, reason: `public_practice_limit:max_requests_per_second_per_runner<=${caps.requestsPerSecondPerRunner}` };
+  if (project.limits.request_burst_per_runner > caps.burstPerRunner) return { ok: false, reason: `public_practice_limit:request_burst_per_runner<=${caps.burstPerRunner}` };
+  if (project.runners.count > caps.runners) return { ok: false, reason: `public_practice_limit:runners.count<=${caps.runners}` };
+  return { ok: true };
+}
+
 export function productionGate(project: Project, auth: Authorisation, confirmProduction: boolean): PolicyResult {
+  // A public practice site's own published statement says what it is for, and its domains are
+  // already checked against the authorisation. Its hostname not saying "test" does not make it production.
+  if (auth.basis === 'public_practice') return { ok: true };
   const hosts = gateHosts(project);
   if (!hosts.some((host) => isProductionLooking(host))) return { ok: true };
   if (!auth.scope.environments.includes('production')) return { ok: false, reason: 'production_not_authorised' };
@@ -139,6 +160,7 @@ export function overRateLimit(errors: number, total: number): boolean {
 }
 
 export function chaosPermitted(auth: Authorisation, project: Project): PolicyResult {
+  if (auth.basis === 'public_practice') return { ok: false, reason: 'chaos_not_authorised' };
   if (!auth.activities.includes('chaos')) return { ok: false, reason: 'chaos_not_authorised' };
   if (project.environment === 'production' && !auth.scope.environments.includes('production')) {
     return { ok: false, reason: 'chaos_not_authorised' };

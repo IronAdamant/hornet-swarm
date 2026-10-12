@@ -1,0 +1,20 @@
+version: 1
+id: secure-area
+name: Sign in, see the secure area, and sign out
+description: The published login reaches /secure, shows the success message, and logs out again.
+users: [qa-user-1, qa-user-2]
+requires_phase1: true
+tags: [smoke, practice]
+steps:
+  - navigate: { url: "/login" }
+  - fill: { selector: "#username", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "button[type='submit']" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/secure" }
+  - assert: { type: text_visible, value: "You logged into a secure area!" }
+  - screenshot: { name: "secure-area" }
+  - click: { selector: "a[href='/logout']" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/login" }
+  - assert: { type: text_visible, value: "You logged out of the secure area!" }

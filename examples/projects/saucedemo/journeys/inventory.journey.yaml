@@ -1,0 +1,15 @@
+version: 1
+id: inventory
+name: The product list renders
+description: A screenshot of the inventory for visual baselines. visual_user and problem_user should differ from standard_user.
+users: [qa-user-1, qa-user-2, qa-user-3, qa-user-4, qa-user-5]
+requires_phase1: true
+tags: [visual, practice]
+steps:
+  - navigate: { url: "/" }
+  - fill: { selector: "#user-name", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#login-button" }
+  - wait: { for: navigation }
+  - assert: { type: selector_visible, value: "[data-test='inventory-list']" }
+  - screenshot: { name: "inventory", full_page: true }

@@ -20,10 +20,10 @@ export function validateJourneyDocument(
       const modes = [step.fill.value, step.fill.credential, step.fill.totp].filter((value) => value !== undefined);
       if (modes.length !== 1) errors.push(`step ${index}: fill needs exactly one of value, credential, or totp`);
       if (step.fill.credential && !/^[a-z0-9-]+\.[a-z_]+$/i.test(step.fill.credential)) {
-        errors.push(`step ${index}: credential must look like qa-user-1.password`);
+        errors.push(`step ${index}: credential must look like qa-user-1.password or self.password`);
       }
-      if (step.fill.totp && !/^qa-user-\d+$/.test(step.fill.totp)) {
-        errors.push(`step ${index}: totp must be a user label`);
+      if (step.fill.totp && !/^(qa-user-\d+|self)$/.test(step.fill.totp)) {
+        errors.push(`step ${index}: totp must be a user label or self`);
       }
       if (step.fill.value && knownSecrets.some((secret) => secret.length >= 1 && step.fill.value?.includes(secret))) {
         errors.push(`step ${index}: literal value matches a stored secret`);
@@ -51,4 +51,10 @@ export function validateJourneyYaml(text: string, project: Project, knownSecrets
     return { valid: false, errors: [error instanceof Error ? error.message : 'invalid yaml'] };
   }
   return validateJourneyDocument(document, project, knownSecrets);
+}
+
+/** `self.password` and `fill.totp: self` mean the label running the journey, so one journey can serve many accounts. */
+export function resolveSelf(handle: string, label: string): string {
+  if (handle === 'self') return label;
+  return handle.startsWith('self.') ? `${label}${handle.slice(4)}` : handle;
 }

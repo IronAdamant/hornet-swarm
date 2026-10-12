@@ -1,0 +1,12 @@
+version: 1
+id: status-codes
+name: Status codes are what the page says
+description: The 200 page answers 200 and the 404 page answers 404.
+users: [qa-user-1]
+requires_phase1: true
+tags: [http, practice]
+steps:
+  - navigate: { url: "/status_codes/200" }
+  - assert: { type: http_status, value: "200" }
+  - navigate: { url: "/status_codes/404" }
+  - assert: { type: http_status, value: "404" }

@@ -3,7 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
 import { browserLaunchOptions } from './launch.js';
-import { Redactor, renderTemplate, runnerOverload, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
+import { Redactor, renderTemplate, resolveSelf, runnerOverload, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
 
 export type ChaosAction = { step: number; kind: string; detail: string };
 
@@ -19,6 +19,8 @@ export type JobRequest = {
   rps: number;
   /** Requests allowed at once before pacing starts. Defaults to rps. */
   burst?: number;
+  /** False makes the browser use HTTP/1.1. */
+  http2?: boolean;
   accessDeniedMarkers: string[];
   chaosActions: ChaosAction[];
   outDir: string;
@@ -191,7 +193,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   const stopWaiting = () => closing || isAborted();
 
   try {
-    browser = await chromium.launch(browserLaunchOptions());
+    browser = await chromium.launch(browserLaunchOptions({ ...(job.http2 === false ? { http2: false } : {}) }));
     context = await browser.newContext({
       ...(process.env.AEGIS_PROXY ? { proxy: { server: process.env.AEGIS_PROXY } } : {}),
       recordHar: { path: harPath, content: 'embed' },
@@ -299,7 +301,10 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           steps.push(finishStep(index, kind, 'blocked', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, blocked, undefined, 'stopped'));
           break;
         }
-        const message = redactor.redact(error instanceof Error ? error.message : String(error));
+        const said = await visibleMessage(page);
+        const raw = error instanceof Error ? error.message : String(error);
+        // The page's own error text tells an agent why, such as "this user has been locked out".
+        const message = redactor.redact(said ? raw.replace(/^([^\n]*)/, `$1 (page said: "${said}")`) : raw);
         const reason = classifyBlockedReason(message);
         if (reason) {
           status = 'blocked';
@@ -400,12 +405,12 @@ async function runStep(
     let text = '';
     if (step.fill.value !== undefined) text = renderTemplate(step.fill.value, template);
     if (step.fill.credential) {
-      const value = secrets.get(step.fill.credential);
+      const value = secrets.get(resolveSelf(step.fill.credential, job.label));
       if (!value) throw new Error('missing credential handle');
       text = value;
     }
     if (step.fill.totp) {
-      const value = secrets.get(`${step.fill.totp}.totp_code`);
+      const value = secrets.get(`${resolveSelf(step.fill.totp, job.label)}.totp_code`);
       if (!value) throw new Error('missing totp code');
       text = value;
     }
@@ -524,6 +529,28 @@ function finishStep(
     assertions: assertions.map((assertion) => redactor.redact(assertion)),
     screenshot_paths: screenshots,
   };
+}
+
+const MESSAGE_SELECTORS = '[role="alert"], [data-test="error"], [aria-live="assertive"], .error-message-container, .flash, .alert, .error, .invalid-feedback';
+
+/** The first visible error or alert text on the page, up to 200 characters. */
+async function visibleMessage(page: Page): Promise<string> {
+  try {
+    const texts = await page.locator(MESSAGE_SELECTORS).evaluateAll((elements) =>
+      elements
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+        })
+        .map((element) => (element as HTMLElement).innerText.replace(/\s+/g, ' ').trim())
+        .filter(Boolean),
+    );
+    const first = texts[0] ?? '';
+    return first.length > 200 ? `${first.slice(0, 197)}...` : first;
+  } catch {
+    return '';
+  }
 }
 
 function journeyFillsTotp(steps: Step[]): boolean {

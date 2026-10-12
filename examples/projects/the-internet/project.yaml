@@ -1,0 +1,46 @@
+# Installed to ~/.hornet-swarm/projects/the-internet/ by: node scripts/setup-practice.mjs the-internet
+# A shared free host. Two runners, two requests a second each, four in total.
+id: the-internet
+name: The Internet (public practice site)
+authorisation_id: the-internet-practice
+environment: test
+targets:
+  base_url: https://the-internet.herokuapp.com
+  allowed_origins:
+    - https://the-internet.herokuapp.com
+  allowed_third_party: []
+auth:
+  signin_url: /login
+  selectors:
+    username: "#username"
+    password: "#password"
+    submit: "button[type='submit']"
+  success:
+    - { type: url_contains, value: "/secure" }
+    - { type: text_visible, value: "You logged into a secure area!" }
+  # The login form posts here. Its request and response bodies are dropped from the HAR and trace.
+  auth_endpoints: ["**/authenticate"]
+runners:
+  count: 2
+  memory: 1g
+  cpus: 1
+  # A finding from the first live run on 12 October 2026: this site's HTTP/2 endpoint stalls when
+  # several files load at once over one connection (about one page load in three, reproduced with
+  # curl --http2 and no Hornet Swarm involved). HTTP/1.1 is reliable, so the journeys run over it.
+  # Set this to true to measure the stall itself with `hornet-swarm stats`.
+  http2: false
+limits:
+  max_parallel_runners: 2
+  max_requests_per_second_per_runner: 2
+  request_burst_per_runner: 10
+  max_requests_per_second_total: 4
+  min_step_delay_ms: 500
+  max_run_duration_min: 10
+  max_signin_attempts_per_user_per_hour: 10
+phase2:
+  gate: per_user
+journeys_dir: ./journeys
+# Both labels use the one published login. Each browser keeps its own session.
+users:
+  - { label: qa-user-1, role: practice, tenant: public, vars: {} }
+  - { label: qa-user-2, role: practice, tenant: public, vars: {} }

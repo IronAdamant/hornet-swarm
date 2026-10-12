@@ -1,0 +1,53 @@
+# Installed to ~/.hornet-swarm/projects/saucedemo/ by: node scripts/setup-practice.mjs saucedemo
+# Six published accounts, one sub-agent each. Each account misbehaves on purpose:
+#   qa-user-1 standard_user            works
+#   qa-user-2 problem_user             broken images and a broken checkout form
+#   qa-user-3 performance_glitch_user  slow sign-in
+#   qa-user-4 error_user               some buttons fail
+#   qa-user-5 visual_user              layout differences
+#   qa-user-6 locked_out_user          sign-in refused
+id: saucedemo
+name: Sauce Demo (public practice site)
+authorisation_id: saucedemo-practice
+environment: test
+targets:
+  base_url: https://www.saucedemo.com
+  allowed_origins:
+    - https://www.saucedemo.com
+  # Fonts only. Error telemetry to backtrace.io stays blocked.
+  allowed_third_party:
+    - { origin: "https://fonts.googleapis.com", passive: true }
+    - { origin: "https://fonts.gstatic.com", passive: true }
+auth:
+  signin_url: /
+  selectors:
+    username: "#user-name"
+    password: "#password"
+    submit: "#login-button"
+  success:
+    - { type: url_contains, value: "/inventory.html" }
+    - { type: selector_visible, value: "[data-test='inventory-list']" }
+  auth_endpoints: []
+runners:
+  count: 6
+  memory: 1g
+  cpus: 1
+limits:
+  max_parallel_runners: 6
+  max_requests_per_second_per_runner: 5
+  request_burst_per_runner: 20
+  max_requests_per_second_total: 10
+  min_step_delay_ms: 300
+  max_run_duration_min: 15
+  max_signin_attempts_per_user_per_hour: 10
+# One account failing sign-in, such as locked_out_user, does not stop the others.
+phase2:
+  gate: per_user
+journeys_dir: ./journeys
+users:
+  - { label: qa-user-1, role: standard, tenant: public, vars: {} }
+  - { label: qa-user-2, role: problem, tenant: public, vars: {} }
+  - { label: qa-user-3, role: performance-glitch, tenant: public, vars: {} }
+  - { label: qa-user-4, role: error, tenant: public, vars: {} }
+  - { label: qa-user-5, role: visual, tenant: public, vars: {} }
+  - { label: qa-user-6, role: locked-out, tenant: public, vars: {} }

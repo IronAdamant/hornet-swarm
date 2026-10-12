@@ -89,6 +89,11 @@ export const projectSchema = z
         count: z.number().int().min(1).max(30).default(10),
         memory: z.string().default('1g'),
         cpus: z.number().positive().max(8).default(1),
+        /**
+         * False makes the browser use HTTP/1.1. Use it only for a site whose HTTP/2 is known to
+         * stall, and say so: that stall is itself a finding about the site.
+         */
+        http2: z.boolean().default(true),
       })
       .strict(),
     limits: z
@@ -125,7 +130,11 @@ export const activitySchema = z.enum([
 export const authorisationSchema = z
   .object({
     id: z.string(),
-    basis: z.enum(['owner', 'contract']),
+    /**
+     * owner: you own the site. contract: a client authorised you in writing. public_practice: the
+     * site publicly says it exists for test-automation practice, and `public_statement` records where.
+     */
+    basis: z.enum(['owner', 'contract', 'public_practice']),
     client: z.string(),
     authoriser: z
       .object({
@@ -133,7 +142,8 @@ export const authorisationSchema = z
         role: z.string(),
         email: z.string().email(),
       })
-      .strict(),
+      .strict()
+      .optional(),
     granted_to: z.string(),
     scope: z
       .object({
@@ -150,11 +160,39 @@ export const authorisationSchema = z
         path: z.string(),
         sha256: z.string(),
       })
-      .strict(),
+      .strict()
+      .optional(),
     notes: z.string().default(''),
     revoked: z.boolean().optional(),
+    /** Required for public_practice: the page where the site says it is for automation practice, and those words. */
+    public_statement: z
+      .object({
+        url: z.string().url(),
+        quote: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((auth, context) => {
+    if (auth.basis !== 'public_practice') {
+      // A person authorised this, so the record names them and keeps their signed document.
+      if (!auth.authoriser) context.addIssue({ code: z.ZodIssueCode.custom, path: ['authoriser'], message: 'owner and contract authorisations name the authoriser' });
+      if (!auth.document) context.addIssue({ code: z.ZodIssueCode.custom, path: ['document'], message: 'owner and contract authorisations keep the signed document' });
+      return;
+    }
+    if (!auth.public_statement) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['public_statement'], message: 'public_practice needs the url and words where the site says it is for practice' });
+    }
+    for (const activity of ['chaos', 'access_control_checks'] as const) {
+      if (auth.activities.includes(activity)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: ['activities'], message: `${activity} is not allowed against a public practice site` });
+      }
+    }
+    if (auth.scope.environments.includes('production')) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['scope', 'environments'], message: 'a public practice site is recorded as test, not production' });
+    }
+  });
 
 export type Authorisation = z.infer<typeof authorisationSchema>;
 

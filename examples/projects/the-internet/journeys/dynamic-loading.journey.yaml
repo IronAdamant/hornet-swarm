@@ -1,0 +1,13 @@
+version: 1
+id: dynamic-loading
+name: Content that renders after a delay
+description: Clicking Start shows a spinner, then "Hello World!" a few seconds later.
+users: [qa-user-2]
+requires_phase1: true
+tags: [timing, practice]
+steps:
+  - navigate: { url: "/dynamic_loading/2" }
+  - click: { selector: "#start button" }
+  - wait: { for: selector, selector: "#finish", ms: 20000 }
+  - assert: { type: text_visible, value: "Hello World!" }
+  - screenshot: { name: "hello-world" }

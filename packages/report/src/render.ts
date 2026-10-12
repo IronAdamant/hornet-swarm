@@ -59,6 +59,17 @@ export function isolationBreach(users: RichUser[]): { label: string; journey: st
   return undefined;
 }
 
+const PAGE_LOAD_TIMEOUT = /page\.goto: Timeout|Timeout \d+ms exceeded[\s\S]*navigating to/;
+
+/** Playwright errors carry a call log after the first line. A report keeps the first line. */
+function firstLine(error: string): string {
+  return (error.split('\n')[0] ?? error).trim();
+}
+
+function pageLoadTimedOut(error?: string): boolean {
+  return Boolean(error && PAGE_LOAD_TIMEOUT.test(error));
+}
+
 export function summaryMarkdown(users: RichUser[], status: RunResult['status']): string {
   const flaky = users.some((user) => user.journeys.some((journey) => journey.status === 'flaky' || journey.steps.some((step) => step.status === 'flaky')));
   const phaseFailed = users.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
@@ -88,8 +99,14 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status']):
     paragraph = 'This project uses an authenticator code, but no authenticator secret is stored for this account. Store it with `hornet-swarm creds add`.';
   } else if (has('allowlist') || has('proxy')) {
     paragraph = 'A page needed a site outside the allowed list, or the egress proxy failed, so the checks stopped. This is high. Check `targets.allowed_origins` and the proxy.';
+  } else if (phaseFailed && users.every((user) => user.phase1.status === 'pass' || pageLoadTimedOut(user.phase1.error))) {
+    paragraph = 'The sign-in page did not finish loading in time, so the later checks were not run. This is high. The site was slow or stalled. The trace and network.har show which requests never answered.';
   } else if (phaseFailed) {
-    paragraph = 'Sign-in did not work, so the later checks were not run. This is high. Fix sign-in first.';
+    const failedLabels = users.filter((user) => user.phase1.status === 'fail' || user.phase1.status === 'error').map((user) => user.label);
+    paragraph =
+      failedLabels.length < users.length
+        ? `Sign-in failed for ${failedLabels.join(', ')} (${failedLabels.length} of ${users.length} accounts). The other accounts signed in. Checks for the failed accounts were not run. This is high. Look at why ${failedLabels.length === 1 ? 'that account was' : 'those accounts were'} refused.`
+        : 'Sign-in did not work, so the later checks were not run. This is high. Fix sign-in first.';
   } else if (flaky) {
     paragraph = 'A check failed and then passed when it was tried again. That still counts as a failure. This is medium. Look at that check first.';
   } else if (status !== 'passed') {
@@ -159,18 +176,23 @@ export function diagnose(users: RichUser[], status: RunResult['status']): { susp
     };
   }
   const breach = isolationBreach(users);
-  const problems: { text: string; reason?: string; repro: string[]; flaky: boolean; error: boolean }[] = [];
+  const problems: { text: string; reason?: string; repro: string[]; flaky: boolean; error: boolean; stalled: boolean }[] = [];
   for (const user of users) {
     if (user.phase1.status !== 'pass') {
       const reason = user.phase1.blocked_reason;
       problems.push({
         text: reason
           ? `${user.label} · sign-in stopped: ${REASON_TEXT[reason] ?? reason}.`
-          : `${user.label} · sign-in ${user.phase1.status === 'error' ? 'could not run' : 'failed'}${user.phase1.error ? `: ${user.phase1.error}` : '.'}`,
+          : pageLoadTimedOut(user.phase1.error)
+            ? `${user.label} · the sign-in page did not finish loading within 15 seconds.`
+            : `${user.label} · sign-in ${user.phase1.status === 'error' ? 'could not run' : 'failed'}${user.phase1.error ? `: ${firstLine(user.phase1.error)}` : '.'}`,
         ...(reason ? { reason } : {}),
-        repro: [`Open the sign-in page as ${user.label}.`, 'Enter the stored username and password and submit.', 'Check that the success condition in `auth.success` appears.'],
+        repro: pageLoadTimedOut(user.phase1.error)
+          ? [`Open the sign-in page as ${user.label}.`, 'Watch the network panel for requests that never answer.']
+          : [`Open the sign-in page as ${user.label}.`, 'Enter the stored username and password and submit.', 'Check that the success condition in `auth.success` appears.'],
         flaky: false,
         error: user.phase1.status === 'error',
+        stalled: pageLoadTimedOut(user.phase1.error),
       });
       continue;
     }
@@ -179,7 +201,15 @@ export function diagnose(users: RichUser[], status: RunResult['status']): { susp
       const step = journey.steps.find((entry) => entry.status !== 'pass') ?? journey.steps[journey.steps.length - 1];
       const reason = step?.blocked_reason ?? journey.blocked_reason;
       const what = step ? `step ${step.index} (${describeStep(step)})` : 'before its first step';
-      const outcome = reason ? `stopped: ${REASON_TEXT[reason] ?? reason}` : journey.status === 'flaky' ? 'passed only on a retry' : step?.error ? `failed: ${step.error}` : 'failed';
+      const outcome = reason
+        ? `stopped: ${REASON_TEXT[reason] ?? reason}`
+        : journey.status === 'flaky'
+          ? 'passed only on a retry'
+          : pageLoadTimedOut(step?.error)
+            ? 'failed: the page did not finish loading within 15 seconds'
+            : step?.error
+              ? `failed: ${firstLine(step.error)}`
+              : 'failed';
       problems.push({
         text: `${user.label} · ${journey.name} · ${what} ${outcome}${outcome.endsWith('.') ? '' : '.'}`,
         ...(reason ? { reason } : {}),
@@ -189,6 +219,7 @@ export function diagnose(users: RichUser[], status: RunResult['status']): { susp
         ],
         flaky: journey.status === 'flaky',
         error: journey.status === 'error',
+        stalled: pageLoadTimedOut(step?.error),
       });
     }
   }
@@ -203,7 +234,12 @@ export function diagnose(users: RichUser[], status: RunResult['status']): { susp
     ? ['Fix the access check on that page before anything else.', 'Run the isolation journey again to confirm the fix.']
     : first.reason
       ? [NEXT_ACTION[first.reason] ?? 'Look at the screenshot for that step.']
-      : first.flaky
+      : first.stalled
+        ? [
+            'Open network.har or the trace and find the requests that never answered.',
+            'If they stall only over HTTP/2, that is a finding about the site. Set runners.http2: false to keep testing its pages over HTTP/1.1.',
+          ]
+        : first.flaky
         ? ['Look for a race on that page: content that appears late, or a request that sometimes fails.', 'Run the journey several times and compare with `hornet-swarm stats`.']
         : ['Open the screenshot and trace for that step.', 'Fix the first failed check and run it again.'];
   return { suspected, confidence, repro: first.repro, next };

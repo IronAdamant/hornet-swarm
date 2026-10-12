@@ -1,0 +1,20 @@
+# A public practice site. Nobody signed this. The site's own published words are the permission.
+# scripts/setup-practice.mjs copies this to ~/.hornet-swarm/authorisations/, sets the dates to
+# today plus 90 days, and saves a dated copy of the statement page as the document.
+id: the-internet-practice
+basis: public_practice
+client: The Internet (Sauce Labs, originally Elemental Selenium)
+granted_to: Anyone practising test automation
+public_statement:
+  url: https://github.com/saucelabs/the-internet
+  quote: "An example application that captures prominent and ugly functionality found on the web. Perfect for writing automated acceptance tests against."
+scope:
+  domains: [the-internet.herokuapp.com]
+  environments: [test]
+activities: [signin_smoke, functional_e2e]
+exclusions:
+  - No chaos, load, or access-control probing. This is a shared free host.
+  - Only the login the site publishes on its own login page.
+valid_from: "2026-10-12"
+valid_until: "2027-01-10"
+notes: The login page publishes one shared username and password for everyone.

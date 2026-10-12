@@ -53,6 +53,25 @@ Reports land in `~/.hornet-swarm/runs/<run id>/`. `summary.md` is the short vers
 
 Runs older than `results_retention_days` in `~/.hornet-swarm/config.yaml` (30 by default) are removed when the next run starts.
 
+## Practice sites
+
+Two public sites exist for test-automation practice, and the repo ships projects for both:
+
+- **The Internet** (`the-internet.herokuapp.com`): one published login, a secure area, a delayed page, and status codes. Two labels share the login.
+- **Sauce Demo** (`www.saucedemo.com`): six published accounts that each misbehave on purpose, one label each. `standard_user` works, `problem_user` and `error_user` break checkout, `performance_glitch_user` is slow, `visual_user` looks different, and `locked_out_user` is refused.
+
+```bash
+pnpm build
+node scripts/setup-practice.mjs the-internet     # or saucedemo
+pnpm hornet-swarm env up --project the-internet
+pnpm hornet-swarm suite --project the-internet
+pnpm hornet-swarm stats --project the-internet
+```
+
+The script installs a `public_practice` authorisation, the project, its journeys, and a swarm board with a personality and rules for each label, and it stores the published logins in the encrypted store. It reads each site's password from that site's own login page at install time, so no password is kept in this repo. If the page has changed, it asks for the password, or reads `HORNET_PRACTICE_PASSWORD`. It saves a dated copy of the page where each site says it is for practice as the authorisation's document. A `public_practice` authorisation needs that statement, refuses chaos and access-control probing, and caps a run at 10 requests a second in total, 5 per runner, and 6 runners. Other people use these sites too.
+
+The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoint stalls when several files load at once over one connection, about one page load in three. `curl --http2` reproduces it with no Hornet Swarm involved. Its project sets `runners.http2: false` so the journeys run over HTTP/1.1. Set it to `true` to measure the stall.
+
 ## Everyday commands
 
 - `hornet-swarm env up --count 10` starts the default fleet.
@@ -98,6 +117,14 @@ Any agent can engage the kill switch with `reset_environment` and `kill: true`. 
 
 `get_reliability` returns the same figures as `hornet-swarm stats`.
 
+### Claude Code
+
+`.mcp.json` registers the MCP server as `hornet-swarm` when Claude Code starts in this repo. `.claude/agents/hornet-swarm-tester.md` is a sub-agent for one label, so a Claude parent can spawn one per label. The playbook for any parent, Grok or Claude, is `docs/agents.md`.
+
+### One journey for many accounts
+
+In a journey, `credential: "self.password"` and `fill: { totp: self }` mean the label running it. A journey that lists several users can then sign each of them in with their own login.
+
 ## How checks wait
 
 A page is checked the way a person would see it.
@@ -105,6 +132,8 @@ A page is checked the way a person would see it.
 - `wait: { for: navigation }` waits for the page to navigate after the last action, including a single-page app that changes the URL with `history.pushState`. A login that renders in place without changing the URL ends the wait once the network has been quiet for half a second.
 - `url_contains` and `text_visible` retry for up to 10 seconds, like `selector_visible`. `access_denied` retries for up to 5 seconds. `selector_absent` waits for the network to go quiet (up to 3 seconds) first, so content that renders late is still seen.
 - `http_status` and `access_denied` read the status of the last page load, whether a `navigate` step or a click caused it.
+- A failed step records the page's own visible error text, such as `(page said: "Sorry, this user has been locked out.")`.
+- `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
 
 Requests are paced, not dropped. Each runner may send `limits.request_burst_per_runner` requests at once (20 by default), then `limits.max_requests_per_second_per_runner` per second. A busy page loads slower. It does not load broken. The egress proxy queues requests over `max_requests_per_second_total` the same way. A run is `rate_limited` only when the site itself answers 429 or 503 to more than one request in ten.
 
@@ -145,6 +174,8 @@ The fixture includes pages shaped like a real site: a single-page app sign-in, a
 
 On 12 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 20 files passed and 106 tests passed.
+`pnpm test` exited 0. 21 files passed and 119 tests passed.
 
 `pnpm test:e2e` exited 0. 17 files passed and 47 tests passed.
+
+The same day, live runs on the two practice sites gave the results each site is built to give. The Internet: both accounts signed in and all four journeys passed. Sauce Demo: `standard_user`, `performance_glitch_user` (8.4 s sign-ins), and `visual_user` passed checkout; `problem_user` failed at step 15 with the page saying "Error: Last Name is required"; `error_user` failed at step 17 because the order never completed; and `locked_out_user` was refused with "Sorry, this user has been locked out." A scan of every saved file, including traces, found no stored login in any encoding.

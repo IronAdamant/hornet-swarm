@@ -1,6 +1,6 @@
 # Security
 
-Hornet Swarm may only be pointed at systems you own, or systems you are authorised in writing to test. The authorisation file is a technical check that records that permission. It is not a substitute for the permission itself.
+Hornet Swarm may only be pointed at systems you own, systems you are authorised in writing to test, or public sites that publish that they exist for test-automation practice. A `public_practice` authorisation records where the site says so and refuses chaos, access-control probing, and heavy traffic. The authorisation file is a technical check that records that permission. It is not a substitute for the permission itself.
 
 Do not put real customer passwords in the store. Use accounts that were created for testing. Hornet Swarm encrypts those values with age, keeps the private key in the macOS Keychain, and sends them into a runner only while a job is running. Agents, logs, screenshots, traces, and reports are supposed to show labels such as `qa-user-1`, not the password.
 
