@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { prepareRunnerTokenDir } from '../../packages/controller/src/env.ts';
-import { controlTokenDir, controlTokenPath, ensureControlToken } from '../../packages/controller/src/runner-auth.ts';
+import { controlTokenDir, controlTokenPath, ensureControlToken, rotateControlToken, runWithToken } from '../../packages/controller/src/runner-auth.ts';
 
 describe('control token permissions', () => {
   const home = mkdtempSync(join(tmpdir(), 'hornet-token-perms-'));
@@ -33,6 +33,31 @@ describe('control token permissions', () => {
         accepted = ensureControlToken(project, label, loose);
       }).toThrow('The control token file is open to other accounts.');
       expect(accepted).toBe('');
+    } finally {
+      rmSync(loose, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to rotate or start a run when the token file is readable by other accounts', async () => {
+    const loose = mkdtempSync(join(tmpdir(), 'hornet-token-run-file-'));
+    try {
+      const token = ensureControlToken(project, label, loose);
+      const file = controlTokenPath(project, label, loose);
+      chmodSync(file, 0o644);
+      const before = readFileSync(file);
+      expect(() => rotateControlToken(project, label, loose)).toThrow('The control token file is open to other accounts.');
+      expect(readFileSync(file)).toEqual(before);
+      expect(readFileSync(file, 'utf8').trim()).toBe(token);
+      let ran = false;
+      await expect(
+        runWithToken(project, label, loose, async () => {
+          ran = true;
+          return 'ran';
+        }),
+      ).rejects.toThrow('The control token file is open to other accounts.');
+      expect(ran).toBe(false);
+      expect(mode(file)).toBe(0o644);
+      expect(readFileSync(file)).toEqual(before);
     } finally {
       rmSync(loose, { recursive: true, force: true });
     }

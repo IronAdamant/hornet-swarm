@@ -24,8 +24,10 @@ export function ensureControlToken(project: string, label: string, home = aegisH
 export function rotateControlToken(project: string, label: string, home = aegisHome()): string {
   const directory = controlTokenDir(project, home);
   prepareTokenDirectory(directory);
-  const token = randomBytes(32).toString('hex');
   const file = join(directory, `${label}.token`);
+  // A file other accounts can read is left as it is. The run does not receive a replacement.
+  if (existsSync(file)) assertOwnerOnly(file, 0o600, 'file');
+  const token = randomBytes(32).toString('hex');
   writeFileSync(file, `${token}\n`, { mode: 0o600 });
   chmodSync(file, 0o600);
   return token;
