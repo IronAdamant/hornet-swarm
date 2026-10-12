@@ -166,7 +166,7 @@ export function storeOwnerLogin(
   totp: string | undefined,
   home = aegisHome(),
 ): { ok: true; label: string; status: 'ready' } {
-  const problem = shortSecretError(username, password, totp);
+  const problem = shortSecretError(password, totp);
   if (problem) throw new HornetError(problem, 3);
   assertProjectAuthorised(project, home);
   setSecret(project, label, 'username', username, home);
@@ -306,7 +306,7 @@ async function handlePage(req: IncomingMessage, res: ServerResponse, home: strin
     send(res, 400, 'Username and password are required.');
     return;
   }
-  const problem = shortSecretError(username, password, totp || undefined);
+  const problem = shortSecretError(password, totp || undefined);
   if (problem) {
     send(res, 400, problem);
     return;

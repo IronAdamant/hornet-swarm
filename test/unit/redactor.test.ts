@@ -74,6 +74,22 @@ describe('redactor', () => {
     }
   });
 
+  it('redacts a username shorter than 4 characters, including its encoded form', () => {
+    const name = '"';
+    const redactor = new Redactor();
+    redactor.register('qa-user-1.username', name);
+    const encoded = JSON.stringify(name).slice(1, -1);
+    expect(encoded.length).toBeLessThan(4);
+    expect(encoded).not.toBe(name);
+    expect(redactor.redact(`user ${name} end`)).toBe('user [REDACTED:qa-user-1.username] end');
+    expect(redactor.redact(encoded)).toBe('[REDACTED:qa-user-1.username]');
+    expect(redactor.contains(Buffer.from(name, 'utf8').toString('base64'))).toBe(true);
+    const passwordOnly = new Redactor();
+    passwordOnly.register('qa-user-1.password', name);
+    expect(passwordOnly.redact(name)).toBe('[REDACTED:qa-user-1.password]');
+    expect(passwordOnly.redact(encoded)).toBe(`\\[REDACTED:qa-user-1.password]`);
+  });
+
   it('keeps a short original secret and drops a short derived form', () => {
     const empty = new Redactor();
     empty.register('qa-user-1.password', '');

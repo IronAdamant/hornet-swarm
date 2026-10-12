@@ -127,9 +127,10 @@ function writeUsers(home: string, project: string, users: Record<string, SecretU
       ['encrypt', '--age', identity.publicKey, '--input-type', 'yaml', '--output-type', 'yaml', tempFile],
       { encoding: 'utf8', env: childEnv(identity.secret) },
     );
-    if (encrypted.includes(plain) || Object.values(users).some((user) => Object.values(user).some((value) => value && encrypted.includes(value)))) {
-      throw new Error('encrypted store still contained a secret');
-    }
+    const leaked = Object.values(users).some((user) =>
+      Object.values(user).some((value) => typeof value === 'string' && value.length >= 4 && encrypted.includes(value)),
+    );
+    if (encrypted.includes(plain) || leaked) throw new Error('encrypted store still contained a secret');
     writeFileSync(destination, encrypted, { mode: 0o600 });
   } catch (error) {
     if (error instanceof Error && error.message === 'encrypted store still contained a secret') throw error;

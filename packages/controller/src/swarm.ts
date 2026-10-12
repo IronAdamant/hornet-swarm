@@ -98,7 +98,7 @@ export function saveSwarmBoard(
   if (filled.length === 0) throw new HornetError('Enter at least one login.', 3);
   for (const card of filled) {
     if (!card.username || !card.password) throw new HornetError('Each login needs a username and a password.', 3);
-    const problem = shortSecretError(card.username, card.password);
+    const problem = shortSecretError(card.password);
     if (problem) throw new HornetError(problem, 3);
   }
   const file = join(home, 'projects', projectId, 'project.yaml');

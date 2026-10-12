@@ -9,7 +9,7 @@ export class Redactor {
     if (!value) return;
     const token = `[REDACTED:${label}]`;
     const forms = new Set<string>();
-    const keepShort = value.length >= 8;
+    const keepShort = value.length >= 8 || label.endsWith('.username');
     addDerived(forms, value, keepShort);
     const foldCase = label.endsWith('.username') || label.endsWith('.password') || label.endsWith('.totp_secret');
     if (foldCase) addDerived(forms, value.toLowerCase(), keepShort);
