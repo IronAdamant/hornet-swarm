@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { analysisSchema } from '../../packages/core/dist/index.js';
-import { hornet, clearSignins, readRun, resetFixture, secret } from './helper.js';
+import { hornet, clearSignins, home, readRun, resetFixture, secret } from './helper.js';
 
 const examples = [
   'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml',
@@ -52,9 +52,30 @@ describe('example journeys and reports', () => {
       expect(html).toMatch(/AEDT|AEST/);
       expect(html).toMatch(/2026-\d{2}-\d{2}T/);
       expect(html).not.toContain(secret);
+      expect(readFileSync(join(report.dir, 'summary.md'), 'utf8').length).toBeGreaterThan(0);
+      expect(readFileSync(join(report.dir, 'analysis.json'), 'utf8').length).toBeGreaterThan(0);
+      const files = walk(report.dir);
+      const screenshot = files.find((file) => file.endsWith('.png'));
+      const trace = files.find((file) => file.endsWith('trace.zip'));
+      expect(screenshot).toBeTruthy();
+      expect(trace).toBeTruthy();
+      expect(readFileSync(screenshot ?? '').length).toBeGreaterThan(0);
+      expect(readFileSync(trace ?? '').length).toBeGreaterThan(0);
+      const evidence = join(report.dir, 'evidence.zip');
+      expect(existsSync(evidence)).toBe(true);
+      expect(readFileSync(evidence).length).toBeGreaterThan(0);
     }
+    const output = join(home, 'runners', 'fixture', 'qa-user-1');
+    expect(statSync(output).mode & 0o777).toBe(0o700);
   });
 });
+
+function walk(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    return entry.isDirectory() ? walk(path) : [path];
+  });
+}
 
 function runExamples(): ReturnType<typeof readRun> {
   const run = hornet(['suite', '--project', 'fixture', '--json', ...examples.flatMap((file) => ['--journey', file])]);

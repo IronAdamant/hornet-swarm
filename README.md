@@ -72,6 +72,14 @@ Start the MCP server with `hornet-swarm-mcp` (the built file is `packages/mcp-se
 
 One agent holds one test login at a time.
 
+## Runner output folders
+
+Each runner writes screenshots, traces, and network logs under `~/.hornet-swarm/runners/<project>/<label>`. That folder is mode `0700`. The owner is the user who starts Hornet Swarm, and the group is that user's group.
+
+Docker Desktop on this Mac shows the folder to the container as root, and the runner user (uid 10001) can still write there. The files come back owned by the user who started Hornet Swarm, so the controller can read them. Mode `0700` is enough for that. A group shared with the container would let more accounts in, and it is not required.
+
+If that folder already exists and other accounts can open it, startup stops and names the folder. Hornet Swarm does not change its mode.
+
 ## Tests
 
 ```bash
@@ -91,6 +99,6 @@ The Linux job also runs `pnpm test:coverage`. That command fails the check when 
 
 On 12 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 18 files passed and 78 tests passed.
+`pnpm test` exited 0. 19 files passed and 80 tests passed.
 
-`pnpm test:e2e` exited 0. 15 files passed and 42 tests passed.
+`pnpm test:e2e` exited 0. 16 files passed and 43 tests passed.

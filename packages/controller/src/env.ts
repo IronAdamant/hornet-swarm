@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -53,6 +53,19 @@ export function prepareRunnerTokenDir(project: string, label: string, home = aeg
   // An existing directory that other accounts can open is refused. Its mode is left unchanged.
   ensureControlToken(project, label, home);
   return tokenDir;
+}
+
+export function prepareRunnerOutputDir(project: string, label: string, home = aegisHome()): string {
+  const directory = join(home, 'runners', project, label);
+  if (!existsSync(directory)) {
+    chmodSync(ensureDir(directory), 0o700);
+    return directory;
+  }
+  const actual = statSync(directory).mode & 0o777;
+  if ((actual & ~0o700) !== 0) {
+    throw new Error(`The runner output folder is open to other accounts: ${directory}`);
+  }
+  return directory;
 }
 
 export async function envUp(options: { project: string; count?: number }): Promise<EnvStatus> {
@@ -434,8 +447,9 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
 }
 
 async function ensureRunner(docker: Docker, project: string, label: string, settings: RunnerSettings): Promise<void> {
-  // A reused container returns before anything below this. A loose token directory or file refuses startup.
+  // A reused container returns before anything below this. Loose token or output folders refuse startup.
   const tokenDir = prepareRunnerTokenDir(project, label);
+  const outDir = prepareRunnerOutputDir(project, label);
   const name = containerName(project, label);
   const existing = await findContainer(docker, name);
   if (existing) {
@@ -462,8 +476,6 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
     const message = error instanceof Error ? error.message : String(error);
     if (!message.toLowerCase().includes('already exists')) throw error;
   }
-  const outDir = ensureDir(join(aegisHome(), 'runners', project, label));
-  chmodSync(outDir, 0o777);
   const seccomp = JSON.stringify(JSON.parse(readFileSync(installSeccomp(), 'utf8')));
   if (!seccomp.startsWith('{')) throw new Error(`seccomp did not encode as JSON: ${seccomp.slice(0, 30)}`);
   const memory = parseMemory(settings.memory);
