@@ -7,7 +7,7 @@ import { mkdirSync } from 'node:fs';
 import JSZip from 'jszip';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import { matchGlob, Redactor } from '@hornet-swarm/core';
+import { matchGlob, Redactor, SESSION_HEADER_NAMES } from '@hornet-swarm/core';
 
 const PLACEHOLDER_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -212,7 +212,7 @@ async function ocrBuffer(bytes: Buffer, name: string): Promise<string> {
   }
 }
 
-const SESSION_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'proxy-authorization']);
+const SESSION_HEADERS = SESSION_HEADER_NAMES;
 const AUTH_BODY = '[REDACTED:auth_endpoint]';
 
 type HarLike = {

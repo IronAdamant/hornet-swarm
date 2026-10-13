@@ -23,6 +23,8 @@ RUN npm install --omit=dev \
 COPY images/runner/build/main.js /opt/runner/main.js
 COPY images/runner/entrypoint.sh /opt/runner/entrypoint.sh
 COPY images/runner/browser-launch /opt/runner/browser-launch
+# Files an `upload` step can attach, by name: sample.txt, sample.png, sample.pdf.
+COPY images/runner/fixtures /opt/runner/fixtures
 
 RUN groupadd --gid 10010 control \
     && groupadd --gid 10002 browsers \

@@ -16,11 +16,13 @@ export type AcquireRequest = {
   now: number;
   ttlMs?: number;
   candidates?: string[];
+  /** The most logins that may be held in this project at once. Each held login is one working runner. */
+  maxActive?: number;
 };
 
 export type AcquireDecision =
   | { ok: true; lease: Lease; leases: Lease[] }
-  | { ok: false; reason: 'busy' | 'agent_already_holds'; busyUntil?: string; heldLabel?: string; nextFreeLabel?: string; leases: Lease[] };
+  | { ok: false; reason: 'busy' | 'agent_already_holds' | 'parallel_limit'; busyUntil?: string; heldLabel?: string; nextFreeLabel?: string; leases: Lease[] };
 
 const DEFAULT_TTL = 30 * 60 * 1000;
 
@@ -50,6 +52,13 @@ export function decideAcquire(leases: Lease[], request: AcquireRequest): Acquire
       nextFreeLabel,
       leases: current,
     };
+  }
+  if (request.maxActive !== undefined) {
+    const active = current.filter((lease) => lease.project === request.project);
+    if (active.length >= request.maxActive) {
+      const soonest = active.map((lease) => lease.expiresAt).sort()[0];
+      return { ok: false, reason: 'parallel_limit', ...(soonest ? { busyUntil: soonest } : {}), leases: current };
+    }
   }
   const lease: Lease = {
     project: request.project,

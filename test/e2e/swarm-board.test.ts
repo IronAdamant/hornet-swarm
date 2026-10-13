@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readSwarm, saveSwarmBoard, startCredentialPage } from '../../packages/controller/dist/index.js';
-import { home, root } from './helper.js';
+import { home, localDocumentHash, root } from './helper.js';
 
 const project = 'board';
 const password = 'BoardOnly-s3cret"<&value>';
@@ -103,7 +103,7 @@ activities: [signin_smoke]
 exclusions: []
 valid_from: "2026-01-01"
 valid_until: "2027-12-31"
-document: { path: local.txt, sha256: "0000000000000000000000000000000000000000000000000000000000000000" }
+document: { path: local.txt, sha256: "${localDocumentHash()}" }
 `,
     );
     writeFileSync(projectFile, original.replace('authorisation_id: fixture-owner', 'authorisation_id: selector-owner'));

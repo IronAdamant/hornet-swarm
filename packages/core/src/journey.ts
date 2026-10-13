@@ -1,6 +1,7 @@
 import { parse } from 'yaml';
 import { interactiveOriginAllowed } from './policy.js';
 import { journeySchema, type Journey, type Project } from './schemas.js';
+import { renderTemplate, type TemplateContext } from './template.js';
 
 export type JourneyValidation = { valid: boolean; errors: string[]; journey?: Journey };
 
@@ -15,6 +16,10 @@ export function validateJourneyDocument(
   }
   const journey = parsed.data;
   const errors: string[] = [];
+  const templateContext: TemplateContext = {
+    vars: journey.vars,
+    users: Object.fromEntries(project.users.map((user) => [user.label, { vars: user.vars }])),
+  };
   journey.steps.forEach((step, index) => {
     if ('fill' in step) {
       const modes = [step.fill.value, step.fill.credential, step.fill.totp].filter((value) => value !== undefined);
@@ -32,8 +37,11 @@ export function validateJourneyDocument(
     if ('screenshot' in step && knownSecrets.some((secret) => secret.length >= 1 && step.screenshot.name.includes(secret))) {
       errors.push(`step ${index}: literal value matches a stored secret`);
     }
-    if ('navigate' in step && /^[a-z][a-z0-9+.-]*:/i.test(step.navigate.url)) {
-      const decision = interactiveOriginAllowed(project, step.navigate.url);
+    if ('navigate' in step) {
+      // The URL is checked as the runner will open it: templates filled, then resolved against
+      // the base URL, so `{{vars.site}}` and `//other.host/` are checked like a written address.
+      const rendered = renderTemplate(step.navigate.url, templateContext);
+      const decision = interactiveOriginAllowed(project, rendered);
       if (!decision.ok) errors.push(`step ${index}: ${decision.reason}`);
     }
     if ('upload' in step && (step.upload.fixture.includes('..') || step.upload.fixture.startsWith('/'))) {

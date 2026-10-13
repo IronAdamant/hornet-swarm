@@ -1,14 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
-import { homedir, networkInterfaces } from 'node:os';
+import { cpus, networkInterfaces, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import type { Project } from '@hornet-swarm/core';
 import { projectSchema, rewriteForContainer } from '@hornet-swarm/core';
 import type Docker from 'dockerode';
-import { createDocker } from './docker.js';
+import { createDocker, detectRuntime } from './docker.js';
 import { aegisHome, ensureDir, ensureHome } from './home.js';
 import { ensureControlToken, runnerFetch } from './runner-auth.js';
 import { containerName, controlVolume, labelsForCount, networkName, parseMemory, profileVolume, proxyName } from './units.js';
@@ -220,8 +220,8 @@ export async function measureResources(project: string): Promise<Record<string, 
   const table = {
     measured: true,
     measuredAt: new Date().toISOString(),
-    host: 'Apple M2, 32 GB, macOS, Docker Desktop linux/arm64',
-    engine: 'docker-desktop',
+    host: hostDescription(info),
+    engine: detectRuntime(info),
     engineMemoryBytes: info.MemTotal,
     replacedSection: '6.3',
     sampleRunners: status.healthy,
@@ -295,20 +295,21 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+/** The machine the figures came from, as this Mac and its engine report it. */
+export function hostDescription(info: { OperatingSystem?: string; Name?: string; Architecture?: string; OSType?: string }): string {
+  const chip = cpus()[0]?.model?.trim() || 'unknown CPU';
+  const memory = `${Math.round(totalmem() / 1024 ** 3)} GB`;
+  const platform = process.platform === 'darwin' ? 'macOS' : process.platform;
+  const engine = `${info.OperatingSystem ?? 'container engine'} ${info.OSType ?? 'linux'}/${info.Architecture ?? 'unknown'}`;
+  return `${chip}, ${memory}, ${platform}, ${engine}`;
+}
+
+/**
+ * The measurement is saved in the Hornet Swarm home, which loadResourceTable reads before the
+ * packaged figures. The repo's own files are never changed by a command.
+ */
 function writeMeasured(table: Record<string, unknown>): void {
-  const body = `${JSON.stringify(table, null, 2)}\n`;
-  writeFileSync(join(ensureHome(), 'measured-resources.json'), body);
-  const candidates = [
-    join(process.cwd(), 'packages/core/src/measured-resources.json'),
-    join(process.cwd(), 'packages/core/dist/measured-resources.json'),
-  ];
-  for (const path of candidates) {
-    try {
-      writeFileSync(path, body);
-    } catch {
-      // The command still records the home copy when it is not run from the repo.
-    }
-  }
+  writeFileSync(join(ensureHome(), 'measured-resources.json'), `${JSON.stringify(table, null, 2)}\n`);
 }
 
 function repoRoot(): string {
@@ -769,7 +770,7 @@ function round(value: number): number {
 
 export function defaultProjectFromHome(): string {
   try {
-    const raw = parse(readFileSync(join(homedir(), '.hornet-swarm', 'config.yaml'), 'utf8')) as { default_project?: string };
+    const raw = parse(readFileSync(join(aegisHome(), 'config.yaml'), 'utf8')) as { default_project?: string };
     if (raw.default_project) return raw.default_project;
   } catch {
     // no config yet

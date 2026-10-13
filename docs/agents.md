@@ -65,12 +65,17 @@ steps:
 - Steps: `navigate`, `click`, `fill`, `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`.
 - Assertions: `url_contains`, `text_visible`, `selector_visible`, `selector_absent`, `http_status`, `access_denied`. The first four wait up to 10 seconds.
 - A selector is CSS, or `role=button[name='Sign in']` for an accessible name.
-- `validate_journey` checks a journey without running it. A journey that navigates off the allowed site, fills a passive third party, or contains a literal password is refused.
+- `validate_journey` checks a journey without running it. A journey that navigates off the allowed site, fills a passive third party, or contains a literal password is refused. A navigate URL is checked after its `{{vars}}` are filled in, and `//host/` counts as a site.
+- Name journeys by id, such as `signin-dashboard`. A file path is refused.
+- A journey with an `access_denied` assertion, an expected 401 or 403, or the tag `access-control` is an access check. It runs only when the authorisation lists `access_control_checks`, which a practice site never does.
+- `requires_phase1: false` lets a journey run when the label's sign-in check failed. Use it only for pages that need no login.
+- An `upload` step attaches a file the runner image ships: `sample.txt`, `sample.png`, or `sample.pdf`.
 
 ## Practice sites
 
 The Internet and Sauce Demo are public sites built for test-automation practice. Other people use them too.
 
-- Keep the project's limits. A `public_practice` authorisation refuses more than 10 requests a second in total, 5 per runner, 6 runners, chaos, and access-control probing.
+- Keep the project's limits. A `public_practice` authorisation refuses more than 10 requests a second in total, 5 per runner, 6 runners at once, chaos, and access-control probing. Each runner gets an equal share of the total, so six Sauce Demo labels run at about 1.7 requests a second each.
+- Read `exclusions` in `get_swarm`. They are the owner's written limits, such as never typing a real card number. Follow them as you would the label's rules.
 - Sauce Demo's accounts misbehave on purpose. `problem_user`, `error_user`, and `locked_out_user` are expected to fail somewhere. The useful result is the exact step and what the page did.
 - Never type real personal details into a checkout. The journeys use placeholders.

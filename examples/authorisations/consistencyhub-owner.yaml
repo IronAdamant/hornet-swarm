@@ -20,5 +20,7 @@ valid_from: "2026-10-10"
 valid_until: "2027-10-10"
 document:
   path: "~/.hornet-swarm/authorisations/docs/consistencyhub-self-auth.pdf"
-  sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # filled by `hornet-swarm auth add`
+  # Runs refuse this record until this is the document's real hash. After checking the document,
+  # `hornet-swarm auth check consistencyhub-owner` prints the hash to record here.
+  sha256: "0000000000000000000000000000000000000000000000000000000000000000"
 notes: Self-owned application; authorisation recorded for audit completeness.

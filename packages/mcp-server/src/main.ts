@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { projectSchema, Redactor, validateJourneyYaml } from '@hornet-swarm/core';
+import { parallelRunners, Redactor, validateJourneyYaml } from '@hornet-swarm/core';
 import {
   acquireLease,
   addAgentNote,
@@ -15,6 +15,7 @@ import {
   envReset,
   leasesHeldByOthers,
   listProjectUsers,
+  loadProject,
   readAgentNotes,
   readJourneyYaml,
   projectSecretValues,
@@ -27,7 +28,6 @@ import {
   stopRunners,
   swarmSnapshot,
 } from '@hornet-swarm/controller';
-import { parse } from 'yaml';
 import { homedir } from 'node:os';
 
 const home = () => process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm');
@@ -37,6 +37,20 @@ const subAgentIds = new Map<string, string>();
 const MAX_SUB_AGENTS = 30;
 const PROJECT_ID = /^[a-z0-9-]+$/;
 const RUN_ID = /^run_[A-Za-z0-9_-]+$/;
+const JOURNEY_ID = /^[a-z0-9-]+$/;
+const LABEL = /^qa-user-\d+$/;
+
+/** An agent names a project and its journeys by id. A path is refused before any file is read. */
+function badProject(project: string | undefined): { content: { type: 'text'; text: string }[] } | undefined {
+  if (project === undefined || PROJECT_ID.test(project)) return undefined;
+  return pack(undefined, { ok: false, error: 'Unknown project.' });
+}
+
+function badJourneyIds(ids: string[] | undefined, project: string): { content: { type: 'text'; text: string }[] } | undefined {
+  const bad = (ids ?? []).find((id) => !JOURNEY_ID.test(id));
+  if (bad === undefined) return undefined;
+  return pack(project, { ok: false, error: `${bad} is not a journey id. Name journeys by id, not by path.` });
+}
 
 function useAgent(supplied: string | undefined): { ok: true; agentId: string } | { ok: false; error: string } {
   if (supplied === undefined || supplied === sessionAgentId) return { ok: true, agentId: sessionAgentId };
@@ -66,7 +80,7 @@ server.registerTool(
 server.registerTool(
   'list_test_users',
   { description: 'List test-user labels for a project', inputSchema: z.object({ project: z.string() }) },
-  async ({ project }) => pack(project, { users: listProjectUsers(project, home()) }),
+  async ({ project }) => badProject(project) ?? pack(project, { users: listProjectUsers(project, home()) }),
 );
 
 server.registerTool(
@@ -77,10 +91,11 @@ server.registerTool(
       project: z.string(),
       users: z.array(z.string()).optional(),
       agent_id: z.string().min(1).optional(),
-      wait: z.boolean().optional(),
     }),
   },
   async ({ project, users, agent_id }) => {
+    const invalid = badProject(project);
+    if (invalid) return invalid;
     const agent = useAgent(agent_id);
     if (!agent.ok) return pack(project, { ok: false, error: agent.error });
     return guard(project, () =>
@@ -101,7 +116,6 @@ server.registerTool(
       journey_yaml: z.string().max(100_000).optional(),
       users: z.array(z.string()).optional(),
       agent_id: z.string().min(1).optional(),
-      wait: z.boolean().optional(),
     }),
   },
   async ({ project, journey_id, journey_yaml, users, agent_id }) => {
@@ -109,14 +123,15 @@ server.registerTool(
     if (!agent.ok) return pack(project, { ok: false, error: agent.error }, agent_id);
     if (!PROJECT_ID.test(project)) return pack(undefined, { ok: false, error: 'Unknown project.' }, agent.agentId);
     if (Boolean(journey_id) === Boolean(journey_yaml)) return pack(project, { ok: false, error: 'Pass journey_id or journey_yaml, not both.' }, agent.agentId);
-    if (journey_id && (journey_id.includes('/') || journey_id.includes('..'))) return pack(project, { ok: false, error: 'journey_id is a journey id, not a path.' }, agent.agentId);
+    if (journey_id && !JOURNEY_ID.test(journey_id)) return pack(project, { ok: false, error: 'journey_id is a journey id, not a path.' }, agent.agentId);
     return guard(
       project,
       async () => {
-        const file = journey_yaml ? saveAgentJourney(project, journey_yaml, home()).path : (journey_id as string);
+        const id = journey_yaml ? saveAgentJourney(project, journey_yaml, home()).id : (journey_id as string);
         return runSuite({
           project,
-          journeyFiles: [file],
+          journeyFiles: [id],
+          journeyPathsAllowed: false,
           includeRegressions: false,
           ...(users ? { users } : {}),
           via: 'mcp',
@@ -139,16 +154,18 @@ server.registerTool(
       gate: z.enum(['all', 'per_user']).optional(),
       confirm_production: z.boolean().optional(),
       agent_id: z.string().min(1).optional(),
-      wait: z.boolean().optional(),
     }),
   },
   async ({ project, journeys, users, gate, confirm_production, agent_id }) => {
+    const invalid = badProject(project) ?? badJourneyIds(journeys, project);
+    if (invalid) return invalid;
     const agent = useAgent(agent_id);
     if (!agent.ok) return pack(project, { ok: false, error: agent.error });
     return guard(project, () =>
       runSuite({
         project,
         ...(journeys ? { journeyFiles: journeys } : {}),
+        journeyPathsAllowed: false,
         ...(users ? { users } : {}),
         ...(gate ? { gate } : {}),
         confirmProduction: Boolean(confirm_production),
@@ -240,7 +257,14 @@ server.registerTool(
   },
   async ({ project, journey_yaml, journey_id }) => {
     const id = project ?? 'fixture';
-    const loaded = projectSchema.parse(parse(readFileSync(join(home(), 'projects', id, 'project.yaml'), 'utf8')));
+    const invalid = badProject(id) ?? badJourneyIds(journey_id ? [journey_id] : [], id);
+    if (invalid) return invalid;
+    let loaded;
+    try {
+      loaded = loadProject(id, home());
+    } catch {
+      return pack(id, { valid: false, errors: ['Unknown project.'] });
+    }
     let source = journey_yaml ?? '';
     if (journey_id) {
       try {
@@ -259,13 +283,23 @@ server.registerTool(
 server.registerTool(
   'acquire_test_user',
   {
-    description: 'Acquire an exclusive login lease',
+    description: 'Acquire an exclusive login lease. Refused with reason parallel_limit while the project already has max_parallel_runners logins in use; try again after busy_until.',
     inputSchema: z.object({ project: z.string(), label: z.string(), agent_id: z.string().min(1).optional(), run_id: z.string().optional() }),
   },
   async ({ project, label, agent_id, run_id }) => {
+    const invalid = badProject(project);
+    if (invalid) return invalid;
+    if (!LABEL.test(label)) return pack(project, { ok: false, error: 'label must look like qa-user-1' });
     const agent = useAgent(agent_id);
     if (!agent.ok) return pack(project, { ok: false, error: agent.error });
-    const decision = acquireLease({ project, label, agentId: agent.agentId, ...(run_id ? { runId: run_id } : {}), home: home(), via: 'mcp' });
+    let maxActive: number;
+    try {
+      maxActive = parallelRunners(loadProject(project, home()));
+    } catch {
+      return pack(project, { ok: false, error: 'Unknown project.' });
+    }
+    // Each held login is one working runner, so the project's runner cap applies here too.
+    const decision = acquireLease({ project, label, agentId: agent.agentId, ...(run_id ? { runId: run_id } : {}), maxActive, home: home(), via: 'mcp' });
     if (!decision.ok) {
       return pack(project, {
         ok: false,
@@ -285,6 +319,8 @@ server.registerTool(
     inputSchema: z.object({ project: z.string(), agent_id: z.string().min(1).optional() }),
   },
   async ({ project, agent_id }) => {
+    const invalid = badProject(project);
+    if (invalid) return invalid;
     const agent = useAgent(agent_id);
     if (!agent.ok) return pack(project, { ok: false, error: agent.error });
     releaseStoredLease(project, agent.agentId, home(), 'mcp');
@@ -298,7 +334,7 @@ server.registerTool(
     description: 'Read the website, account labels, and personalities after the owner presses Ready. Passwords are not included.',
     inputSchema: z.object({ project: z.string() }),
   },
-  async ({ project }) => pack(project, await swarmSnapshot(project, home())),
+  async ({ project }) => badProject(project) ?? pack(project, await swarmSnapshot(project, home())),
 );
 
 server.registerTool(
@@ -308,6 +344,8 @@ server.registerTool(
     inputSchema: z.object({ project: z.string(), label: z.string(), reason: z.string() }).passthrough(),
   },
   async (args) => {
+    const invalid = badProject(args.project);
+    if (invalid) return invalid;
     const extra = Object.keys(args).filter((key) => !['project', 'label', 'reason'].includes(key));
     if (extra.length > 0) return pack(args.project, { ok: false, error: 'Agents cannot pass a password.' });
     try {
@@ -337,6 +375,8 @@ server.registerTool(
     inputSchema: z.object({ project: z.string(), label: z.string(), note: z.string().max(2_000), agent_id: z.string().min(1).optional() }),
   },
   async ({ project, label, note, agent_id }) => {
+    const invalid = badProject(project);
+    if (invalid) return invalid;
     const agent = useAgent(agent_id);
     if (!agent.ok) return pack(project, { ok: false, error: agent.error });
     try {
@@ -367,6 +407,8 @@ server.registerTool(
     inputSchema: z.object({ project: z.string(), last: z.number().int().min(1).max(500).optional() }),
   },
   async ({ project, last }) => {
+    const invalid = badProject(project);
+    if (invalid) return invalid;
     try {
       return pack(project, reliabilityReport(project, last ?? 20, home()));
     } catch (error) {

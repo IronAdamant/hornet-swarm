@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
-import { parse, stringify } from 'yaml';
-import { authorisationSchema, authorisationStatus, containerHost, domainCovered, projectSchema, Redactor, shortSecretError, type Project } from '@hornet-swarm/core';
-import { listLabels, registerProjectSecrets, setSecret } from './broker.js';
+import { isMap, isSeq, parse, parseDocument, type Document, type YAMLMap } from 'yaml';
+import { containerHost, projectSchema, Redactor, shortSecretError, type Project } from '@hornet-swarm/core';
+import { hostAuthorised, loadAuthorisation } from './authorisation.js';
+import { listLabels, registerProjectSecrets, setSecrets, storedFields, type SecretField } from './broker.js';
 import { envStatus } from './env.js';
 import { HornetError } from './errors.js';
 import { aegisHome, ensureDir } from './home.js';
@@ -29,6 +30,8 @@ export type SwarmSnapshot = Omit<SwarmView, 'agents'> & {
   agents: (SwarmAgent & { rules: string; notes: AgentNote[] })[];
   kill_switch: boolean;
   runners: { label: string; healthy: boolean }[];
+  /** The owner's written limits from the authorisation, such as "no real card numbers". Every sub-agent follows them. */
+  exclusions: string[];
 };
 
 export type SwarmCard = { username: string; password: string; personality: string; rules?: string };
@@ -70,7 +73,18 @@ export async function swarmSnapshot(project: string, home = aegisHome()): Promis
     agents: view.agents.map((agent) => ({ ...agent, rules: agent.rules ?? '', notes: readAgentNotes(project, agent.label, home).slice(-NOTES_SHOWN) })),
     kill_switch: existsSync(join(home, 'KILL')),
     runners: runnerHealth(view.agents, runners),
+    exclusions: authorisationExclusions(project, home),
   };
+}
+
+/** The exclusions are free text for people and agents. The harness cannot check them itself. */
+export function authorisationExclusions(project: string, home = aegisHome()): string[] {
+  try {
+    const config = projectSchema.parse(parse(readFileSync(join(home, 'projects', project, 'project.yaml'), 'utf8')));
+    return loadAuthorisation(config.authorisation_id, home).exclusions;
+  } catch {
+    return [];
+  }
 }
 
 function notesPath(home: string, project: string, label: string): string {
@@ -149,20 +163,30 @@ export function saveSwarmBoard(
   if (website.protocol !== 'http:' && website.protocol !== 'https:') {
     throw new HornetError('The website address must start with http:// or https://.', 3);
   }
-  const filled = input.cards
+  // A card keeps its own number. Leaving card 2 blank never moves card 3's login onto qa-user-2.
+  const cards = input.cards
     .slice(0, CARD_COUNT)
-    .map((card) => ({ username: card.username.trim(), password: card.password, personality: card.personality.trim(), rules: (card.rules ?? '').trim() }))
-    .filter((card) => card.username.length > 0 || card.password.length > 0 || card.personality.length > 0 || card.rules.length > 0);
+    .map((card, index) => ({ label: `qa-user-${index + 1}`, username: card.username.trim(), password: card.password, personality: card.personality.trim(), rules: (card.rules ?? '').trim() }));
+  const stored = storedFields(projectId, home);
+  const hasLogin = (label: string) => (stored[label] ?? []).includes('username') && (stored[label] ?? []).includes('password');
+  // A card with a stored login stays on the board when its username and password are left blank, so
+  // a personality or rule can be edited without typing every password again.
+  const filled = cards.filter((card) => card.username.length > 0 || card.password.length > 0 || card.personality.length > 0 || card.rules.length > 0);
   if (filled.length === 0) throw new HornetError('Enter at least one login.', 3);
   for (const card of filled) {
-    if (!card.username || !card.password) throw new HornetError('Each login needs a username and a password.', 3);
-    const problem = shortSecretError(card.password);
-    if (problem) throw new HornetError(problem, 3);
+    const keepsStored = hasLogin(card.label);
+    if ((!card.username || !card.password) && !keepsStored) throw new HornetError('Each login needs a username and a password.', 3);
+    if (card.password) {
+      const problem = shortSecretError(card.password);
+      if (problem) throw new HornetError(problem, 3);
+    }
   }
   const file = join(home, 'projects', projectId, 'project.yaml');
+  let document: Document;
   let project: Project;
   try {
-    project = projectSchema.parse(parse(readFileSync(file, 'utf8')));
+    document = parseDocument(readFileSync(file, 'utf8'));
+    project = projectSchema.parse(document.toJS());
   } catch {
     throw new HornetError(`Project ${projectId} is not set up yet.`, 3);
   }
@@ -172,50 +196,75 @@ export function saveSwarmBoard(
     throw new HornetError('Those login selectors belong to the practice site. Enter the selectors for this website.', 3);
   }
 
-  const agents: SwarmAgent[] = filled.map((card, index) => {
-    const label = `qa-user-${index + 1}`;
-    setSecret(projectId, label, 'username', card.username, home);
-    setSecret(projectId, label, 'password', card.password, home);
-    return { label, personality: card.personality, rules: card.rules };
-  });
+  const agents: SwarmAgent[] = filled.map((card) => ({ label: card.label, personality: card.personality, rules: card.rules }));
+  // Personalities and rules are redacted against the stored logins and the ones typed now, before anything is saved.
   const redactor = new Redactor();
   registerProjectSecrets(projectId, redactor, home);
+  for (const card of filled) {
+    if (card.username) redactor.register(`${card.label}.username`, card.username);
+    if (card.password) redactor.register(`${card.label}.password`, card.password);
+  }
   for (const agent of agents) {
     agent.personality = redactor.redact(agent.personality);
     agent.rules = redactor.redact(agent.rules ?? '');
   }
 
+  updateProjectDocument(document, project, website, selectors, agents);
+  // The edited file must still be a valid project before any login is stored.
+  projectSchema.parse(document.toJS());
+  const updates: Record<string, Partial<Record<SecretField, string>>> = {};
+  for (const card of filled) {
+    const fields: Partial<Record<SecretField, string>> = {};
+    if (card.username) fields.username = card.username;
+    if (card.password) fields.password = card.password;
+    if (Object.keys(fields).length > 0) updates[card.label] = fields;
+  }
+  if (Object.keys(updates).length > 0) setSecrets(projectId, updates, home);
+  writeFileAtomic(file, document.toString(), 0o644);
+  const view: SwarmView = { ready: true, project: projectId, website: website.toString(), agents };
+  ensureDir(join(home, 'projects', projectId));
+  writeFileAtomic(swarmPath(home, projectId), `${JSON.stringify(view, null, 2)}\n`);
+  return view;
+}
+
+/**
+ * Changes only what the board sets, in place, so the owner's comments and other settings stay.
+ * The allowed origins and third parties are kept when the website stays on the same origin. A
+ * new website replaces the allowed origins, because the old site's origins no longer apply.
+ * Only the first url_contains success check is changed. Other success checks are kept.
+ */
+function updateProjectDocument(document: Document, project: Project, website: URL, selectors: SwarmSelectors, agents: SwarmAgent[]): void {
   const origins = new Set<string>([website.origin]);
   if (containerHost(website.hostname, localAddresses()) === 'host.docker.internal') {
     const docker = new URL(website.toString());
     docker.hostname = 'host.docker.internal';
     origins.add(docker.origin);
   }
-  project.targets.base_url = website.toString();
-  project.targets.allowed_origins = [...origins];
-  project.auth.selectors = {
-    username: selectors.username,
-    password: selectors.password,
-    submit: selectors.submit,
-    totp: project.auth.selectors.totp,
-  };
-  project.auth.success = [{ type: 'url_contains', value: selectors.success }];
-  project.runners.count = agents.length;
-  project.limits.max_parallel_runners = agents.length;
-  project.users = agents.map((agent) => {
-    const previous = project.users.find((user) => user.label === agent.label);
-    return {
-      label: agent.label,
-      role: previous?.role ?? 'tester',
-      tenant: previous?.tenant ?? 'local',
-      vars: { ...(previous?.vars ?? {}), personality: agent.personality },
-    };
+  const sameSite = new URL(project.targets.base_url).origin === website.origin;
+  const allowed = sameSite ? [...new Set([...project.targets.allowed_origins, ...origins])] : [...origins];
+  document.setIn(['targets', 'base_url'], website.toString());
+  document.setIn(['targets', 'allowed_origins'], document.createNode(allowed));
+  document.setIn(['auth', 'selectors', 'username'], selectors.username);
+  document.setIn(['auth', 'selectors', 'password'], selectors.password);
+  document.setIn(['auth', 'selectors', 'submit'], selectors.submit);
+  const success = document.getIn(['auth', 'success']);
+  const urlCheck = isSeq(success) ? success.items.find((item) => isMap(item) && item.get('type') === 'url_contains') : undefined;
+  if (isMap(urlCheck)) urlCheck.set('value', selectors.success);
+  else if (isSeq(success)) success.items.unshift(document.createNode({ type: 'url_contains', value: selectors.success }));
+  else document.setIn(['auth', 'success'], document.createNode([{ type: 'url_contains', value: selectors.success }]));
+  document.setIn(['runners', 'count'], agents.length);
+  document.setIn(['limits', 'max_parallel_runners'], agents.length);
+  const existing = document.get('users');
+  const nodes = isSeq(existing) ? existing.items.filter((item): item is YAMLMap => isMap(item)) : [];
+  const users = agents.map((agent) => {
+    const node = nodes.find((item) => item.get('label') === agent.label);
+    if (node) {
+      node.setIn(['vars', 'personality'], agent.personality);
+      return node;
+    }
+    return document.createNode({ label: agent.label, role: 'tester', tenant: 'local', vars: { personality: agent.personality } });
   });
-  writeFileSync(file, stringify(projectSchema.parse(project)));
-  const view: SwarmView = { ready: true, project: projectId, website: website.toString(), agents };
-  ensureDir(join(home, 'projects', projectId));
-  writeFileAtomic(swarmPath(home, projectId), `${JSON.stringify(view, null, 2)}\n`);
-  return view;
+  document.set('users', document.createNode(users));
 }
 
 export function swarmBoardHtml(project: string, home = aegisHome(), formToken = ''): string {
@@ -335,15 +384,4 @@ function swarmPath(home: string, project: string): string {
 
 function escapeText(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
-}
-
-function hostAuthorised(projectId: string, hostname: string, home: string): boolean {
-  try {
-    const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
-    const auth = authorisationSchema.parse(parse(readFileSync(join(home, 'authorisations', `${project.authorisation_id}.yaml`), 'utf8')));
-    if (!authorisationStatus(auth).ok) return false;
-    return domainCovered(auth, hostname);
-  } catch {
-    return false;
-  }
 }

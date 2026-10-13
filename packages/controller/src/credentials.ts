@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -6,10 +6,10 @@ import { connect as netConnect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse } from 'yaml';
-import { authorisationSchema, credentialRequestSchema, domainCovered, projectDomainsAuthorised, projectSchema, authorisationStatus, shortSecretError } from '@hornet-swarm/core';
+import { credentialRequestSchema, projectDomainsAuthorised, shortSecretError } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
-import { setSecret } from './broker.js';
+import { assertAuthorisationUsable, loadAuthorisation, loadProject } from './authorisation.js';
+import { setSecrets } from './broker.js';
 import { HornetError } from './errors.js';
 import { aegisHome, ensureDir } from './home.js';
 import { withFileLock, writeFileAtomic } from './leases-store.js';
@@ -46,8 +46,13 @@ type OperatorGate = {
   notified: boolean;
   status: OperatorGateStatus;
   code?: string;
+  /** Codes already handed to the runner. A site that asks again, such as after a wrong code, gets the gate back. */
+  codesServed: number;
   createdAt: number;
 };
+
+/** A run may ask for a second code at most this many times before the journey stops. */
+export const MAX_CODES_PER_GATE = 3;
 
 const operatorGates = new Map<string, OperatorGate>();
 
@@ -64,6 +69,7 @@ export function openOperatorGate(input: { project: string; label: string; reason
     tokenHash: hashToken(token),
     notified: false,
     status: 'waiting',
+    codesServed: 0,
     createdAt: now,
   });
   return { id, token };
@@ -87,6 +93,10 @@ export function operatorGateView(id: string, token: string): { status: OperatorG
   if (gate.status === 'ready' && gate.code) {
     const code = gate.code;
     gate.code = undefined;
+    gate.codesServed += 1;
+    // The gate opens again, so a site that asks once more reaches the owner instead of a page that cannot be answered.
+    gate.status = gate.codesServed >= MAX_CODES_PER_GATE ? 'declined' : 'waiting';
+    gate.notified = false;
     return { status: 'ready', code };
   }
   return { status: gate.status };
@@ -102,11 +112,11 @@ export function markOperatorNeeded(home: string, id: string, token: string, port
   return true;
 }
 
-export function submitOperatorCode(
+export async function submitOperatorCode(
   home: string,
   token: string,
   input: { decision?: string; code?: string },
-): { status: number; message: string } {
+): Promise<{ status: number; message: string }> {
   const gate = findGateByToken(token);
   if (!gate || gate.status !== 'waiting') {
     return { status: 403, message: 'This link is missing or has already been used.' };
@@ -116,14 +126,16 @@ export function submitOperatorCode(
     gate.code = undefined;
     return { status: 200, message: 'The request was declined.' };
   }
-  const confirmed = attemptTouchId(touchLog(home));
+  const code = input.code ?? '';
+  if (!code) return { status: 400, message: 'Enter the code from the text or the email.' };
+  const confirmed = await attemptTouchId(touchLog(home));
   if (!confirmed) {
     gate.status = 'touchid';
     gate.code = undefined;
     return { status: 401, message: 'Touch ID was not confirmed.' };
   }
-  const code = input.code ?? '';
-  if (!code) return { status: 400, message: 'Enter the code from the text or the email.' };
+  // The gate may have closed or been answered while Touch ID was open.
+  if (gate.status !== 'waiting' || !operatorGates.has(gate.id)) return { status: 403, message: 'This link is missing or has already been used.' };
   gate.status = 'ready';
   gate.code = code;
   return { status: 200, message: 'The code was accepted. You can close this page.' };
@@ -191,9 +203,7 @@ export function storeOwnerLogin(
   const problem = shortSecretError(password, totp);
   if (problem) throw new HornetError(problem, 3);
   assertProjectAuthorised(project, home);
-  setSecret(project, label, 'username', username, home);
-  setSecret(project, label, 'password', password, home);
-  if (totp) setSecret(project, label, 'totp_secret', totp, home);
+  setSecrets(project, { [label]: { username, password, ...(totp ? { totp_secret: totp } : {}) } }, home);
   mark(home, project, label, 'ready');
   writeAudit({ interface: 'cli', action: 'credential_stored', project, labels: [label], result: 'ready' }, undefined, home);
   return { ok: true, label, status: 'ready' };
@@ -362,29 +372,36 @@ async function handlePage(req: IncomingMessage, res: ServerResponse, home: strin
     send(res, 400, problem);
     return;
   }
+  // The owner names the site the login is for. It must be this project's own website, so a login
+  // for one site is not saved under a project that tests another.
   const site = body.get('site') ?? '';
-  let hostname: string;
+  let origin: string;
   try {
-    hostname = new URL(site).hostname;
+    origin = new URL(site).origin;
   } catch {
     send(res, 400, 'Enter a full site address.');
     return;
   }
-  if (!hostAuthorised(record.project, hostname, home)) {
-    send(res, 400, 'That site is not authorised.');
+  if (!projectSite(record.project, origin, home)) {
+    send(res, 400, "That site is not authorised for this project. Enter the project's own website.");
     return;
   }
-  consume(home, record.id, 'pending');
-  const confirmed = attemptTouchId(touchLog(home));
+  // Touch ID comes before the link is used, so a missed touch leaves the link working.
+  const confirmed = await attemptTouchId(touchLog(home));
   if (!confirmed) {
-    send(res, 401, 'Touch ID was not confirmed.');
+    send(res, 401, 'Touch ID was not confirmed. Nothing was saved. The link still works.');
+    return;
+  }
+  if (!claim(home, record.id)) {
+    send(res, 403, 'This link is missing or has already been used.');
     return;
   }
   try {
     storeOwnerLogin(record.project, record.label, username, password, totp || undefined, home);
   } catch (error) {
+    unclaim(home, record.id);
     const message = error instanceof HornetError ? error.message : 'The login could not be saved.';
-    send(res, 400, message);
+    send(res, 400, `${message} The link still works.`);
     return;
   }
   send(res, 200, 'Saved. You can close this page.');
@@ -404,7 +421,7 @@ async function handleSetup(req: IncomingMessage, res: ServerResponse, home: stri
     send(res, 403, 'This form has expired. Reload the page and try again. Nothing was saved.');
     return;
   }
-  const confirmed = attemptTouchId(touchLog(home));
+  const confirmed = await attemptTouchId(touchLog(home));
   if (!confirmed) {
     send(res, 401, 'Touch ID was not confirmed. Nothing was saved.');
     return;
@@ -447,7 +464,7 @@ async function handleOperatorCode(req: IncomingMessage, res: ServerResponse, hom
     return;
   }
   const body = new URLSearchParams(await readBody(req));
-  const result = submitOperatorCode(home, token, { decision: body.get('decision') ?? undefined, code: body.get('code') ?? undefined });
+  const result = await submitOperatorCode(home, token, { decision: body.get('decision') ?? undefined, code: body.get('code') ?? undefined });
   send(res, result.status, result.message);
 }
 
@@ -498,7 +515,11 @@ function escapeText(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
 }
 
-function attemptTouchId(logFile: string): boolean {
+/**
+ * Asks for Touch ID in a child process. It runs asynchronously, so the page keeps answering a
+ * runner that polls for a code while the owner touches the sensor.
+ */
+function attemptTouchId(logFile: string): Promise<boolean> {
   const source = `import LocalAuthentication
 import Foundation
 let context = LAContext()
@@ -517,20 +538,24 @@ context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason
 sem.wait()
 exit(ok ? 0 : 1)
 `;
-  const file = join(tmpdir(), `hornet-swarm-touch-${process.pid}.swift`);
-  writeFileSync(file, source);
-  try {
-    execFileSync('swift', [file], { timeout: 45_000, stdio: ['ignore', 'pipe', 'pipe'] });
-    return true;
-  } catch (error) {
-    const stderr = error && typeof error === 'object' && 'stderr' in error ? String((error as { stderr?: unknown }).stderr ?? '') : '';
-    const message = error instanceof Error ? error.message : String(error);
-    ensureDir(join(logFile, '..'));
-    appendFileSync(logFile, `${new Date().toISOString()} ${stderr || message}\n`);
-    return false;
-  } finally {
-    rmSync(file, { force: true });
-  }
+  const file = join(tmpdir(), `hornet-swarm-touch-${process.pid}-${randomBytes(4).toString('hex')}.swift`);
+  writeFileSync(file, source, { mode: 0o600 });
+  return new Promise((resolve) => {
+    execFile('swift', [file], { timeout: 45_000, encoding: 'utf8' }, (error, _stdout, stderr) => {
+      rmSync(file, { force: true });
+      if (!error) {
+        resolve(true);
+        return;
+      }
+      try {
+        ensureDir(join(logFile, '..'));
+        appendFileSync(logFile, `${new Date().toISOString()} ${stderr || error.message}\n`);
+      } catch {
+        // The log is a convenience. The refusal still stands.
+      }
+      resolve(false);
+    });
+  });
 }
 
 function touchLog(home: string): string {
@@ -549,18 +574,20 @@ function notifyOwner(home: string, project: string, label: string, reason: strin
 }
 
 function assertProjectAuthorised(projectId: string, home: string): void {
-  const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
-  const auth = authorisationSchema.parse(parse(readFileSync(join(home, 'authorisations', `${project.authorisation_id}.yaml`), 'utf8')));
+  const project = loadProject(projectId, home);
+  const auth = loadAuthorisation(project.authorisation_id, home);
+  assertAuthorisationUsable(auth, home);
   const decision = projectDomainsAuthorised(project, auth);
   if (!decision.ok) throw new HornetError(decision.reason, 3);
 }
 
-function hostAuthorised(projectId: string, hostname: string, home: string): boolean {
+/** The origin is the project's website or one of its allowed origins, and the project is authorised. */
+function projectSite(projectId: string, origin: string, home: string): boolean {
   try {
-    const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
-    const auth = authorisationSchema.parse(parse(readFileSync(join(home, 'authorisations', `${project.authorisation_id}.yaml`), 'utf8')));
-    if (!authorisationStatus(auth).ok) return false;
-    return domainCovered(auth, hostname);
+    assertProjectAuthorised(projectId, home);
+    const project = loadProject(projectId, home);
+    const origins = [project.targets.base_url, ...project.targets.allowed_origins].map((entry) => new URL(entry).origin);
+    return origins.includes(origin);
   } catch {
     return false;
   }
@@ -570,6 +597,24 @@ function findToken(home: string, token: string): CredentialRequest | undefined {
   if (!token) return undefined;
   const hash = hashToken(token);
   return readRequests(home).find((entry) => entry.tokenHash === hash && entry.status === 'pending');
+}
+
+/** Marks the link used, unless another submission already did. Only one submission can win. */
+function claim(home: string, id: string): boolean {
+  return updateRequests(home, (requests) => {
+    const found = requests.find((entry) => entry.id === id);
+    if (!found || found.tokenUsed || found.status !== 'pending') return false;
+    found.tokenUsed = true;
+    return true;
+  });
+}
+
+/** A save that failed after the claim gives the link back, so the owner can try again. */
+function unclaim(home: string, id: string): void {
+  updateRequests(home, (requests) => {
+    const found = requests.find((entry) => entry.id === id);
+    if (found && found.status === 'pending') found.tokenUsed = false;
+  });
 }
 
 function consume(home: string, id: string, status: CredentialRequest['status']): void {

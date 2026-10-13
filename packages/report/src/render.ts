@@ -36,13 +36,16 @@ function anyReason(users: RichUser[], reason: string): boolean {
   );
 }
 
-const DENIAL_CHECK = /^(access_denied\b|http_status (401|403|404)\b)/;
+const DENIAL_CHECK = /^(access_denied\b|http_status (401|403)\b)/;
+const NOT_FOUND_CHECK = /^http_status 404\b/;
 
 /**
  * A cross-account finding needs a failed access check, not a journey name. The failed step must be
- * an access_denied assertion, an http_status assertion that expected 401, 403, or 404, or a
- * selector_absent assertion in a journey that also ran an access_denied check. A failed positive
- * control, such as the user opening their own resource, is an ordinary failure.
+ * an access_denied assertion or an http_status assertion that expected 401 or 403. In a journey
+ * that also ran an access_denied check, a failed selector_absent or an expected 404 counts too,
+ * because a site can hide another account's page as "not found". A 404 check on its own, such as
+ * a status-code page, is an ordinary failure. So is a failed positive control, such as the user
+ * opening their own resource.
  */
 export function isolationBreach(users: RichUser[]): { label: string; journey: string; step: number } | undefined {
   for (const user of users) {
@@ -50,7 +53,8 @@ export function isolationBreach(users: RichUser[]): { label: string; journey: st
       const deniedCheckRan = journey.steps.some((step) => (step.assertion ?? '').startsWith('access_denied'));
       for (const step of journey.steps) {
         if (step.status !== 'fail' || !step.assertion) continue;
-        if (DENIAL_CHECK.test(step.assertion) || (deniedCheckRan && step.assertion.startsWith('selector_absent'))) {
+        const contextual = step.assertion.startsWith('selector_absent') || NOT_FOUND_CHECK.test(step.assertion);
+        if (DENIAL_CHECK.test(step.assertion) || (deniedCheckRan && contextual)) {
           return { label: user.label, journey: journey.name, step: step.index };
         }
       }

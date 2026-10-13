@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { hornet, clearSignins, home, root, secret } from './helper.js';
+import { hornet, clearSignins, home, localDocumentHash, root, secret } from './helper.js';
 
 beforeAll(() => {
   clearSignins();
@@ -26,7 +26,7 @@ activities: [signin_smoke]
 exclusions: []
 valid_from: "2026-01-01"
 valid_until: "2027-12-31"
-document: { path: local.txt, sha256: "0000000000000000000000000000000000000000000000000000000000000000" }
+document: { path: local.txt, sha256: "${localDocumentHash()}" }
 `);
   writeFileSync(join(home, 'projects/unauth/project.yaml'), `id: unauth
 name: unauth

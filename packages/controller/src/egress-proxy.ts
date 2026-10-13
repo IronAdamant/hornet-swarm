@@ -91,6 +91,9 @@ async function openTunnel(
     socket.end();
     return;
   }
+  // An HTTPS tunnel is counted once, when it opens. The requests inside it are encrypted, so the
+  // proxy cannot count them. The project total is kept by the runners: each is given its share of
+  // max_requests_per_second_total and paces every request itself (see perRunnerRate in core).
   if (!(await bucket.wait(QUEUE_LIMIT_MS))) {
     log({ event: 'rate_limited', host, port, proto: 'connect' });
     socket.write(`HTTP/1.1 429 Too Many Requests\r\n${HARNESS_HEADER}: rate_limited\r\n\r\n`);

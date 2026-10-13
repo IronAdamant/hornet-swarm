@@ -179,6 +179,9 @@ function writeAuthorisedProject(home: string): void {
   const projectDir = join(home, 'projects', 'fixture');
   mkdirSync(join(home, 'authorisations'), { recursive: true });
   mkdirSync(projectDir, { recursive: true });
+  const documentBody = 'Fixture owner authorisation for the offline test app.\n';
+  writeFileSync(join(home, 'authorisations', 'fixture-owner.txt'), documentBody);
+  const documentHash = createHash('sha256').update(documentBody).digest('hex');
   writeFileSync(join(home, 'authorisations', 'fixture-owner.yaml'), `id: fixture-owner
 basis: owner
 client: Iron Adamant (self-owned)
@@ -196,7 +199,7 @@ valid_from: "2026-01-01"
 valid_until: "2027-12-31"
 document:
   path: fixture-owner.txt
-  sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+  sha256: "${documentHash}"
 notes: Local fixture only.
 `);
   writeFileSync(join(projectDir, 'project.yaml'), `id: fixture

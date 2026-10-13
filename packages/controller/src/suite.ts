@@ -1,17 +1,20 @@
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import {
+  activitiesPermitted,
   analysisSchema,
-  authorisationSchema,
   chaosPermitted,
   chaosSequence,
   globalConfigSchema,
+  parallelRunners,
+  passiveOrigins,
+  perRunnerRate,
   practiceLimits,
   productionGate,
   projectDomainsAuthorised,
-  projectSchema,
   Redactor,
   rewriteForContainer,
   runResultSchema,
@@ -44,6 +47,7 @@ import {
   type RichUser,
 } from '@hornet-swarm/report';
 import { writeAudit } from './audit.js';
+import { assertAuthorisationUsable, loadAuthorisation, loadProject } from './authorisation.js';
 import { injectSecrets, injectTotp, listFields, projectSecretValues, registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
 import { ensureCredentialPage } from './credentials.js';
@@ -74,8 +78,16 @@ export type SuiteRequest = {
   via?: 'cli' | 'mcp';
   phase1Only?: boolean;
   users?: string[];
-  /** Open regression copies join a suite run. A single-journey run leaves them out. Defaults to true. */
+  /**
+   * Open regression copies join a suite run, and the suite records new ones. A single-journey
+   * run does neither. Defaults to true.
+   */
   includeRegressions?: boolean;
+  /**
+   * Whether a journey may be named by a file path. The CLI allows it. An agent names journeys by
+   * id only, so it cannot make the harness read a file outside the project. Defaults to true.
+   */
+  journeyPathsAllowed?: boolean;
   /** Test hook. Production runs keep the 30 minute lease. */
   leaseTtlMs?: number;
 };
@@ -121,8 +133,8 @@ export function selectRunLabels(input: {
 
 export async function runSuite(request: SuiteRequest): Promise<RunResult & { parent: ParentPacket }> {
   const home = request.home ?? aegisHome();
-  const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', request.project, 'project.yaml'), 'utf8')));
-  const auth = authorisationSchema.parse(parse(readFileSync(join(home, 'authorisations', `${project.authorisation_id}.yaml`), 'utf8')));
+  const project = loadProject(request.project, home);
+  const auth = loadAuthorisation(project.authorisation_id, home);
   const gate = request.gate ?? project.phase2.gate;
   const agentId = request.agentId ?? `cli-${process.pid}`;
   if (existsSync(join(home, 'KILL'))) throw new HornetError('The kill switch is on.', 2);
@@ -131,9 +143,10 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   } catch {
     // Retention is housekeeping. A failure to prune old runs does not stop this one.
   }
+  assertAuthorisationUsable(auth, home);
   const domains = projectDomainsAuthorised(project, auth);
   if (!domains.ok) throw new HornetError(domains.reason, 3);
-  const production = productionDecision(project, auth, Boolean(request.confirmProduction));
+  const production = productionGate(project, auth, Boolean(request.confirmProduction));
   if (!production.ok) throw new HornetError(production.reason, 3);
   const polite = practiceLimits(project, auth);
   if (!polite.ok) throw new HornetError(polite.reason, 3);
@@ -141,13 +154,16 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
     const allowed = chaosPermitted(auth, project);
     if (!allowed.ok) throw new HornetError(allowed.reason, 3);
   }
-  const journeys = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? [], request.includeRegressions ?? true);
+  const includeRegressions = request.includeRegressions ?? true;
+  const journeys = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? [], includeRegressions, request.journeyPathsAllowed ?? true);
   const knownSecrets = projectSecretValues(project.id, home);
   for (const journey of journeys) {
     const checked = validateJourneyYaml(journey.text, project, knownSecrets);
     if (!checked.valid || !checked.journey) throw new HornetError(checked.errors.join('; '), 3);
     journey.journey = checked.journey;
   }
+  const activities = activitiesPermitted(auth, { signIn: true, journeys: journeys.map((entry) => entry.journey as Journey) });
+  if (!activities.ok) throw new HornetError(activities.reason, 3);
   const labels = selectRunLabels({
     phase1Only: Boolean(request.phase1Only),
     ...(request.users ? { users: request.users } : {}),
@@ -172,22 +188,43 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
       // A missed renewal is retried on the next tick. It must never crash the process that holds the lease.
     }
   };
-  /** Returns false when another agent holds the label. */
-  const hold = async (label: string, work: () => Promise<void>): Promise<boolean> => {
-    const lease = acquireLease({
-      project: project.id,
-      label,
-      agentId,
-      runId,
-      candidates: project.users.map((user) => user.label),
-      home,
-      via,
-      ...(request.leaseTtlMs ? { ttlMs: request.leaseTtlMs } : {}),
-    });
+  const maxActive = parallelRunners(project);
+  /**
+   * Returns 'busy' when another agent holds the label, and 'stopped' when the kill switch or the
+   * deadline came while this run waited for one of the project's runner slots.
+   */
+  const hold = async (label: string, work: () => Promise<void>): Promise<'held' | 'busy' | 'stopped'> => {
+    const acquire = (audit: boolean) =>
+      acquireLease({
+        project: project.id,
+        label,
+        agentId,
+        runId,
+        candidates: project.users.map((user) => user.label),
+        maxActive,
+        auditRefusal: audit,
+        home,
+        via,
+        ...(request.leaseTtlMs ? { ttlMs: request.leaseTtlMs } : {}),
+      });
+    let lease = acquire(true);
+    // Every runner slot is in use by other agents. Wait for one, as a person waits for a free desk.
+    while (!lease.ok && lease.reason === 'parallel_limit') {
+      if (existsSync(join(home, 'KILL'))) {
+        killed = true;
+        return 'stopped';
+      }
+      if (Date.now() >= deadline) {
+        durationStop = true;
+        return 'stopped';
+      }
+      await delay(SLOT_POLL_MS);
+      lease = acquire(false);
+    }
     if (!lease.ok) {
       if (lease.reason === 'agent_already_holds') throw new HornetError('agent already holds a login', 3);
       if (phaseResults.length === 0) throw new HornetError(`busy until ${lease.busyUntil ?? 'later'}`, 3);
-      return false;
+      return 'busy';
     }
     const intervalMs = Math.max(20, Math.min(60_000, Math.floor(ttlMs / 3)));
     const renew = setInterval(renewQuietly, intervalMs);
@@ -198,8 +235,10 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
       renewQuietly();
       releaseStoredLease(project.id, agentId, home, via);
     }
-    return true;
+    return 'held';
   };
+  /** Each journey's outcome for every label in this run, so a regression is judged once per run. */
+  const outcomes = new Map<string, { entry: { file: string; journey?: Journey }; statuses: StepResult['status'][] }>();
   try {
     for (const label of labels) {
       if (Date.now() >= deadline) {
@@ -214,7 +253,8 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         if (phase1.report.blocked_reason === 'duration') durationStop = true;
       });
       // A login another agent took mid-run is recorded for that label. The labels already checked keep their results.
-      if (!held) phaseResults.push({ label, report: leaseBusyReport() });
+      if (held === 'busy') phaseResults.push({ label, report: leaseBusyReport() });
+      if (held === 'stopped') phaseResults.push({ label, report: killed ? killReport() : durationReport() });
       if (killed || durationStop) break;
     }
     const everyPhasePassed = phaseResults.length === labels.length && phaseResults.every((item) => item.report.status === 'passed');
@@ -222,19 +262,25 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
       const entries = journeys.filter((entry) => entry.journey?.users.includes(item.label));
       const phaseOk = item.report.status === 'passed';
       const blockedByGate = gate === 'all' && !everyPhasePassed;
+      // A journey with requires_phase1: false runs even when this label's sign-in check did not pass.
+      const runnable = entries.filter((entry) => entry.journey?.requires_phase1 === false || (phaseOk && !blockedByGate));
       const userJourneys: RichJourney[] = [];
       let leaseLost = false;
-      if (!killed && !durationStop && phaseOk && !blockedByGate && entries.length > 0) {
-        leaseLost = !(await hold(item.label, async () => {
-          for (const entry of entries) {
+      if (!killed && !durationStop && runnable.length > 0) {
+        const held = await hold(item.label, async () => {
+          for (const entry of runnable) {
             if (killed || durationStop) break;
             const played = await runJourney(project, item.label, entry.journey as Journey, runId, home, deadline, totpCodes, request.chaos);
             if (played.killed) killed = true;
             if (played.duration) durationStop = true;
             userJourneys.push(played.journey);
-            rememberRegression(home, project.id, entry, played.journey);
+            const id = entry.journey?.id ?? 'journey';
+            const outcome = outcomes.get(id) ?? { entry, statuses: [] };
+            outcome.statuses.push(played.journey.status);
+            outcomes.set(id, outcome);
           }
-        }));
+        });
+        leaseLost = held === 'busy';
       }
       for (const entry of entries) {
         if (userJourneys.some((journey) => journey.id === entry.journey?.id)) continue;
@@ -252,6 +298,9 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         userJourneys.push({ id: entry.journey?.id ?? 'journey', name: entry.journey?.name ?? 'Check', status: 'skipped', duration_ms: 0, steps: [] });
       }
       rich.push({ label: item.label, phase1: phaseRecord(item.report), journeys: userJourneys });
+    }
+    if (includeRegressions) {
+      for (const { entry, statuses } of outcomes.values()) rememberRegression(home, project.id, entry, runOutcome(statuses));
     }
   } catch (error) {
     releaseStoredLease(project.id, agentId, home, via);
@@ -357,6 +406,19 @@ function hasChallengeStop(user: RichUser): boolean {
     challenge(user.phase1.blocked_reason) ||
     user.journeys.some((journey) => challenge(journey.blocked_reason) || journey.steps.some((step) => challenge(step.blocked_reason)))
   );
+}
+
+const SLOT_POLL_MS = 1_000;
+
+function killReport(): JobReport {
+  return { ok: false, status: 'blocked', blocked_reason: 'kill', steps: [], chaosApplied: [] };
+}
+
+/** A journey's result across every label in one run: failed if any label failed, passed only if every label passed. */
+export function runOutcome(statuses: ReadonlyArray<StepResult['status']>): 'fail' | 'pass' | 'none' {
+  if (statuses.some((status) => status === 'fail' || status === 'error' || status === 'flaky')) return 'fail';
+  if (statuses.length > 0 && statuses.every((status) => status === 'pass')) return 'pass';
+  return 'none';
 }
 
 function leaseBusyReport(): JobReport {
@@ -471,6 +533,18 @@ async function executeIssued(
   chaos?: { profile: string; seed: string },
   codes: string[] = [],
 ): Promise<{ report: JobReport; killed: boolean }> {
+  // A run stopped before this job is not handed the login at all.
+  const stopNow = existsSync(join(home, 'KILL')) ? 'kill' : Date.now() >= deadline ? 'duration' : undefined;
+  if (stopNow) {
+    return applyReturnedJob({
+      abortReason: stopNow,
+      killPresent: stopNow === 'kill',
+      report: { ok: false, status: 'blocked', steps: [], chaosApplied: [] },
+      projectId: project.id,
+      label,
+      stopRunners,
+    });
+  }
   const endpoint = await endpointFor(project.id, label);
   const injected = await injectSecrets(project.id, label, endpoint, home);
   if (project.auth.totp.enabled) {
@@ -481,6 +555,7 @@ async function executeIssued(
   const actions = chaos ? chaosSequence(chaos.seed, chaos.profile, journey.steps.length) : [];
   const gate = await openOperatorGate(project.id, label, home);
   const pollUrl = gate?.pollUrl;
+  const rate = perRunnerRate(project);
   const body = {
     runId,
     label,
@@ -488,10 +563,11 @@ async function executeIssued(
     baseUrl: target.base,
     steps: journey.steps,
     allowOrigins: target.origins,
+    passiveOrigins: passiveOrigins(project),
     authEndpoints: project.auth.auth_endpoints,
     minStepDelayMs: project.limits.min_step_delay_ms,
-    rps: project.limits.max_requests_per_second_per_runner,
-    burst: project.limits.request_burst_per_runner,
+    rps: rate.rps,
+    burst: rate.burst,
     http2: project.runners.http2,
     accessDeniedMarkers: project.auth.access_denied_markers,
     chaosActions: actions,
@@ -722,14 +798,33 @@ function rewriteArtifacts(home: string, project: string, label: string, runId: s
   });
 }
 
+/**
+ * Each label has its own baseline, because accounts can be meant to look different, such as a
+ * visual-test account. A baseline saved before baselines were per label is still read for any
+ * label that has none of its own.
+ */
+export function baselineDir(home: string, project: string, label: string, journeyId: string): string {
+  const own = join(home, 'baselines', project, label, journeyId);
+  if (existsSync(own)) return own;
+  const shared = join(home, 'baselines', project, journeyId);
+  return existsSync(join(shared, 'timings.json')) ? shared : own;
+}
+
+/** Words on the page compare equal when only their spacing differs. */
+export function textChanged(before: string, after: string): boolean {
+  const squash = (text: string) => text.replace(/\s+/g, ' ').trim();
+  return squash(before) !== squash(after);
+}
+
 function applyBaselines(home: string, project: string, users: RichUser[]): void {
   for (const user of users) {
     for (const journey of user.journeys) {
-      const timingFile = join(home, 'baselines', project, journey.id, 'timings.json');
+      const base = baselineDir(home, project, user.label, journey.id);
+      const timingFile = join(base, 'timings.json');
       const saved = existsSync(timingFile) ? (JSON.parse(readFileSync(timingFile, 'utf8')) as Record<string, number>) : {};
       for (const step of journey.steps) {
         const shot = step.screenshot_paths?.[0];
-        const baseShot = join(home, 'baselines', project, journey.id, `${step.index}.png`);
+        const baseShot = join(base, `${step.index}.png`);
         let visual: 'same' | 'changed' | 'no_baseline' = 'same';
         let ratio: number | undefined;
         if (shot && existsSync(baseShot)) {
@@ -739,14 +834,23 @@ function applyBaselines(home: string, project: string, users: RichUser[]): void 
         } else if (shot) visual = 'no_baseline';
         const before = saved[String(step.index)];
         const timing = before === undefined ? 'no_baseline' : timingChanged(before, step.duration_ms) ? 'slower' : 'same';
+        const shotText = shot ? shot.replace(/\.png$/, '.txt') : '';
+        const baseText = join(base, `${step.index}.txt`);
+        const text: 'same' | 'changed' | 'no_baseline' =
+          shotText && existsSync(shotText) && existsSync(baseText)
+            ? textChanged(readFileSync(baseText, 'utf8'), readFileSync(shotText, 'utf8'))
+              ? 'changed'
+              : 'same'
+            : 'no_baseline';
         const notes: string[] = [];
         if (visual === 'changed') notes.push('The page looks different from the saved baseline.');
+        if (text === 'changed') notes.push('The words on the page differ from the saved baseline.');
         if (timing === 'slower') notes.push('This step took longer than the saved baseline.');
         step.diff = {
           visual,
           ...(ratio !== undefined ? { visual_mismatch_ratio: ratio } : {}),
           timing,
-          text: 'same',
+          text,
           console: (step.console_error_count ?? 0) > (saved[`console-${step.index}`] ?? 0) ? 'new_errors' : before === undefined ? 'no_baseline' : 'same',
           network: (step.network_errors?.length ?? 0) > (saved[`network-${step.index}`] ?? 0) ? 'new_errors' : before === undefined ? 'no_baseline' : 'same',
           notes,
@@ -757,19 +861,30 @@ function applyBaselines(home: string, project: string, users: RichUser[]): void 
 }
 
 export function acceptBaseline(project: string, runId: string, home = aegisHome()): { ok: true } {
-  const analysis = JSON.parse(readFileSync(join(home, 'runs', runId, 'analysis.json'), 'utf8')) as {
+  if (!/^[a-z0-9-]+$/.test(project)) throw new HornetError('Unknown project.', 3);
+  if (!RUN_ID.test(runId)) throw new HornetError('Unknown run id.', 3);
+  const runDir = join(home, 'runs', runId);
+  const analysis = JSON.parse(readFileSync(join(runDir, 'analysis.json'), 'utf8')) as {
+    project?: string;
     users: RichUser[];
   };
+  if (analysis.project !== project) throw new HornetError('That run belongs to another project.', 3);
   for (const user of analysis.users) {
+    if (!/^qa-user-\d+$/.test(user.label)) continue;
     for (const journey of user.journeys) {
-      const dir = ensureDir(join(home, 'baselines', project, journey.id));
+      if (!/^[a-z0-9-]+$/.test(journey.id)) continue;
+      const dir = ensureDir(join(home, 'baselines', project, user.label, journey.id));
       const timings: Record<string, number> = {};
       for (const step of journey.steps) {
         timings[String(step.index)] = step.duration_ms;
         timings[`console-${step.index}`] = step.console_error_count ?? 0;
         timings[`network-${step.index}`] = step.network_errors?.length ?? 0;
+        // Only files inside this run are copied. The paths come from the run's own report.
         const shot = step.screenshot_paths?.[0];
-        if (shot && existsSync(shot)) copyFileSync(shot, join(dir, `${step.index}.png`));
+        if (!shot || !shot.startsWith(`${runDir}/`) || !existsSync(shot)) continue;
+        copyFileSync(shot, join(dir, `${step.index}.png`));
+        const text = shot.replace(/\.png$/, '.txt');
+        if (existsSync(text)) copyFileSync(text, join(dir, `${step.index}.txt`));
       }
       writeFileSync(join(dir, 'timings.json'), `${JSON.stringify(timings)}\n`);
     }
@@ -832,7 +947,7 @@ export function reliabilityReport(projectId: string, last = 20, home = aegisHome
 }
 
 export function listProjectUsers(projectId: string, home = aegisHome()): { label: string; role: string; tenant: string }[] {
-  const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
+  const project = loadProject(projectId, home);
   return project.users.map((user) => ({ label: user.label, role: user.role, tenant: user.tenant }));
 }
 
@@ -857,23 +972,59 @@ function fileContainsSecret(file: string, redactor: Redactor): boolean {
  * before anything else reads the files. The runner copy is deleted, so no unredacted trace
  * stays behind in the runner folder.
  */
-async function moveArtifacts(home: string, project: Project, label: string, runId: string, journeyId: string): Promise<void> {
-  const source = join(home, 'runners', project.id, label, runId, journeyId);
-  if (!existsSync(source)) return;
-  const destination = ensureDir(join(home, 'runs', runId, label, journeyId));
-  cpSync(source, destination, { recursive: true, filter: (path) => !lstatSync(path).isSymbolicLink() });
-  rmSync(source, { recursive: true, force: true });
-  const runRoot = join(home, 'runners', project.id, label, runId);
+export async function moveArtifacts(home: string, project: Project, label: string, runId: string, journeyId: string): Promise<void> {
+  const runEntry = join(home, 'runners', project.id, label, runId);
+  if (!lstatExists(runEntry)) return;
+  // The run's folder is first moved out of the runner's reach in one rename. A rename moves a
+  // link itself rather than what it points to, so a runner that put a link where its folder
+  // belongs can never make the copy or the delete below reach a file elsewhere on this Mac.
+  const staged = join(ensureDir(join(home, 'staging')), `${label}-${runId}-${randomBytes(4).toString('hex')}`);
+  renameSync(runEntry, staged);
   try {
-    if (readdirSync(runRoot).length === 0) rmSync(runRoot, { recursive: true, force: true });
-  } catch {
-    // Already gone.
+    const source = join(staged, journeyId);
+    const stagedLink = lstatSync(staged).isSymbolicLink();
+    const sourceLink = !stagedLink && lstatExists(source) && lstatSync(source).isSymbolicLink();
+    if (stagedLink || sourceLink) {
+      throw new HornetError('The runner wrote a link where its results belong. Nothing was copied, and the link was removed.', 4);
+    }
+    if (!lstatExists(source)) return;
+    const destination = ensureDir(join(home, 'runs', runId, label, journeyId));
+    cpSync(source, destination, { recursive: true, filter: (path) => !lstatSync(path).isSymbolicLink() });
+    await sanitizeNetworkLogs(destination, authEndpointPatterns(project));
+  } finally {
+    if (lstatExists(staged) && lstatSync(staged).isSymbolicLink()) unlinkSync(staged);
+    else rmSync(staged, { recursive: true, force: true });
   }
-  await sanitizeNetworkLogs(destination, project.auth.auth_endpoints);
 }
 
-function loadJourneys(home: string, project: Project, files: string[], includeRegressions: boolean): { text: string; file: string; journey?: Journey }[] {
-  const selected = (files.length > 0 ? files : readdirSync(resolveJourneys(home, project)).filter((name) => name.endsWith('.yaml')).map((name) => join(resolveJourneys(home, project), name))).map((file) => resolveJourneyArg(home, project, file));
+function lstatExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The bodies dropped from the network logs: the project's auth_endpoints, and always the
+ * sign-in page itself, where a login form usually posts and a session token usually comes back.
+ */
+export function authEndpointPatterns(project: Project): string[] {
+  const signin = new URL(project.auth.signin_url, project.targets.base_url);
+  const patterns = new Set(project.auth.auth_endpoints);
+  for (const url of [signin.toString(), rewriteForContainer(signin.toString(), macAddresses())]) {
+    const parsed = new URL(url);
+    patterns.add(`${parsed.origin}${parsed.pathname}`);
+  }
+  return [...patterns];
+}
+
+function loadJourneys(home: string, project: Project, files: string[], includeRegressions: boolean, pathsAllowed: boolean): { text: string; file: string; journey?: Journey }[] {
+  const selected =
+    files.length > 0
+      ? files.map((file) => resolveJourneyArg(home, project, file, pathsAllowed))
+      : readdirSync(resolveJourneys(home, project)).filter((name) => name.endsWith('.yaml')).map((name) => join(resolveJourneys(home, project), name));
   const loaded = selected.map((file) => ({ file, text: readFileSync(file, 'utf8') }));
   if (!includeRegressions) return loaded;
   // An open regression joins the run once. It is skipped when the run already has a journey with that id.
@@ -903,7 +1054,7 @@ function agentJourneysDir(home: string, project: string): string {
  * folder. It cannot replace an owner journey with the same id. Returns the saved path.
  */
 export function saveAgentJourney(projectId: string, yamlText: string, home = aegisHome()): { path: string; id: string } {
-  const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
+  const project = loadProject(projectId, home);
   const checked = validateJourneyYaml(yamlText, project, projectSecretValues(project.id, home));
   if (!checked.valid || !checked.journey) throw new HornetError(checked.errors.join('; '), 3);
   const id = checked.journey.id;
@@ -928,8 +1079,17 @@ function ownerJourneyIds(dir: string): Set<string> {
   );
 }
 
-function resolveJourneyArg(home: string, project: Project, file: string): string {
-  if (file.endsWith('.yaml') || file.endsWith('.yml') || file.includes('/')) return file;
+const JOURNEY_ID = /^[a-z0-9-]+$/;
+const RUN_ID = /^run_[A-Za-z0-9_-]+$/;
+
+/**
+ * A journey id is looked up in the project's journeys, then in the agent journeys. A file path is
+ * read as given, but only when paths are allowed, which is the owner's CLI and never an agent.
+ */
+function resolveJourneyArg(home: string, project: Project, file: string, pathsAllowed: boolean): string {
+  const looksLikePath = file.endsWith('.yaml') || file.endsWith('.yml') || file.includes('/');
+  if (looksLikePath && pathsAllowed) return file;
+  if (!JOURNEY_ID.test(file)) throw new HornetError(`${file} is not a journey id. Name a journey by its id, such as signin-dashboard.`, 3);
   for (const dir of [resolveJourneys(home, project), agentJourneysDir(home, project.id)]) {
     const direct = join(dir, `${file}.journey.yaml`);
     if (existsSync(direct)) return direct;
@@ -955,21 +1115,21 @@ function regressionFiles(home: string, project: string): string[] {
 }
 
 /**
- * A failed, erroring, or flaky journey is copied into the regression folder and joins later
- * suite runs. Three passes in a row of that journey id, from either copy, mark it fixed and
- * retire the copy. The ledger stays as the record.
+ * A journey that failed, errored, or was flaky for any label in a suite run is copied into the
+ * regression folder and joins later suite runs. Three suite runs in a row where it passed for
+ * every label mark it fixed and retire the copy. The ledger stays as the record.
  */
-function rememberRegression(home: string, project: string, entry: { file: string; journey?: Journey }, played: RichJourney): void {
-  if (!entry.journey) return;
+function rememberRegression(home: string, project: string, entry: { file: string; journey?: Journey }, outcome: 'fail' | 'pass' | 'none'): void {
+  if (!entry.journey || outcome === 'none') return;
   const dir = ensureDir(join(home, 'regressions', project));
   const file = join(dir, `${entry.journey.id}.journey.yaml`);
   const ledgerPath = join(dir, `${entry.journey.id}.json`);
-  if (played.status === 'fail' || played.status === 'error' || played.status === 'flaky') {
+  if (outcome === 'fail') {
     if (entry.file !== file) writeFileSync(file, readFileSync(entry.file));
     writeFileSync(ledgerPath, `${JSON.stringify({ state: 'open', consecutive: 0 })}\n`);
     return;
   }
-  if (played.status !== 'pass' || !existsSync(ledgerPath)) return;
+  if (!existsSync(ledgerPath)) return;
   const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8')) as { state: string; consecutive: number };
   if (ledger.state !== 'open') return;
   const consecutive = ledger.consecutive + 1;
@@ -1003,10 +1163,6 @@ function macAddresses(): string[] {
     for (const entry of entries ?? []) addresses.push(entry.address);
   }
   return addresses;
-}
-
-function productionDecision(project: Project, auth: ReturnType<typeof authorisationSchema.parse>, confirm: boolean): { ok: true } | { ok: false; reason: string } {
-  return productionGate(project, auth, confirm);
 }
 
 function signinState(home: string, project: Project, label: string): { allowed: boolean } {
@@ -1245,9 +1401,10 @@ function failAnalysis(analysis: Analysis): Analysis {
   });
 }
 
+/** Reads a saved journey by its id. Agents call this, so a path is refused. */
 export function readJourneyYaml(projectId: string, journeyId: string, home = aegisHome()): string {
-  const project = projectSchema.parse(parse(readFileSync(join(home, 'projects', projectId, 'project.yaml'), 'utf8')));
-  return readFileSync(resolveJourneyArg(home, project, journeyId), 'utf8');
+  const project = loadProject(projectId, home);
+  return readFileSync(resolveJourneyArg(home, project, journeyId, false), 'utf8');
 }
 
 function makeRunId(): string {

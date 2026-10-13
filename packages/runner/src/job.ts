@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
+import { chromium, type BrowserContext, type Locator, type Page, type Request } from 'playwright';
 import { browserLaunchOptions } from './launch.js';
 import { Redactor, renderTemplate, resolveSelf, runnerOverload, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
 
@@ -14,6 +14,8 @@ export type JobRequest = {
   baseUrl: string;
   steps: Step[];
   allowOrigins: string[];
+  /** Origins that may load into a page but that the page may never navigate to or be typed into. */
+  passiveOrigins?: string[];
   authEndpoints: string[];
   minStepDelayMs: number;
   rps: number;
@@ -189,6 +191,8 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   let httpOverloads = 0;
   let dropLeft = 0;
   let closing = false;
+  /** Set when the page tried to move to a passive origin. The journey stops there, with that reason. */
+  let passiveNavigation: string | undefined;
   const bucket = createBucket(job.rps, job.burst ?? job.rps);
   const stopWaiting = () => closing || isAborted();
 
@@ -197,6 +201,8 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
     context = await browser.newContext({
       ...(process.env.AEGIS_PROXY ? { proxy: { server: process.env.AEGIS_PROXY } } : {}),
       recordHar: { path: harPath, content: 'embed' },
+      // A service worker's own requests skip context.route, so they would skip the allowlist and the pacing below.
+      serviceWorkers: 'block',
     });
     await context.tracing.start({ screenshots: true, snapshots: true });
     await context.route('**/*', async (route) => {
@@ -207,6 +213,12 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         return;
       }
       if (!url.startsWith('about:') && !url.startsWith('data:') && !originAllowed(url, job.allowOrigins)) {
+        await route.abort('blockedbyclient');
+        return;
+      }
+      // A passive origin may load into the page, but the page itself never moves there, by a step, a link, or a script.
+      if (mainFrameNavigation(route.request()) && originAllowed(url, job.passiveOrigins ?? [])) {
+        passiveNavigation = new URL(url).origin;
         await route.abort('blockedbyclient');
         return;
       }
@@ -275,6 +287,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
         if (!('wait' in step) && !('assert' in step) && !('screenshot' in step)) nav.mark = nav.count;
         const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted);
+        if (passiveNavigation) throw new Error(`blocked_by_allowlist: the page tried to open the passive origin ${passiveNavigation}`);
         const challenge = await detectChallenge(page);
         const decision = await resolveChallenge({
           challenge,
@@ -390,6 +403,7 @@ async function runStep(
   if ('navigate' in step) {
     const url = absolute(renderTemplate(step.navigate.url, template), job.baseUrl);
     if (!originAllowed(url, job.allowOrigins)) throw new Error('blocked_by_allowlist');
+    if (originAllowed(url, job.passiveOrigins ?? [])) throw new Error('blocked_by_allowlist: passive origin');
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
     nav.status = response?.status() ?? 0;
     return { statusCode: nav.status };
@@ -402,6 +416,7 @@ async function runStep(
   }
   if ('fill' in step) {
     selectors.push(step.fill.selector);
+    if (originAllowed(page.url(), job.passiveOrigins ?? [])) throw new Error('blocked_by_allowlist: passive origin');
     let text = '';
     if (step.fill.value !== undefined) text = renderTemplate(step.fill.value, template);
     if (step.fill.credential) {
@@ -475,7 +490,8 @@ async function runStep(
   }
   if ('upload' in step) {
     selectors.push(step.upload.selector);
-    const file = join('/opt/runner/fixtures', step.upload.fixture);
+    const file = join(fixturesDir(), step.upload.fixture);
+    if (!existsSync(file)) throw new Error(`upload fixture ${step.upload.fixture} is not in the runner image. Add it to images/runner/fixtures and run pnpm image.`);
     await locate(page, step.upload.selector).setInputFiles(file);
     return { statusCode: 0 };
   }
@@ -488,6 +504,9 @@ async function runStep(
       mask: [page.locator('input[type="password"], [data-hornet-swarm-secret]')],
     });
     screenshots.push(path);
+    // The visible text beside the picture lets a later run say whether the words on the page changed.
+    const text = await page.locator('body').innerText().catch(() => '');
+    writeFileSync(join(job.outDir, `${step.screenshot.name}.txt`), redactor.redact(text), 'utf8');
     return { statusCode: 0 };
   }
   return { statusCode: 0 };
@@ -726,6 +745,15 @@ function absolute(url: string, base: string): string {
   return new URL(url, base.endsWith('/') ? base : `${base}/`).toString();
 }
 
+function mainFrameNavigation(request: Request): boolean {
+  try {
+    return request.isNavigationRequest() && request.frame().parentFrame() === null;
+  } catch {
+    // A request with no frame, such as one from a worker, is not a page navigation.
+    return false;
+  }
+}
+
 function originAllowed(url: string, allow: string[]): boolean {
   try {
     return allow.includes(new URL(url).origin);
@@ -742,6 +770,7 @@ function parseMs(detail: string): number {
 type NavState = { status: number; count: number; mark: number; inflight: number; lastActivity: number };
 
 const ASSERT_TIMEOUT_MS = 10_000;
+const fixturesDir = (): string => process.env.AEGIS_FIXTURES_DIR ?? '/opt/runner/fixtures';
 
 export function createBucket(rps: number, burst = rps): { take: () => boolean; wait: (stop: () => boolean) => Promise<boolean> } {
   const capacity = Math.max(1, burst);

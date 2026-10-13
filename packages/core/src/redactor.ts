@@ -1,4 +1,16 @@
-const HEADER_NAMES = new Set(['authorization', 'cookie', 'set-cookie', 'proxy-authorization']);
+/** Headers that carry a session or an API credential. Their values are masked wherever they are saved. */
+export const SESSION_HEADER_NAMES: ReadonlySet<string> = new Set([
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'proxy-authorization',
+  'x-api-key',
+  'x-auth-token',
+  'x-access-token',
+  'x-csrf-token',
+  'x-xsrf-token',
+]);
+const HEADER_NAMES = SESSION_HEADER_NAMES;
 
 export type RegisteredSecret = { label: string; value: string };
 
@@ -91,10 +103,30 @@ export function urlEncodings(value: string): string[] {
   return [...forms];
 }
 
+/**
+ * A value inside a larger base64 string, such as a JSON body or `user:password` in Basic auth,
+ * starts at one of three byte offsets. For each offset this keeps only the characters that come
+ * from the value's own bytes. The base64url spelling, used by JWTs, is added too.
+ */
+export function base64Forms(value: string): string[] {
+  const bytes = Buffer.from(value, 'utf8');
+  const forms = new Set<string>([bytes.toString('base64')]);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const encoded = Buffer.concat([Buffer.alloc(offset), bytes]).toString('base64');
+    // Characters before `start` mix in the bytes ahead of the value. Characters after `end` mix in the bytes behind it.
+    const start = offset === 0 ? 0 : offset + 1;
+    const end = Math.floor((offset + bytes.length) / 3) * 4;
+    const inner = encoded.slice(start, end);
+    if (inner.length >= 8) forms.add(inner);
+  }
+  for (const form of [...forms]) forms.add(form.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+  return [...forms];
+}
+
 function addDerived(forms: Set<string>, value: string, keepShort: boolean): void {
   forms.add(value);
   for (const encoded of urlEncodings(value)) forms.add(encoded);
-  forms.add(Buffer.from(value, 'utf8').toString('base64'));
+  for (const encoded of base64Forms(value)) forms.add(encoded);
   forms.add(htmlEscape(value));
   forms.add(textNodeEscape(value));
   for (const base of [value, htmlEscape(value), textNodeEscape(value), ...urlEncodings(value)]) addJsonEscapes(forms, base, keepShort);

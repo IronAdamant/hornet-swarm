@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { Redactor } from '@hornet-swarm/core';
 import { aegisHome, ensureDir } from './home.js';
+import { withFileLock, writeFileAtomic } from './leases-store.js';
 import { runnerFetch } from './runner-auth.js';
 import { totpCode } from './totp.js';
 
@@ -41,6 +42,13 @@ export function projectSecretValues(project: string, home = aegisHome()): string
   return values;
 }
 
+/** Which fields each label has stored, read with one decryption. Values are never returned. */
+export function storedFields(project: string, home = aegisHome()): Record<string, SecretField[]> {
+  return Object.fromEntries(
+    Object.entries(readUsers(home, project)).map(([label, user]) => [label, FIELDS.filter((field) => typeof user[field] === 'string' && user[field])]),
+  );
+}
+
 export function listFields(project: string, label: string, home = aegisHome()): SecretField[] {
   const user = readUsers(home, project)[label] ?? {};
   return FIELDS.filter((field) => typeof user[field] === 'string' && user[field]);
@@ -53,14 +61,32 @@ export function setSecret(
   value: string,
   home = aegisHome(),
 ): { ok: true; label: string; field: SecretField } {
-  if (!/^qa-user-\d+$/.test(label)) throw new Error('label must look like qa-user-1');
-  if (!FIELDS.includes(field)) throw new Error('unsupported field');
-  if (!value) throw new Error('empty secret');
-  const users = readUsers(home, project);
-  const current = users[label] ?? {};
-  users[label] = { ...current, [field]: value };
-  writeUsers(home, project, users);
+  setSecrets(project, { [label]: { [field]: value } }, home);
   return { ok: true, label, field };
+}
+
+/** How long a writer waits for another writer of the same store. sops and the Keychain can take a few seconds. */
+const STORE_LOCK_MS = 60_000;
+
+/**
+ * Sets several fields for several labels in one read and one write. The read and the write
+ * happen under a lock, so two writers never lose each other's changes, and the new file
+ * replaces the old one in a single rename, so a crash never leaves half a store.
+ */
+export function setSecrets(project: string, updates: Record<string, Partial<Record<SecretField, string>>>, home = aegisHome()): void {
+  if (!/^[a-z0-9-]+$/.test(project)) throw new Error('project id must be lowercase letters, numbers, and dashes');
+  for (const [label, fields] of Object.entries(updates)) {
+    if (!/^qa-user-\d+$/.test(label)) throw new Error('label must look like qa-user-1');
+    for (const [field, value] of Object.entries(fields)) {
+      if (!FIELDS.includes(field as SecretField)) throw new Error('unsupported field');
+      if (!value) throw new Error('empty secret');
+    }
+  }
+  withFileLock(home, `secrets-${project}`, () => {
+    const users = readUsers(home, project);
+    for (const [label, fields] of Object.entries(updates)) users[label] = { ...(users[label] ?? {}), ...fields };
+    writeUsers(home, project, users);
+  }, STORE_LOCK_MS);
 }
 
 export async function injectTotp(project: string, label: string, endpoint: string, home = aegisHome()): Promise<InjectedHandle> {
@@ -128,7 +154,7 @@ function writeUsers(home: string, project: string, users: Record<string, SecretU
       Object.values(user).some((value) => typeof value === 'string' && value.length >= 4 && encrypted.includes(value)),
     );
     if (encrypted.includes(plain) || leaked) throw new Error('encrypted store still contained a secret');
-    writeFileSync(destination, encrypted, { mode: 0o600 });
+    writeFileAtomic(destination, encrypted, 0o600);
   } catch (error) {
     if (error instanceof Error && error.message === 'encrypted store still contained a secret') throw error;
     throw new Error('Could not encrypt the store.', { cause: error });
@@ -188,12 +214,28 @@ function loadAgeSecret(): string {
   }
   const generated = execFileSync('age-keygen', { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
   const packed = Buffer.from(generated, 'utf8').toString('base64');
-  execFileSync('security', ['add-generic-password', '-A', '-s', SERVICE, '-a', account, '-w', packed], {
+  execFileSync('security', ['-i'], {
+    input: keychainAddCommand(SERVICE, account, packed),
     timeout: 15_000,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
-  cachedAgeSecret = generated.endsWith('\n') ? generated.slice(0, -1) : generated;
+  const fresh = generated.endsWith('\n') ? generated.slice(0, -1) : generated;
+  // Interactive mode can exit 0 when its command failed. A key that was not saved would orphan every store it encrypts.
+  const saved = readKeychainItem(SERVICE, account);
+  if (saved.kind !== 'found' || saved.secret !== fresh) throw new Error(`Could not save the new age key in the Keychain item ${SERVICE}. Nothing was encrypted.`);
+  cachedAgeSecret = fresh;
   return cachedAgeSecret;
+}
+
+/**
+ * The `security -i` command that stores the key. It is written to the tool's stdin, so the key
+ * never appears in a process's arguments, where `ps` would show it to every account on the Mac.
+ * There is no `-A`: only the `security` tool itself may read the item without asking.
+ */
+export function keychainAddCommand(service: string, account: string, packed: string): string {
+  if (!/^[A-Za-z0-9+/=]+$/.test(packed)) throw new Error('The age key must be base64 before it is stored.');
+  if (!/^[\w.-]+$/.test(service) || !/^[\w.@-]+$/.test(account)) throw new Error('The Keychain item name has characters the command cannot quote.');
+  return `add-generic-password -s ${service} -a ${account} -w ${packed}\n`;
 }
 
 type KeychainRead = { kind: 'found'; secret: string } | { kind: 'missing' } | { kind: 'error'; message: string };

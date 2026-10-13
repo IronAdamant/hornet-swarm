@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { decideAcquire, heartbeatLease, releaseLease, type AcquireDecision, type Lease } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
@@ -53,6 +54,10 @@ export function acquireLease(input: {
   runId?: string;
   ttlMs?: number;
   candidates?: string[];
+  /** The most logins held in the project at once. See parallelRunners in core. */
+  maxActive?: number;
+  /** False leaves a refusal out of the audit log, for a caller that retries while it waits. Defaults to true. */
+  auditRefusal?: boolean;
   home?: string;
   via?: 'cli' | 'mcp';
 }): AcquireDecision {
@@ -67,6 +72,7 @@ export function acquireLease(input: {
       now: Date.now(),
       ...(input.ttlMs ? { ttlMs: input.ttlMs } : {}),
       ...(input.candidates ? { candidates: input.candidates } : {}),
+      ...(input.maxActive !== undefined ? { maxActive: input.maxActive } : {}),
     });
     writeLeases(home, next.leases);
     return next;
@@ -75,6 +81,7 @@ export function acquireLease(input: {
     held.add(heldKey(home, input.project, input.agentId));
     hookSignals();
   }
+  if (!decision.ok && input.auditRefusal === false) return decision;
   writeAudit(
     {
       interface: input.via ?? 'cli',
@@ -155,33 +162,85 @@ function withLock<T>(home: string, fn: () => T): T {
   return withFileLock(home, 'leases', fn);
 }
 
-/** A cross-process lock on `<home>/<name>.lock`. A lock left by a dead process is taken over. */
-export function withFileLock<T>(home: string, name: string, fn: () => T): T {
+/**
+ * A cross-process lock on `<home>/<name>.lock`. The lock folder is built aside with its pid file
+ * and renamed into place, so a holder is never seen without its pid. A lock left by a dead
+ * process is taken over by one waiter at a time: the waiter that wins `<name>.lock.takeover`
+ * checks again that the lock is still the dead one before removing it, so two waiters can
+ * never both remove a lock and both believe they hold it.
+ */
+export function withFileLock<T>(home: string, name: string, fn: () => T, timeoutMs = 5_000): T {
   ensureDir(home);
   const lock = join(home, `${name}.lock`);
+  const takeover = `${lock}.takeover`;
   const started = Date.now();
   for (;;) {
-    try {
-      mkdirSync(lock);
-      writeFileSync(join(lock, 'pid'), `${process.pid}\n`);
-      break;
-    } catch {
-      if (lockIsDead(lock)) {
-        rmSync(lock, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() - started > 5_000) throw new Error(`Timed out waiting for the ${name} lock.`);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    if (claimLock(lock)) break;
+    if (lockIsDead(lock)) {
+      takeOverDeadLock(lock, takeover);
+      continue;
     }
+    if (Date.now() - started > timeoutMs) throw new Error(`Timed out waiting for the ${name} lock.`);
+    pause(20);
   }
   try {
     return fn();
   } finally {
-    rmSync(lock, { recursive: true, force: true });
+    discardLock(lock);
   }
 }
 
+/** Moves the lock aside in one rename before deleting it, so a new holder's lock is never emptied by mistake. */
+function discardLock(lock: string): void {
+  const aside = `${lock}.${process.pid}.${randomBytes(4).toString('hex')}.old`;
+  try {
+    renameSync(lock, aside);
+  } catch {
+    return;
+  }
+  rmSync(aside, { recursive: true, force: true });
+}
+
+function claimLock(lock: string): boolean {
+  const staged = `${lock}.${process.pid}.${randomBytes(4).toString('hex')}.new`;
+  mkdirSync(staged);
+  writeFileSync(join(staged, 'pid'), `${process.pid}\n`);
+  try {
+    // A folder renames over a missing path, never over an existing one, so only one claimant wins.
+    renameSync(staged, lock);
+    return true;
+  } catch {
+    rmSync(staged, { recursive: true, force: true });
+    return false;
+  }
+}
+
+function takeOverDeadLock(lock: string, takeover: string): void {
+  try {
+    mkdirSync(takeover);
+  } catch {
+    // Another waiter is taking over. A takeover folder left by a crash is cleared after two seconds.
+    try {
+      if (Date.now() - statSync(takeover).mtimeMs > 2_000) rmSync(takeover, { recursive: true, force: true });
+    } catch {
+      // Already gone.
+    }
+    pause(20);
+    return;
+  }
+  try {
+    if (lockIsDead(lock)) discardLock(lock);
+  } finally {
+    rmSync(takeover, { recursive: true, force: true });
+  }
+}
+
+function pause(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function lockIsDead(lock: string): boolean {
+  if (!existsSync(lock)) return false;
   const pidFile = join(lock, 'pid');
   if (!existsSync(pidFile)) {
     try {

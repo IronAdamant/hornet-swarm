@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -23,6 +23,7 @@ describe('agent identity', () => {
       cwd: root,
       stdio: 'inherit',
     });
+    writeLeaseProject(home);
     firstSession = await openSession(home);
     secondSession = await openSession(home);
   }, 120_000);
@@ -112,6 +113,31 @@ describe('agent identity', () => {
     }
   });
 });
+
+/** acquire_test_user reads the project's runner cap, so the leases need a project to belong to. */
+function writeLeaseProject(home: string): void {
+  mkdirSync(join(home, 'projects', 'fixture'), { recursive: true });
+  writeFileSync(
+    join(home, 'projects', 'fixture', 'project.yaml'),
+    `id: fixture
+name: Fixture
+authorisation_id: fixture-owner
+environment: test
+targets:
+  base_url: http://127.0.0.1:4173
+  allowed_origins: [http://127.0.0.1:4173]
+auth:
+  signin_url: /login
+  selectors: { username: "#email", password: "#password", submit: "#submit" }
+  success: [{ type: url_contains, value: /dashboard }]
+runners: {}
+limits: { max_parallel_runners: 2 }
+users:
+  - { label: qa-user-1, role: consultant, tenant: A1 }
+  - { label: qa-user-2, role: consultant, tenant: B1 }
+`,
+  );
+}
 
 function leases(home: string): Lease[] {
   return JSON.parse(readFileSync(join(home, 'leases.json'), 'utf8')) as Lease[];

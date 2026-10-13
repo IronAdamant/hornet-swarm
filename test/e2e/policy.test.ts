@@ -6,7 +6,7 @@ import { setSecret } from '../../packages/controller/dist/index.js';
 import { validateJourneyYaml, projectSchema } from '../../packages/core/dist/index.js';
 import { parse } from 'yaml';
 import { totpCode } from '../../packages/controller/src/totp.ts';
-import { hornet, clearSignins, cli, home, journeys, latestRun, readRun, resetFixture, root, secret } from './helper.js';
+import { hornet, clearSignins, cli, home, journeys, latestRun, localDocumentHash, readRun, resetFixture, root, secret } from './helper.js';
 
 const projectFile = join(home, 'projects/fixture/project.yaml');
 
@@ -219,7 +219,7 @@ activities: [signin_smoke, functional_e2e]
 exclusions: []
 valid_from: "2026-01-01"
 valid_until: "2027-12-31"
-document: { path: local.txt, sha256: "0000000000000000000000000000000000000000000000000000000000000000" }
+document: { path: local.txt, sha256: "${localDocumentHash()}" }
 `);
   writeFileSync(join(home, 'projects', id, 'project.yaml'), `id: ${id}
 name: ${id}

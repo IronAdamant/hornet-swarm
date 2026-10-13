@@ -72,13 +72,14 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
     const first = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'layout.journey.yaml')]);
     expect(first.status).toBe(0);
     const runId = (readRun().result.run_id as string);
-    const baselinePng = join(home, 'baselines/fixture/layout-check/1.png');
+    const baselinePng = join(home, 'baselines/fixture/qa-user-1/layout-check/1.png');
     expect(hornet(['accept-baseline', runId, '--project', 'fixture', '--json']).status).toBe(0);
     const hash = createHash('sha256').update(readFileSync(baselinePng)).digest('hex');
     const same = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'layout.journey.yaml')]);
     expect(same.status).toBe(0);
     const sameDiff = diffFor(readRun(), 'layout-check');
     expect(sameDiff?.visual).toBe('same');
+    expect(sameDiff?.text).toBe('same');
     expect(sameDiff?.timing).not.toBe('slower');
     expect(createHash('sha256').update(readFileSync(baselinePng)).digest('hex')).toBe(hash);
     await resetFixture({ layout: 'changed' });
@@ -132,7 +133,7 @@ function chaos(): string[] {
   return analysis.chaos.actions;
 }
 
-function diffFor(report: ReturnType<typeof readRun>, id: string): { visual?: string; timing?: string } | undefined {
-  const users = report.analysis.users as { journeys: { id: string; steps: { screenshot_paths?: string[]; diff?: { visual?: string; timing?: string } }[] }[] }[];
+function diffFor(report: ReturnType<typeof readRun>, id: string): { visual?: string; timing?: string; text?: string } | undefined {
+  const users = report.analysis.users as { journeys: { id: string; steps: { screenshot_paths?: string[]; diff?: { visual?: string; timing?: string; text?: string } }[] }[] }[];
   return users[0]?.journeys.find((journey) => journey.id === id)?.steps.find((step) => (step.screenshot_paths ?? []).length > 0)?.diff;
 }

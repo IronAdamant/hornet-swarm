@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { HornetError, acceptBaseline, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
+import { HornetError, acceptBaseline, assertAuthorisationUsable, documentPath, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
 import { Command } from 'commander';
 
 const program = new Command();
@@ -245,6 +247,32 @@ program
     else process.stdout.write(`${view.website}\n${view.agents.map((agent) => `${agent.label}: ${agent.personality}`).join('\n')}\n`);
   });
 
+const auth = program.command('auth').description('Check an authorisation record');
+auth
+  .command('check')
+  .description('Check that an authorisation is in force and that its signed document is the one it names')
+  .argument('<id>', 'authorisation id, the file name in ~/.hornet-swarm/authorisations without .yaml')
+  .option('--json', 'print machine-readable JSON')
+  .action((id: string, opts: { json?: boolean }) => {
+    try {
+      const record = loadAuthorisation(id, aegisHomeForCli());
+      const path = record.document ? documentPath(record.document.path, aegisHomeForCli()) : undefined;
+      let actual: string | undefined;
+      try {
+        actual = path ? sha256File(path) : undefined;
+      } catch {
+        actual = undefined;
+      }
+      assertAuthorisationUsable(record, aegisHomeForCli());
+      const result = { ok: true, id, basis: record.basis, valid_until: record.valid_until, ...(path ? { document: path, sha256: actual } : {}) };
+      if (opts.json) writeJson(result);
+      else process.stdout.write(`${id} is in force until ${record.valid_until}.${path ? `\nDocument: ${path}\nsha256: ${actual}` : ''}\n`);
+    } catch (error) {
+      // The message names the real hash when the document changed, so the owner can check the file and record it.
+      fail(opts.json, messageOf(error), 3);
+    }
+  });
+
 program
   .command('stats')
   .description('Show how reliable the site has been across recent runs')
@@ -308,6 +336,10 @@ program
 program.parseAsync(process.argv).catch((error: unknown) => {
   fail(false, messageOf(error), 4);
 });
+
+function aegisHomeForCli(): string {
+  return process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm');
+}
 
 function readHidden(): Promise<string> {
   return new Promise((resolve, reject) => {

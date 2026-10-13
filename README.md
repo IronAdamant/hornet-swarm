@@ -31,9 +31,13 @@ pnpm hornet-swarm doctor
 
 Doctor also says whether system sleep can freeze a long run. Closing a MacBook lid sleeps it whatever that setting says, unless it is in clamshell mode.
 
-The age private key is created in the macOS Keychain the first time Hornet Swarm stores a password. The Keychain item is named `hornet-swarm-age-key`. An existing item named `aegis-age-key` still unlocks the store. The private key is not written into the project. It is read once per process and kept in memory until that process exits, so a screen lock after the first read does not stop the next account. A new key is created only when the Keychain says no item exists. A locked keychain or a damaged item stops with an error and leaves the Keychain alone. On Linux CI, set `SOPS_AGE_KEY` for that job only.
+The age private key is created in the macOS Keychain the first time Hornet Swarm stores a password. The Keychain item is named `hornet-swarm-age-key`. An existing item named `aegis-age-key` still unlocks the store. The private key is not written into the project. It is read once per process and kept in memory until that process exits, so a screen lock after the first read does not stop the next account. A new key is created only when the Keychain says no item exists. A locked keychain or a damaged item stops with an error and leaves the Keychain alone. A new key is handed to `security` on its standard input, never as a command argument, so `ps` never shows it. Only the `security` tool can read the item without asking. An item created by an earlier version lets any app read it. To tighten it without losing the key, open the item in Keychain Access, choose Access Control, select "Confirm before allowing access", and remove every app from the list except `security`. Do not delete the item: the stores encrypted with it cannot be read without it. On Linux CI, set `SOPS_AGE_KEY` for that job only.
 
-3. Add an authorisation file that names the domains you are allowed to test, then point a project at your local fixture or your own site. The checked-in examples are templates. Do not run them against a live site from this repo's tests. The offline fixture is `test/fixture-app`:
+3. Add an authorisation file that names the domains you are allowed to test, then point a project at your local fixture or your own site. An owner or contract authorisation names its signed document by path and sha256. A run stops when the file is missing or has changed. `hornet-swarm auth check <id>` says whether an authorisation is in force and prints its document's real hash. A relative document path is read from `~/.hornet-swarm/authorisations/`, and `~/` means your home folder.
+
+   `activities` decides what a run may do. The sign-in check needs `signin_smoke` or `functional_e2e`. A journey needs `functional_e2e`. An access check needs `access_control_checks`. An access check is a journey with an `access_denied` assertion, an `http_status` assertion that expects 401 or 403, or the tag `access-control`. Chaos needs `chaos`. `exclusions` are written for people and agents. Hornet Swarm cannot check them itself, so `get_swarm` shows them to every sub-agent.
+
+   The checked-in examples are templates. Do not run them against a live site from this repo's tests. The offline fixture is `test/fixture-app`:
 
 ```bash
 pnpm --filter @hornet-swarm/fixture-app start
@@ -68,7 +72,7 @@ pnpm hornet-swarm suite --project the-internet
 pnpm hornet-swarm stats --project the-internet
 ```
 
-The script installs a `public_practice` authorisation, the project, its journeys, and a swarm board with a personality and rules for each label, and it stores the published logins in the encrypted store. It reads each site's password from that site's own login page at install time, so no password is kept in this repo. If the page has changed, it asks for the password, or reads `HORNET_PRACTICE_PASSWORD`. It saves a dated copy of the page where each site says it is for practice as the authorisation's document. A `public_practice` authorisation needs that statement, refuses chaos and access-control probing, and caps a run at 10 requests a second in total, 5 per runner, and 6 runners. Other people use these sites too.
+The script installs a `public_practice` authorisation, the project, its journeys, and a swarm board with a personality and rules for each label, and it stores the published logins in the encrypted store. It reads each site's password from that site's own login page at install time, so no password is kept in this repo. If the page has changed, it asks for the password, or reads `HORNET_PRACTICE_PASSWORD`. It saves a dated copy of the page where each site says it is for practice as the authorisation's document. A `public_practice` authorisation needs that statement, refuses chaos and access-control probing, and caps a run at 10 requests a second in total, 5 per runner, and 6 runners working at once. Other people use these sites too.
 
 The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoint stalls when several files load at once over one connection, about one page load in three. `curl --http2` reproduces it with no Hornet Swarm involved. Its project sets `runners.http2: false` so the journeys run over HTTP/1.1. Set it to `true` to measure the stall.
 
@@ -81,7 +85,8 @@ The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoin
 - `hornet-swarm creds serve` opens the private login page on `127.0.0.1`.
 - `hornet-swarm creds add <project> <label>` asks for a username and password without showing the password.
 - `hornet-swarm export-evidence <run id> --project <id> --out proof.zip` packs the proof for one run.
-- `hornet-swarm accept-baseline <run id> --project <id>` saves the current screenshots as the comparison point.
+- `hornet-swarm accept-baseline <run id> --project <id>` saves the current screenshots, and the words on each screenshotted page, as the comparison point. Each label has its own baseline, because some accounts are meant to look different.
+- `hornet-swarm auth check <id>` checks an authorisation and its signed document.
 - `hornet-swarm stats --project <id>` shows how reliable the site has been over recent runs: pass rate, p50 and p95 timings, retries, and failing streaks, per journey and for sign-in. `--last <n>` picks how many runs. `--json` prints the same for an agent.
 - `hornet-swarm cleanup --days <n>` removes old runs now.
 
@@ -91,7 +96,7 @@ A macOS Shortcut can run `hornet-swarm kill` if you want a keyboard stop. Hornet
 
 ## Agents
 
-Open `http://127.0.0.1:7781/setup` to keep the website and up to ten logins. Start that page with `hornet-swarm creds serve` if it is not already open. Fill the website first, then the cards in order: username, password, a personality, and rules for that sub-agent. A personality is who the sub-agent plays. Rules are what it must and must not do. Press Ready and confirm with Touch ID. The passwords stay in the encrypted store. The page only answers on `127.0.0.1`, and the form carries a token, so another site open in your browser cannot submit it.
+Open `http://127.0.0.1:7781/setup` to keep the website and up to ten logins. Each card is its own label: card 3 is always `qa-user-3`. A card with a stored login keeps it when its username and password are left blank, so a personality or rule can be changed without typing every password again. Saving changes only the website, the login selectors, the first `url_contains` success check, the labels, and the runner counts in `project.yaml`. Comments and other settings stay. The allowed origins are kept while the website stays on the same origin. Start that page with `hornet-swarm creds serve` if it is not already open. Fill the website first, then the cards in order: username, password, a personality, and rules for that sub-agent. A personality is who the sub-agent plays. Rules are what it must and must not do. Press Ready and confirm with Touch ID. The passwords stay in the encrypted store. The page only answers on `127.0.0.1`, and the form carries a token, so another site open in your browser cannot submit it.
 
 After Ready, `hornet-swarm swarm --json` and the MCP tool `get_swarm` show the website, the labels, each label's personality and rules, and its latest notes. They do not show passwords. Each label is one sub-agent and one browser. The browser inside the container is full Chromium on a virtual screen, the same browser a person would use, rather than headless Chromium.
 
@@ -107,9 +112,11 @@ Each MCP connection has its own agent id. When a parent runs several sub-agents 
 
 ### Journeys an agent writes
 
-`run_journey` takes `journey_id` for a saved journey, or `journey_yaml` for one the agent wrote. A written journey gets the same checks as any other: allowed sites only, passive third parties cannot be filled or navigated, no literal password, and credentials only by handle such as `qa-user-1.password`. It is saved under `~/.hornet-swarm/projects/<id>/agent-journeys/` and cannot replace a project journey with the same id. This is still a scripted journey. There is no free-roaming browser.
+`run_journey` takes `journey_id` for a saved journey, or `journey_yaml` for one the agent wrote. A written journey gets the same checks as any other: allowed sites only, passive third parties cannot be filled or navigated, no literal password, and credentials only by handle such as `qa-user-1.password`. A navigate URL is checked after its `{{vars}}` are filled in. While a journey runs, the browser refuses to move its page to a passive origin, whether a step, a link, or a script tries. The journey stops there as `allowlist`. A passive origin can still load into a page, such as a font. A written journey is saved under `~/.hornet-swarm/projects/<id>/agent-journeys/` and cannot replace a project journey with the same id. This is still a scripted journey. There is no free-roaming browser. Agents name journeys and projects by id. A file path is refused.
 
 ### What agents cannot do
+
+`limits.max_parallel_runners` caps how many logins can be held in a project at once. Each held login is one working runner. A run that finds every slot in use waits for one, up to its deadline. `acquire_test_user` answers `parallel_limit` with a `busy_until` time.
 
 Any agent can engage the kill switch with `reset_environment` and `kill: true`. Only you can release it, with `hornet-swarm kill --release`. A reset is refused while another agent holds a login, and a hard reset (an image rebuild) is CLI-only.
 
@@ -135,13 +142,15 @@ A page is checked the way a person would see it.
 - A failed step records the page's own visible error text, such as `(page said: "Sorry, this user has been locked out.")`.
 - `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
 
-Requests are paced, not dropped. Each runner may send `limits.request_burst_per_runner` requests at once (20 by default), then `limits.max_requests_per_second_per_runner` per second. A busy page loads slower. It does not load broken. The egress proxy queues requests over `max_requests_per_second_total` the same way. A run is `rate_limited` only when the site itself answers 429 or 503 to more than one request in ten.
+Requests are paced, not dropped. Each runner may send `limits.request_burst_per_runner` requests at once (20 by default), then its share of the total per second. A busy page loads slower. It does not load broken. The share is `max_requests_per_second_total` divided by the number of runners that can work at once (the smaller of `max_parallel_runners` and the number of labels), and never more than `max_requests_per_second_per_runner`. The egress proxy sees an HTTPS connection only as a tunnel, so it cannot count the requests inside one. It paces new connections, and the runners keep the request total. Service workers are blocked, so a page's worker cannot send requests that skip this pacing. A run is `rate_limited` only when the site itself answers 429 or 503 to more than one request in ten.
 
 A captcha stops the journey only when a person could see it: a visible widget or challenge frame, or the words "verify you are human". Invisible reCAPTCHA v3, the reCAPTCHA badge, and a Turnstile script that never shows a widget are ignored. A second-code prompt needs a one-time-code field, a field named for a code, or wording that a code was sent. A postcode, promo code, or other short field is not a second code. A texted or emailed code waits for you on the local code page for up to `auth.operator_code_wait_sec` seconds (600 by default), and never past the run deadline.
 
 A runner that is missing or crashes becomes an error for that account only. The other accounts keep their results. A run where every account hit such an error is `error`, not `failed`, because the harness broke, not the site.
 
-A failed journey is copied to `~/.hornet-swarm/regressions/<project>/` and joins later `suite` runs until it passes three times in a row. Then the copy is removed and the ledger stays. A single `journey` or `run_journey` call does not add it.
+A journey that failed, errored, or was flaky for any label in a `suite` run is copied to `~/.hornet-swarm/regressions/<project>/` and joins later `suite` runs. It is fixed after three `suite` runs in a row where it passed for every label. Then the copy is removed and the ledger stays. A single `journey` or `run_journey` call neither adds a regression nor counts toward fixing one.
+
+A journey with `requires_phase1: false` runs even when that label's sign-in check did not pass. Other journeys are skipped then. Each journey runs in a fresh browser either way, so a journey that needs a session signs in itself.
 
 ## Runner output folders
 
@@ -172,10 +181,10 @@ The Linux job also runs `pnpm test:coverage`. That command fails the check when 
 
 The fixture includes pages shaped like a real site: a single-page app sign-in, a page with 65 resources and invisible captcha scripts, and a site that answers 429. The fixture password contains a space, an apostrophe, parentheses, `!`, and `~`, which an HTML form encodes differently from `encodeURIComponent`.
 
-On 12 October 2026 this Mac ran both commands against the offline fixture only.
+On 14 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 21 files passed and 119 tests passed.
+`pnpm test` exited 0. 24 files passed and 162 tests passed.
 
-`pnpm test:e2e` exited 0. 17 files passed and 47 tests passed.
+`pnpm test:e2e` passed. 18 files passed and 51 tests passed.
 
 The same day, live runs on the two practice sites gave the results each site is built to give. The Internet: both accounts signed in and all four journeys passed. Sauce Demo: `standard_user`, `performance_glitch_user` (8.4 s sign-ins), and `visual_user` passed checkout; `problem_user` failed at step 15 with the page saying "Error: Last Name is required"; `error_user` failed at step 17 because the order never completed; and `locked_out_user` was refused with "Sorry, this user has been locked out." A scan of every saved file, including traces, found no stored login in any encoding.

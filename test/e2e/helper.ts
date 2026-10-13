@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { releaseStoredLease } from '../../packages/controller/dist/index.js';
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import JSZip from 'jszip';
@@ -31,6 +32,17 @@ export function hornet(args: string[], input?: string, timeout = 180_000): { sta
       stderr: String(failed.stderr ?? ''),
     };
   }
+}
+
+/**
+ * Writes the signed document an owner authorisation names and returns its sha256 for the YAML.
+ * A run refuses an authorisation whose document is missing or has changed.
+ */
+export function localDocumentHash(name = 'local.txt'): string {
+  mkdirSync(join(home, 'authorisations'), { recursive: true });
+  const body = `Offline fixture authorisation (${name}). Test data only.\n`;
+  writeFileSync(join(home, 'authorisations', name), body);
+  return createHash('sha256').update(body).digest('hex');
 }
 
 export function clearSignins(): void {
