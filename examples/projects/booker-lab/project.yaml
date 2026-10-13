@@ -1,0 +1,44 @@
+# Installed to ~/.hornet-swarm/projects/booker-lab/ by: node scripts/setup-lab.mjs
+# Restful Booker Platform, a bed-and-breakfast site with an admin panel, running on this Mac.
+# The site has one admin login, published in its README, so the three labels share it. Guests book
+# and send messages without signing in. Restarting the booker's services resets its data.
+id: booker-lab
+name: Restful Booker lab (local)
+authorisation_id: lab-owner
+environment: test
+targets:
+  base_url: http://127.0.0.1:3300
+  allowed_origins:
+    - http://127.0.0.1:3300
+    - http://host.docker.internal:3300
+  # The location map asks for tiles from openstreetmap.org. They stay blocked so the lab is offline.
+  allowed_third_party: []
+auth:
+  signin_url: /admin
+  selectors:
+    username: "#username"
+    password: "#password"
+    submit: "#doLogin"
+  success:
+    - { type: url_contains, value: "/admin/rooms" }
+    - { type: selector_visible, value: "[data-testid='roomlisting'] >> nth=0" }
+  auth_endpoints: ["**/api/auth/login"]
+runners:
+  count: 3
+  memory: 1g
+  cpus: 1
+limits:
+  max_parallel_runners: 3
+  max_requests_per_second_per_runner: 10
+  request_burst_per_runner: 40
+  max_requests_per_second_total: 30
+  min_step_delay_ms: 100
+  max_run_duration_min: 30
+  max_signin_attempts_per_user_per_hour: 30
+phase2:
+  gate: per_user
+journeys_dir: ./journeys
+users:
+  - { label: qa-user-1, role: admin, tenant: booker }
+  - { label: qa-user-2, role: admin, tenant: booker }
+  - { label: qa-user-3, role: guest, tenant: booker }

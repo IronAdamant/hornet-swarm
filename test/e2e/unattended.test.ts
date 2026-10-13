@@ -105,12 +105,13 @@ describe('unattended swarm', () => {
     }
   });
 
-  it('records two clicks for a double-click chaos seed and hands the parent a clean packet', async () => {
+  it('double-clicks the sign-in button under a double-click seed and hands the parent a clean packet', async () => {
     clearSignins();
+    // The seed is joined with the label and journey. Find one that lands on step 3, the sign-in click.
     let seed = 'dbl-0';
-    for (let index = 0; index < 40; index += 1) {
+    for (let index = 0; index < 400; index += 1) {
       const candidate = `dbl-${index}`;
-      if (chaosSequence(candidate, 'double-click', 2).some((action) => action.kind === 'double-click')) {
+      if (chaosSequence(`${candidate}:qa-user-1:spa-login`, 'double-click', 8).some((action) => action.kind === 'double-click' && action.step === 3)) {
         seed = candidate;
         break;
       }
@@ -125,12 +126,12 @@ describe('unattended swarm', () => {
       '--seed',
       seed,
       '--journey',
-      join(journeys, 'flag.journey.yaml'),
+      join(journeys, 'spa-login.journey.yaml'),
     ]);
     expect(run.status, run.stdout + run.stderr).toBe(0);
     const report = readRun();
     const actions = (report.analysis.chaos as { actions?: string[] } | null)?.actions ?? [];
-    expect(actions.filter((action) => action === 'click').length).toBeGreaterThanOrEqual(2);
+    expect(actions).toContain('double-click:double-click');
     const packetPath = join(home, 'projects/fixture/latest-parent-report.json');
     const packet = readFileSync(packetPath, 'utf8');
     const parsed = JSON.parse(packet) as { validation_required: boolean; evidence_zip: string; instruction: string; summary: string; html_path: string };

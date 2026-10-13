@@ -362,7 +362,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
     regressions: listRegressions(home, project.id),
     next: diagnosis.next,
   });
-  const summary = summaryMarkdown(rich, status);
+  const summary = summaryMarkdown(rich, status, request.chaos);
   const artifacts = collectArtifacts(runDir);
   writeRunReports(runDir, result, analysis, summary, undefined, artifacts);
   writeFileSync(join(runDir, 'junit.xml'), junitXml(result));
@@ -552,7 +552,8 @@ async function executeIssued(
     if (totp.code) codes.push(totp.code);
   }
   const target = containerTarget(project);
-  const actions = chaos ? chaosSequence(chaos.seed, chaos.profile, journey.steps.length) : [];
+  // The label and journey join the seed, so each journey meets a different, still repeatable, pattern.
+  const actions = chaos ? chaosSequence(`${chaos.seed}:${label}:${journey.id}`, chaos.profile, journey.steps.length) : [];
   const gate = await openOperatorGate(project.id, label, home);
   const pollUrl = gate?.pollUrl;
   const rate = perRunnerRate(project);
@@ -928,22 +929,47 @@ function retentionDays(home: string): number {
 }
 
 /** Reliability for one project across its saved runs, newest `last` runs only. */
-export function reliabilityReport(projectId: string, last = 20, home = aegisHome()): ReliabilityReport {
+/**
+ * Reliability across recent runs. Chaos runs are left out by default, because a disruption the
+ * harness added is not the site's everyday reliability. `chaos: 'only'` reports on them alone.
+ */
+export function reliabilityReport(projectId: string, last = 20, home = aegisHome(), chaos: 'exclude' | 'only' = 'exclude'): ReliabilityReport {
   if (!/^[a-z0-9-]+$/.test(projectId)) throw new HornetError('Unknown project.', 3);
   const root = join(home, 'runs');
   const runs: RunResult[] = [];
+  let leftOut = 0;
   if (existsSync(root)) {
     for (const name of readdirSync(root).filter((entry) => entry.startsWith('run_')).sort()) {
       try {
         const parsed = runResultSchema.safeParse(JSON.parse(readFileSync(join(root, name, 'run.json'), 'utf8')));
-        if (parsed.success && parsed.data.project === projectId) runs.push(parsed.data);
+        if (!parsed.success || parsed.data.project !== projectId) continue;
+        const withChaos = runUsedChaos(join(root, name));
+        if (withChaos === (chaos === 'only')) runs.push(parsed.data);
+        else leftOut += 1;
       } catch {
         // A run folder without a readable run.json is skipped.
       }
     }
   }
   const size = Math.max(1, Math.min(500, Math.trunc(last)));
-  return summarizeReliability(projectId, runs.sort((left, right) => left.started_at.localeCompare(right.started_at)).slice(-size));
+  const report = summarizeReliability(projectId, runs.sort((left, right) => left.started_at.localeCompare(right.started_at)).slice(-size));
+  if (leftOut > 0) {
+    report.notes.push(
+      chaos === 'only'
+        ? `Only chaos runs are counted. ${leftOut} run${leftOut === 1 ? '' : 's'} without chaos ${leftOut === 1 ? 'was' : 'were'} left out.`
+        : `${leftOut} chaos run${leftOut === 1 ? ' was' : 's were'} left out. See them with --chaos.`,
+    );
+  }
+  return report;
+}
+
+function runUsedChaos(runDir: string): boolean {
+  try {
+    const analysis = JSON.parse(readFileSync(join(runDir, 'analysis.json'), 'utf8')) as { chaos?: unknown };
+    return Boolean(analysis.chaos);
+  } catch {
+    return false;
+  }
 }
 
 export function listProjectUsers(projectId: string, home = aegisHome()): { label: string; role: string; tenant: string }[] {

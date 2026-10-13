@@ -1,0 +1,27 @@
+version: 1
+id: cash-on-delivery
+name: Cash on delivery can be confirmed
+users: [qa-user-3]
+tags: [shopping, checkout]
+steps:
+  - navigate: { url: "/#/auth/login" }
+  - fill: { selector: "[data-test='email']", credential: "self.username" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='login-submit']" }
+  - wait: { for: navigation }
+  - assert: { type: selector_visible, value: "[data-test='nav-user-menu']" }
+  - navigate: { url: "/#/product/2" }
+  - wait: { for: selector, selector: "[data-test='add-to-cart']" }
+  - click: { selector: "[data-test='add-to-cart']" }
+  - assert: { type: selector_visible, value: "[data-test='cart-quantity']" }
+  - click: { selector: "[data-test='nav-cart']" }
+  - click: { selector: "[data-test='proceed-1']" }
+  - click: { selector: "[data-test='proceed-2']" }
+  - wait: { for: selector, selector: "[data-test='postcode']" }
+  - fill: { selector: "[data-test='postcode']", value: "2000" }
+  - fill: { selector: "[data-test='state']", value: "NSW" }
+  - click: { selector: "[data-test='proceed-3']" }
+  - select: { selector: "[data-test='payment-method']", label: "Cash on Delivery" }
+  - screenshot: { name: "cash-on-delivery-chosen" }
+  # Cash on delivery needs no extra details, so Confirm should be ready to press.
+  - assert: { type: selector_visible, value: "[data-test='finish']:enabled" }

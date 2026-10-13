@@ -19,6 +19,7 @@ export function validateJourneyDocument(
   const templateContext: TemplateContext = {
     vars: journey.vars,
     users: Object.fromEntries(project.users.map((user) => [user.label, { vars: user.vars }])),
+    run: { id: 'run_validate', label: journey.users[0] ?? 'qa-user-1' },
   };
   journey.steps.forEach((step, index) => {
     if ('fill' in step) {
@@ -33,6 +34,17 @@ export function validateJourneyDocument(
       if (step.fill.value && knownSecrets.some((secret) => secret.length >= 1 && step.fill.value?.includes(secret))) {
         errors.push(`step ${index}: literal value matches a stored secret`);
       }
+    }
+    if ('assert' in step && step.assert.type === 'field_value') {
+      if (!step.assert.selector || step.assert.value === undefined) errors.push(`step ${index}: field_value needs a selector and a value`);
+      if (step.assert.selector === project.auth.selectors.password) errors.push(`step ${index}: field_value may not read the password field`);
+    }
+    if ('assert' in step && step.assert.type !== 'field_value' && step.assert.selector !== undefined) {
+      errors.push(`step ${index}: only field_value takes a selector`);
+    }
+    if ('select' in step) {
+      const modes = [step.select.value, step.select.label].filter((value) => value !== undefined);
+      if (modes.length !== 1) errors.push(`step ${index}: select needs exactly one of value or label`);
     }
     if ('screenshot' in step && knownSecrets.some((secret) => secret.length >= 1 && step.screenshot.name.includes(secret))) {
       errors.push(`step ${index}: literal value matches a stored secret`);

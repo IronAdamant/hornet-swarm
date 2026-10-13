@@ -1,0 +1,19 @@
+version: 1
+id: favourites
+name: A saved favourite appears in the favourites list
+users: [qa-user-4]
+tags: [account]
+steps:
+  - navigate: { url: "/#/auth/login" }
+  - fill: { selector: "[data-test='email']", credential: "self.username" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='login-submit']" }
+  - wait: { for: navigation }
+  - assert: { type: selector_visible, value: "[data-test='nav-user-menu']" }
+  - navigate: { url: "/#/product/1" }
+  - wait: { for: selector, selector: "[data-test='add-to-favorites']" }
+  - click: { selector: "[data-test='add-to-favorites']" }
+  - wait: { for: timeout, ms: 1000 }
+  - navigate: { url: "/#/account/favorites" }
+  - assert: { type: text_visible, value: "Combination Pliers" }
+  - screenshot: { name: "favourites" }

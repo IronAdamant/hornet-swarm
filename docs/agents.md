@@ -18,7 +18,7 @@ Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. I
 2. Give each sub-agent one label, that label's personality and rules, the website, and the task. Give no passwords. There are none to give.
 3. If the sub-agents share your MCP connection, each one calls `register_agent` and uses its own id. One id holds one login at a time.
 4. Every result is a packet with `validation_required: true`. Check each sub-agent's report against its packet: the status, the first problem in `analysis`, and the screenshots. Then tell the owner the outcome with the run ids.
-5. After several runs, `get_reliability` gives pass rates, p50 and p95 timings, retries, and failing streaks. Call a site reliable only from that, not from one run.
+5. After several runs, `get_reliability` gives pass rates, p50 and p95 timings, retries, and failing streaks. Call a site reliable only from that, not from one run. Chaos runs are left out of those figures. Pass `chaos: true` to see them alone.
 
 ## A sub-agent
 
@@ -62,8 +62,10 @@ steps:
 
 - `self.username` and `self.password` mean the label running the journey. One journey can serve every label.
 - Each journey runs in a fresh browser, so it signs in itself.
-- Steps: `navigate`, `click`, `fill`, `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`.
-- Assertions: `url_contains`, `text_visible`, `selector_visible`, `selector_absent`, `http_status`, `access_denied`. The first four wait up to 10 seconds.
+- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label` or `value`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`.
+- Assertions: `url_contains`, `text_visible`, `selector_visible`, `selector_absent`, `http_status`, `access_denied`, and `field_value` (with a `selector`, for what a form field holds). `url_contains`, `text_visible`, `selector_visible`, and `field_value` wait up to 10 seconds.
+- Templates: `{{run.id}}` (a fresh made-up email per run, such as `nova.{{run.id}}@example.com`), `{{run.label}}`, `{{self.vars.city}}` (the running label's own value from the project), and `{{date.+30}}`.
+- Assert what a working site does. A planted or real bug then shows up as a failed step with the page's own words.
 - A selector is CSS, or `role=button[name='Sign in']` for an accessible name.
 - `validate_journey` checks a journey without running it. A journey that navigates off the allowed site, fills a passive third party, or contains a literal password is refused. A navigate URL is checked after its `{{vars}}` are filled in, and `//host/` counts as a site.
 - Name journeys by id, such as `signin-dashboard`. A file path is refused.
@@ -79,3 +81,11 @@ The Internet and Sauce Demo are public sites built for test-automation practice.
 - Read `exclusions` in `get_swarm`. They are the owner's written limits, such as never typing a real card number. Follow them as you would the label's rules.
 - Sauce Demo's accounts misbehave on purpose. `problem_user`, `error_user`, and `locked_out_user` are expected to fail somewhere. The useful result is the exact step and what the page did.
 - Never type real personal details into a checkout. The journeys use placeholders.
+
+## Local labs
+
+`node scripts/setup-lab.mjs` starts Toolshop (`toolshop-lab`) and Restful Booker (`booker-lab`) in Docker on this Mac. An `owner` authorisation covers them, so chaos is allowed and nothing touches a live service. Use made-up details only: `example.com` addresses, Testville, and test bank numbers.
+
+- Toolshop is the edition with deliberate bugs. A failed journey there is usually a real finding, not a broken test. Check the screenshot, then say which bug it is.
+- Under chaos, compare with a normal run of the same journeys. A check that passes normally but fails under chaos shows where the site does not recover. The analysis lists every chaos action, including those skipped because a form was half filled.
+

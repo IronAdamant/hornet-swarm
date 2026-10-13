@@ -76,6 +76,26 @@ The script installs a `public_practice` authorisation, the project, its journeys
 
 The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoint stalls when several files load at once over one connection, about one page load in three. `curl --http2` reproduces it with no Hornet Swarm involved. Its project sets `runners.http2: false` so the journeys run over HTTP/1.1. Set it to `true` to measure the stall.
 
+## Local labs
+
+Two open-source testing-practice apps run in Docker on this Mac, for hard practice that touches no live service. Every port is bound to `127.0.0.1`.
+
+- **Toolshop** (`toolshop-lab`, http://127.0.0.1:4300): the sprint 5 edition of Practice Software Testing, which ships with deliberate bugs. Five made-up customers with `example.com` addresses and random passwords, plus the seeded shop admin.
+- **Restful Booker** (`booker-lab`, http://127.0.0.1:3300): a bed-and-breakfast site with an admin panel. Its published admin password is a common word that its own pages also show, so redacting it would blank ordinary text. Its admin login is stored only when you set `HORNET_BOOKER_ADMIN_PASSWORD`.
+
+```bash
+pnpm build
+node scripts/setup-lab.mjs                       # --reset wipes both labs back to their seed data
+pnpm hornet-swarm env up --project toolshop-lab
+pnpm hornet-swarm suite --project toolshop-lab
+pnpm hornet-swarm suite --project toolshop-lab --chaos default --seed lab-1
+pnpm hornet-swarm stats --project toolshop-lab           # chaos runs are left out; add --chaos to see them alone
+```
+
+The script builds the shop's front end once, starts `labs/docker-compose.yml`, and writes an `owner` authorisation (`lab-owner`) that covers this Mac only, for 90 days. It allows sign-in checks, functional journeys, and chaos, but not cross-account checks yet. It signs up the made-up customers through the shop's own API and stores every login in the encrypted store. The shop admin's password is read from Toolshop's README. No password is kept in this repo or printed.
+
+The Toolshop journeys assert what a working shop does, so each planted bug becomes a failed step with the page's own words: the search button, the product page heading, an order that never gets its invoice, cash on delivery that cannot be confirmed, and a profile with the names swapped.
+
 ## Everyday commands
 
 - `hornet-swarm env up --count 10` starts the default fleet.
@@ -141,6 +161,11 @@ A page is checked the way a person would see it.
 - `http_status` and `access_denied` read the status of the last page load, whether a `navigate` step or a click caused it.
 - A failed step records the page's own visible error text, such as `(page said: "Sorry, this user has been locked out.")`.
 - `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
+- `select: { selector, label }` (or `value`) chooses from a dropdown. It focuses the field, chooses, and leaves it, as a person does, because some forms only record a choice from a field that was touched.
+- `assert: { type: field_value, selector, value }` checks what a form field holds, such as a profile's first name. It may not read the password field. A failure names what the field held.
+- Templates: `{{run.id}}` for a fresh made-up email on every run, `{{run.label}}`, `{{self.vars.first_name}}` for the running label's own values, and `{{date.+30}}` for the date 30 days from today.
+
+Chaos (`--chaos <profile> --seed <seed>`) adds delays, dropped requests, refreshes, back presses, and double clicks to journeys. The seed is joined with each label and journey, so each one meets a different pattern that the same seed repeats. A refresh or back is skipped while a form is half filled in, because a person who reloads mid-form types it again. A double click lands on the button the step presses, so it tests a double submission. Every skip is logged. Compare a chaos run with a normal one: a check that passes normally but fails under chaos shows where the site does not recover. On Toolshop, the first chaos runs found that a sign-in request lost once leaves the customer on the login page with no error.
 
 Requests are paced, not dropped. Each runner may send `limits.request_burst_per_runner` requests at once (20 by default), then its share of the total per second. A busy page loads slower. It does not load broken. The share is `max_requests_per_second_total` divided by the number of runners that can work at once (the smaller of `max_parallel_runners` and the number of labels), and never more than `max_requests_per_second_per_runner`. The egress proxy sees an HTTPS connection only as a tunnel, so it cannot count the requests inside one. It paces new connections, and the runners keep the request total. Service workers are blocked, so a page's worker cannot send requests that skip this pacing. A run is `rate_limited` only when the site itself answers 429 or 503 to more than one request in ten.
 
@@ -183,8 +208,10 @@ The fixture includes pages shaped like a real site: a single-page app sign-in, a
 
 On 14 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 24 files passed and 162 tests passed.
+`pnpm test` exited 0. 25 files passed and 173 tests passed.
 
 `pnpm test:e2e` passed. 18 files passed and 51 tests passed.
+
+The same day, the Toolshop lab ran five suites without chaos and one with it. Every planted bug the journeys check failed on every run, at the same step, with the page's own words. Contact, favourites, and sign-up passed every time. `docs/sample-report-toolshop-lab.md` is the write-up, in the form a client report would take.
 
 The same day, live runs on the two practice sites gave the results each site is built to give. The Internet: both accounts signed in and all four journeys passed. Sauce Demo: `standard_user`, `performance_glitch_user` (8.4 s sign-ins), and `visual_user` passed checkout; `problem_user` failed at step 15 with the page saying "Error: Last Name is required"; `error_user` failed at step 17 because the order never completed; and `locked_out_user` was refused with "Sorry, this user has been locked out." A scan of every saved file, including traces, found no stored login in any encoding.

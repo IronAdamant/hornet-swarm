@@ -1,0 +1,15 @@
+version: 1
+id: guest-browse
+name: A guest sees the rooms and checks availability
+users: [qa-user-3]
+requires_phase1: false
+tags: [booking]
+steps:
+  - navigate: { url: "/" }
+  - assert: { type: text_visible, value: "Shady Meadows B&B" }
+  - wait: { for: selector, selector: "a:has-text('Book now') >> nth=0" }
+  - screenshot: { name: "front-page", full_page: true }
+  - navigate: { url: "/reservation/1?checkin={{date.+40}}&checkout={{date.+42}}" }
+  - assert: { type: text_visible, value: "Room Features" }
+  - assert: { type: selector_visible, value: "role=button[name='Reserve Now']" }
+  - screenshot: { name: "room-1" }

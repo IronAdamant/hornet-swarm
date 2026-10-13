@@ -74,7 +74,36 @@ function pageLoadTimedOut(error?: string): boolean {
   return Boolean(error && PAGE_LOAD_TIMEOUT.test(error));
 }
 
-export function summaryMarkdown(users: RichUser[], status: RunResult['status']): string {
+/** What a failed step means, in words a site owner reads. Playwright's own timeouts become plain English. */
+function plainFailure(step: RichUser['journeys'][number]['steps'][number]): string {
+  const error = firstLine(step.error ?? '');
+  if (/^locator\.waitFor: Timeout \d+ms exceeded/i.test(error)) {
+    return step.assertion?.startsWith('selector_visible') ? 'it did not appear within 10 seconds' : 'the page element did not appear in time';
+  }
+  if (/^locator\.(click|fill|selectOption|focus): Timeout/i.test(error)) return 'the page element was not there to use';
+  return error || 'it failed';
+}
+
+/** Every failed journey, once. The same failure on several accounts is one line naming them all. */
+export function failureList(users: RichUser[]): string[] {
+  const groups = new Map<string, { labels: string[]; line: string }>();
+  for (const user of users) {
+    if (user.phase1.status !== 'pass') continue;
+    for (const journey of user.journeys) {
+      if (journey.status !== 'fail' && journey.status !== 'error' && journey.status !== 'flaky') continue;
+      const step = journey.steps.find((entry) => entry.status !== 'pass' && entry.status !== 'skipped');
+      const where = step ? `step ${step.index} (${describeStep(step)})` : 'before its first step';
+      const what = journey.status === 'flaky' ? 'passed only on a retry' : step ? plainFailure(step) : 'it failed';
+      const line = `${journey.name} · ${where}: ${what}`;
+      const group = groups.get(line) ?? { labels: [], line };
+      group.labels.push(user.label);
+      groups.set(line, group);
+    }
+  }
+  return [...groups.values()].map((group) => `${group.labels.join(', ')} · ${group.line}`);
+}
+
+export function summaryMarkdown(users: RichUser[], status: RunResult['status'], chaos?: { profile: string; seed: string }): string {
   const flaky = users.some((user) => user.journeys.some((journey) => journey.status === 'flaky' || journey.steps.some((step) => step.status === 'flaky')));
   const phaseFailed = users.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
   const has = (reason: StopReason) => anyReason(users, reason);
@@ -113,26 +142,33 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status']):
         : 'Sign-in did not work, so the later checks were not run. This is high. Fix sign-in first.';
   } else if (flaky) {
     paragraph = 'A check failed and then passed when it was tried again. That still counts as a failure. This is medium. Look at that check first.';
+  } else if (status !== 'passed' && failureList(users).length > 1) {
+    paragraph = `${failureList(users).length} checks did not pass. This is high. Each one is listed below with the step where it broke.`;
   } else if (status !== 'passed') {
     paragraph = 'A check did not pass. This is high. Look at the first thing that failed.';
   } else {
     paragraph = 'Sign-in worked and the checks that followed passed. Nothing needs fixing. This is low.';
   }
-  const signedIn = users.some((user) => user.phase1.status === 'pass');
-  const findings = ['Sign-in was checked.'];
-  if (signedIn && !phaseFailed) findings.push('The test account got in.');
-  if (users.some((user) => user.journeys.some((journey) => journey.steps.length > 0 && journey.status === 'pass'))) {
-    findings.push('The later checks passed.');
-  }
+  const signedIn = users.filter((user) => user.phase1.status === 'pass').length;
+  const findings = [users.length === 1 ? (signedIn ? 'Sign-in: the test account got in.' : 'Sign-in: the test account did not get in.') : `Sign-in: ${signedIn} of ${users.length} accounts got in.`];
+  const ran = users.flatMap((user) => user.journeys.filter((journey) => journey.steps.length > 0));
+  if (ran.length > 0) findings.push(`Journeys: ${ran.filter((journey) => journey.status === 'pass').length} of ${ran.length} passed.`);
+  const failures = failureList(users);
   if (flaky) findings.push('One check had to be tried again, and the overall result stays failed.');
   if (breach) findings.push('One account could see a page that belongs to someone else.');
   if (has('captcha')) findings.push('A human check stopped the run.');
   if (has('2fa')) findings.push('A second code stopped the run.');
   if (rateLimited) findings.push('The site pushed back with HTTP 429 or 503.');
+  for (const failure of failures) findings.push(`Failed: ${failure}`);
   const first = diagnose(users, status);
-  if (status !== 'passed') findings.push(`First problem: ${first.suspected}`);
+  if (status !== 'passed' && failures.length === 0) findings.push(`First problem: ${first.suspected}`);
   if (status === 'passed' && !flaky) findings.push('Nothing needs a change.');
-  return `${paragraph}\n\nFindings:\n${findings.map((line) => `- ${line}`).join('\n')}\n`;
+  // Under chaos, compare with a normal run: a check that passes normally but failed here is a
+  // place where the site did not recover from a lost request, a delay, a refresh, or a double click.
+  const chaosNote = chaos
+    ? `\n\nThis run added chaos (profile ${chaos.profile}, seed ${chaos.seed}). Compare it with a run without chaos. A check that passes normally but failed here shows where the site did not recover from a lost request, a delay, a refresh, or a double click.`
+    : '';
+  return `${paragraph}${chaosNote}\n\nFindings:\n${findings.map((line) => `- ${line}`).join('\n')}\n`;
 }
 
 const REASON_TEXT: Record<string, string> = {

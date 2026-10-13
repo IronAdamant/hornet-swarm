@@ -21,8 +21,11 @@ export const assertionSchema = z
       'selector_absent',
       'http_status',
       'access_denied',
+      'field_value',
     ]),
     value: z.string().optional(),
+    /** field_value only: the form field whose current value must equal `value`. */
+    selector: z.string().optional(),
   })
   .strict();
 
@@ -210,6 +213,18 @@ const fillStep = z
       .strict(),
   })
   .strict();
+/** Chooses an option in a <select> by its value or by the text a person sees. */
+const selectStep = z
+  .object({
+    select: z
+      .object({
+        selector: z.string(),
+        value: z.string().optional(),
+        label: z.string().optional(),
+      })
+      .strict(),
+  })
+  .strict();
 const waitStep = z
   .object({
     wait: z
@@ -248,6 +263,7 @@ export const stepSchema = z.union([
   navigateStep,
   clickStep,
   fillStep,
+  selectStep,
   waitStep,
   assertStep,
   uploadStep,

@@ -1,0 +1,21 @@
+version: 1
+id: admin-pages
+name: The admin's report, branding, and messages pages load
+users: [qa-user-2]
+tags: [admin]
+steps:
+  - navigate: { url: "/admin" }
+  - fill: { selector: "#username", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#doLogin" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/admin/rooms" }
+  - navigate: { url: "/admin/report" }
+  - assert: { type: selector_visible, value: "role=button[name='Today']" }
+  - screenshot: { name: "report-calendar" }
+  - navigate: { url: "/admin/branding" }
+  - assert: { type: field_value, selector: "#name", value: "Shady Meadows B&B" }
+  - screenshot: { name: "branding" }
+  - navigate: { url: "/admin/message" }
+  - assert: { type: text_visible, value: "Subject" }
+  - screenshot: { name: "messages" }

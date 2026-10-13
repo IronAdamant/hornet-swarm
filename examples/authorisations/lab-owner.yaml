@@ -1,0 +1,26 @@
+# Installed to ~/.hornet-swarm/authorisations/ by: node scripts/setup-lab.mjs
+# The local practice labs in labs/docker-compose.yml: open-source apps running on the owner's own
+# Mac, bound to 127.0.0.1. No public site is covered. setup-lab.mjs writes the signed statement,
+# sets the dates, and records the statement's sha256 below.
+id: lab-owner
+basis: owner
+client: Iron Adamant (self-hosted practice labs)
+authoriser:
+  name: Aron Amos
+  role: Owner
+  email: aron.amos@ironadamant.com
+granted_to: Aron Amos (Iron Adamant) and the agents he runs
+scope:
+  domains: [localhost, host.docker.internal]
+  environments: [test]
+# Cross-account checks are left out until the security work is scoped.
+activities: [signin_smoke, functional_e2e, chaos]
+exclusions:
+  - Any host other than this Mac
+  - Real personal or payment details
+valid_from: "2026-10-14"
+valid_until: "2027-01-12"
+document:
+  path: lab-owner-statement.txt
+  sha256: "set-by-setup-lab"
+notes: Toolshop (sprint 5 with deliberate bugs) and Restful Booker Platform, run from Docker Hub images.

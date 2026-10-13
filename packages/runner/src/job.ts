@@ -178,9 +178,10 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   mkdirSync(job.outDir, { recursive: true });
   const redactor = new Redactor();
   for (const [handle, value] of secrets) redactor.register(handle, value);
-  const contextTemplate: TemplateContext = { vars: job.vars, users: job.users };
+  const contextTemplate: TemplateContext = { vars: job.vars, users: job.users, run: { id: job.runId, label: job.label } };
   const steps: JobReport['steps'] = [];
   const chaosApplied: string[] = [];
+  let formInProgress = false;
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   let context: BrowserContext | undefined;
   let status: JobReport['status'] = 'passed';
@@ -281,12 +282,23 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
       const assertions: string[] = [];
       const screenshots: string[] = [];
       try {
-        await applyChaos(job.chaosActions.filter((action) => action.step === index), page, context, chaosApplied, (count) => {
-          dropLeft += count;
-        });
+        const chaosEffect = await applyChaos(
+          job.chaosActions.filter((action) => action.step === index),
+          page,
+          context,
+          chaosApplied,
+          (count) => {
+            dropLeft += count;
+          },
+          { formInProgress, clickStep: 'click' in step },
+        );
+        const navBefore = nav.count;
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
         if (!('wait' in step) && !('assert' in step) && !('screenshot' in step)) nav.mark = nav.count;
-        const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted);
+        const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted, chaosEffect.doubleClick);
+        // Typed-in values stay on the page until it navigates away. Chaos must not refresh them away.
+        if ('fill' in step || 'select' in step) formInProgress = true;
+        if ('navigate' in step || nav.count !== navBefore) formInProgress = false;
         if (passiveNavigation) throw new Error(`blocked_by_allowlist: the page tried to open the passive origin ${passiveNavigation}`);
         const challenge = await detectChallenge(page);
         const decision = await resolveChallenge({
@@ -399,6 +411,7 @@ async function runStep(
   screenshots: string[],
   nav: NavState,
   isAborted: () => boolean,
+  doubleClick = false,
 ): Promise<{ statusCode: number; httpStatus?: number }> {
   if ('navigate' in step) {
     const url = absolute(renderTemplate(step.navigate.url, template), job.baseUrl);
@@ -411,7 +424,9 @@ async function runStep(
   if ('click' in step) {
     selectors.push(step.click.selector);
     const target = locate(page, step.click.selector);
-    await target.click({ timeout: 15_000 });
+    // Chaos double-click presses the step's own button twice, as an impatient person does.
+    if (doubleClick) await target.dblclick({ timeout: 15_000 });
+    else await target.click({ timeout: 15_000 });
     return { statusCode: 0 };
   }
   if ('fill' in step) {
@@ -430,6 +445,17 @@ async function runStep(
       text = value;
     }
     await locate(page, step.fill.selector).fill(text, { timeout: 15_000 });
+    return { statusCode: 0 };
+  }
+  if ('select' in step) {
+    selectors.push(step.select.selector);
+    const option = step.select.value !== undefined ? { value: renderTemplate(step.select.value, template) } : { label: renderTemplate(step.select.label ?? '', template) };
+    // Focus, choose, then leave the field, as a person does. Some forms (Angular's among them)
+    // only record the choice once the field has been touched.
+    const target = locate(page, step.select.selector);
+    await target.focus({ timeout: 15_000 });
+    await target.selectOption(option, { timeout: 15_000 });
+    await target.blur();
     return { statusCode: 0 };
   }
   if ('wait' in step) {
@@ -466,6 +492,16 @@ async function runStep(
       await page.waitForLoadState('networkidle', { timeout: 3_000 }).catch(() => undefined);
       if ((await locate(page, value).count()) > 0 && (await locate(page, value).first().isVisible().catch(() => false))) {
         throw new Error('selector was still visible');
+      }
+    }
+    if (step.assert.type === 'field_value') {
+      const field = step.assert.selector ?? '';
+      selectors.push(field);
+      assertions[assertions.length - 1] = `field_value ${field} = ${value}`;
+      const read = () => locate(page, field).inputValue({ timeout: 2_000 }).catch(() => undefined);
+      if (!(await pollUntil(async () => (await read()) === value, ASSERT_TIMEOUT_MS, isAborted))) {
+        const actual = await read();
+        throw new Error(actual === undefined ? 'field was not found' : `field held "${actual.slice(0, 80)}"`);
       }
     }
     if (step.assert.type === 'http_status') {
@@ -565,7 +601,8 @@ async function visibleMessage(page: Page): Promise<string> {
         .map((element) => (element as HTMLElement).innerText.replace(/\s+/g, ' ').trim())
         .filter(Boolean),
     );
-    const first = texts[0] ?? '';
+    // A message has words. Leftover values such as "true" or "0" in an alert box are not one.
+    const first = texts.find((text) => /[a-z]{2,}/i.test(text) && !/^(true|false|null|undefined)$/i.test(text)) ?? '';
     return first.length > 200 ? `${first.slice(0, 197)}...` : first;
   } catch {
     return '';
@@ -700,26 +737,38 @@ async function detectChallenge(page: Page): Promise<'captcha' | '2fa' | undefine
   return classifyChallenge({ text, frames, widgets, inputs });
 }
 
-async function applyChaos(
+/**
+ * Applies this step's chaos. A refresh or back is skipped while a form is half filled in, because
+ * a person who reloads mid-form types it again; wiping the form would test the robot, not the site.
+ * A double-click lands on the step's own button, so only a click step can take one.
+ */
+export async function applyChaos(
   actions: ChaosAction[],
   page: Page,
   context: BrowserContext,
   applied: string[],
   drop: (count: number) => void,
-): Promise<void> {
+  state: { formInProgress: boolean; clickStep: boolean } = { formInProgress: false, clickStep: false },
+): Promise<{ doubleClick: boolean }> {
+  let doubleClick = false;
   for (const action of actions) {
+    if ((action.kind === 'refresh' || action.kind === 'back') && state.formInProgress) {
+      applied.push(`${action.kind}:skipped (form in progress)`);
+      continue;
+    }
+    if (action.kind === 'double-click' && !state.clickStep) {
+      applied.push('double-click:skipped (not a click step)');
+      continue;
+    }
     applied.push(`${action.kind}:${action.detail}`);
     if (action.kind === 'latency' || action.kind === 'slow-api') await page.waitForTimeout(parseMs(action.detail));
     if (action.kind === 'refresh') await page.reload({ timeout: 10_000 }).catch(() => undefined);
     if (action.kind === 'back') await page.goBack({ timeout: 10_000 }).catch(() => undefined);
     if (action.kind === 'offline') await context.setOffline(true);
     if (action.kind === 'drop' || action.kind === 'fail-api') drop(action.detail === 'twice' ? 2 : 1);
-    if (action.kind === 'double-click') {
-      await page.locator('body').dblclick({ timeout: 5_000, position: { x: 4, y: 4 } }).catch(() => undefined);
-      applied.push('click');
-      applied.push('click');
-    }
+    if (action.kind === 'double-click') doubleClick = true;
   }
+  return { doubleClick };
 }
 
 async function maskSecrets(page: Page, secrets: SecretMap): Promise<void> {

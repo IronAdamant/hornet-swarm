@@ -1,0 +1,35 @@
+version: 1
+id: new-room-bookable
+name: A room the admin adds can be booked by a guest
+description: >
+  The admin creates a room, then a guest books it for two nights a month from now. Booking the
+  same nights again must be refused.
+users: [qa-user-1]
+tags: [rooms, booking]
+steps:
+  - navigate: { url: "/admin" }
+  - fill: { selector: "#username", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#doLogin" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/admin/rooms" }
+  - fill: { selector: "#roomName", value: "9{{date.+0}}" }
+  - select: { selector: "#type", label: "Double" }
+  - select: { selector: "#accessible", label: "true" }
+  - fill: { selector: "#roomPrice", value: "180" }
+  - click: { selector: "#wifiCheckbox" }
+  - click: { selector: "#createRoom" }
+  - assert: { type: text_visible, value: "9{{date.+0}}" }
+  - screenshot: { name: "room-created" }
+  - navigate: { url: "/" }
+  - wait: { for: selector, selector: "a:has-text('Book now') >> nth=-1" }
+  - click: { selector: "a:has-text('Book now') >> nth=-1" }
+  - wait: { for: selector, selector: "role=button[name='Reserve Now']" }
+  - click: { selector: "role=button[name='Reserve Now']" }
+  - fill: { selector: "input[name='firstname']", value: "Avery" }
+  - fill: { selector: "input[name='lastname']", value: "Labguest" }
+  - fill: { selector: "input[name='email']", value: "avery.labguest@example.com" }
+  - fill: { selector: "input[name='phone']", value: "04123456789" }
+  - click: { selector: "role=button[name='Reserve Now']" }
+  - assert: { type: text_visible, value: "Booking Confirmed" }
+  - screenshot: { name: "booking-confirmed" }

@@ -1,0 +1,111 @@
+# Local practice labs. Every port is bound to 127.0.0.1, so only this Mac can reach them.
+# Runners reach them as host.docker.internal. Set up with: node scripts/setup-lab.mjs
+#
+#   Toolshop (Practice Software Testing, sprint 5 with deliberate bugs)
+#     shop  http://127.0.0.1:4300    api  http://127.0.0.1:8091
+#   Restful Booker Platform (a bed-and-breakfast site with an admin panel)
+#     site  http://127.0.0.1:3300
+name: hornet-lab
+
+# The booker's services share the site container's network, because the published site image
+# sends some requests to localhost:3001 whatever its settings say. Every address is localhost.
+x-rbp: &rbp
+  network_mode: service:rbp-site
+  depends_on: [rbp-site]
+  restart: unless-stopped
+  mem_limit: 448m
+
+x-rbp-env: &rbp-env
+  profile: prod
+  authDomain: localhost
+  bookingDomain: localhost
+  messageDomain: localhost
+  roomDomain: localhost
+  JAVA_OPTS: -Xms64m -Xmx256m -XX:MaxMetaspaceSize=96m -XX:+UseContainerSupport -XX:+UseSerialGC
+
+services:
+  toolshop-db:
+    image: yobasystems/alpine-mariadb:10.6.11
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: user
+      MYSQL_PASSWORD: root
+      MYSQL_DATABASE: toolshop
+    restart: unless-stopped
+    mem_limit: 512m
+
+  laravel-api:
+    image: testsmith/practice-software-testing-sprint5-with-bugs-api
+    platform: linux/amd64
+    environment:
+      - DB_HOST=toolshop-db
+      - DB_PORT=3306
+      - host=localhost
+      - DISABLE_LOGGING=true
+    volumes:
+      - toolshop-code:/var/www
+    depends_on: [toolshop-db]
+    restart: unless-stopped
+    mem_limit: 512m
+
+  toolshop-api:
+    image: testsmith/practice-software-testing-web
+    volumes:
+      - toolshop-code:/var/www
+    ports:
+      - "127.0.0.1:8091:80"
+    depends_on: [laravel-api]
+    restart: unless-stopped
+    mem_limit: 128m
+
+  # The shop's Angular build, made by setup-lab.mjs with its API at host.docker.internal:8091.
+  toolshop-ui:
+    image: nginx:alpine
+    volumes:
+      - ${HOME}/.hornet-swarm/labs/toolshop-ui:/usr/share/nginx/html:ro
+      - ./toolshop-ui.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:4300:80"
+    restart: unless-stopped
+    mem_limit: 64m
+
+  rbp-site:
+    image: mwinteringham/restfulbookerplatform_assets
+    environment:
+      BOOKING_API: http://localhost:3000
+      ROOM_API: http://localhost:3001
+      BRANDING_API: http://localhost:3002
+      AUTH_API: http://localhost:3004
+      MESSAGE_API: http://localhost:3006
+      REPORT_API: http://localhost:3005
+    ports:
+      - "127.0.0.1:3300:80"
+    restart: unless-stopped
+    mem_limit: 256m
+  rbp-booking:
+    <<: *rbp
+    image: mwinteringham/restfulbookerplatform_booking
+    environment: *rbp-env
+  rbp-room:
+    <<: *rbp
+    image: mwinteringham/restfulbookerplatform_room
+    environment: *rbp-env
+  rbp-branding:
+    <<: *rbp
+    image: mwinteringham/restfulbookerplatform_branding
+    environment: *rbp-env
+  rbp-auth:
+    <<: *rbp
+    image: mwinteringham/restfulbookerplatform_auth
+    environment: *rbp-env
+  rbp-report:
+    <<: *rbp
+    image: mwinteringham/restfulbookerplatform_report
+    environment: *rbp-env
+  rbp-message:
+    <<: *rbp
+    image: mwinteringham/restfulbookerplatform_message
+    environment: *rbp-env
+
+volumes:
+  toolshop-code:

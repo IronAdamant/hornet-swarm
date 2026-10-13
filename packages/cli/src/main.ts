@@ -278,12 +278,13 @@ program
   .description('Show how reliable the site has been across recent runs')
   .option('--project <id>', 'project id')
   .option('--last <n>', 'how many recent runs to include', '20')
+  .option('--chaos', 'count only chaos runs (they are left out by default)')
   .option('--json', 'print machine-readable JSON')
-  .action((opts: { project?: string; last: string; json?: boolean }) => {
+  .action((opts: { project?: string; last: string; chaos?: boolean; json?: boolean }) => {
     const last = Number(opts.last);
     if (!Number.isInteger(last) || last < 1 || last > 500) fail(opts.json, 'last must be an integer from 1 to 500', 3);
     try {
-      const report = reliabilityReport(opts.project ?? defaultProjectFromHome(), last);
+      const report = reliabilityReport(opts.project ?? defaultProjectFromHome(), last, undefined, opts.chaos ? 'only' : 'exclude');
       if (opts.json) writeJson(report);
       else process.stdout.write(reliabilityMarkdown(report));
     } catch (error) {

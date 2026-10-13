@@ -1,0 +1,28 @@
+version: 1
+id: register
+name: A new customer signs up and signs in
+description: Signs up a fresh made-up address on every run, using this label's stored password.
+users: [qa-user-2]
+requires_phase1: false
+tags: [account, signup]
+steps:
+  - navigate: { url: "/#/auth/register" }
+  - wait: { for: selector, selector: "[data-test='first-name']" }
+  - fill: { selector: "[data-test='first-name']", value: "Nova" }
+  - fill: { selector: "[data-test='last-name']", value: "Lab" }
+  - fill: { selector: "[data-test='dob']", value: "1991-03-09" }
+  - fill: { selector: "[data-test='address']", value: "1 Test Street" }
+  - fill: { selector: "[data-test='postcode']", value: "2000" }
+  - fill: { selector: "[data-test='city']", value: "Testville" }
+  - fill: { selector: "[data-test='state']", value: "NSW" }
+  - select: { selector: "[data-test='country']", label: "Australia" }
+  - fill: { selector: "[data-test='phone']", value: "0412345678" }
+  - fill: { selector: "[data-test='email']", value: "nova.{{run.id}}@example.com" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='register-submit']" }
+  - assert: { type: url_contains, value: "/auth/login" }
+  - fill: { selector: "[data-test='email']", value: "nova.{{run.id}}@example.com" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='login-submit']" }
+  - assert: { type: selector_visible, value: "[data-test='nav-user-menu']" }
+  - screenshot: { name: "new-customer-signed-in" }

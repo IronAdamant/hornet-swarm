@@ -403,14 +403,14 @@ server.registerTool(
   'get_reliability',
   {
     description:
-      'How reliable the site has been across recent runs: pass rate, p50 and p95 timings, failing streaks, and retries, per journey and for sign-in.',
-    inputSchema: z.object({ project: z.string(), last: z.number().int().min(1).max(500).optional() }),
+      'How reliable the site has been across recent runs: pass rate, p50 and p95 timings, failing streaks, and retries, per journey and for sign-in. Chaos runs are left out unless chaos is true, which counts only them.',
+    inputSchema: z.object({ project: z.string(), last: z.number().int().min(1).max(500).optional(), chaos: z.boolean().optional() }),
   },
-  async ({ project, last }) => {
+  async ({ project, last, chaos }) => {
     const invalid = badProject(project);
     if (invalid) return invalid;
     try {
-      return pack(project, reliabilityReport(project, last ?? 20, home()));
+      return pack(project, reliabilityReport(project, last ?? 20, home(), chaos ? 'only' : 'exclude'));
     } catch (error) {
       return pack(project, { ok: false, error: error instanceof HornetError ? error.message : 'No reliability data.' });
     }
