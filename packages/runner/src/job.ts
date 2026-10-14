@@ -326,10 +326,13 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           steps.push(finishStep(index, kind, 'blocked', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, blocked, undefined, 'stopped'));
           break;
         }
-        const said = await visibleMessage(page);
         const raw = error instanceof Error ? error.message : String(error);
-        // The page's own error text tells an agent why, such as "this user has been locked out".
-        const message = redactor.redact(said ? raw.replace(/^([^\n]*)/, `$1 (page said: "${said}")`) : raw);
+        // The page's own words tell an agent why, such as "this user has been locked out", so the
+        // error quotes them instead of leaving the agent to read a screenshot.
+        const clues = await failureClues(page, step, contextTemplate);
+        const message = redactor.redact(clues.length > 0 ? raw.replace(/^([^\n]*)/, `$1 (${clues.join('; ')})`) : raw);
+        // A picture and the page's words at the moment it failed, for every failed step.
+        await captureFailure(page, job, index, secrets, redactor, screenshots);
         const reason = classifyBlockedReason(message);
         if (reason) {
           status = 'blocked';
@@ -540,9 +543,9 @@ async function runStep(
       mask: [page.locator('input[type="password"], [data-hornet-swarm-secret]')],
     });
     screenshots.push(path);
-    // The visible text beside the picture lets a later run say whether the words on the page changed.
-    const text = await page.locator('body').innerText().catch(() => '');
-    writeFileSync(join(job.outDir, `${step.screenshot.name}.txt`), redactor.redact(text), 'utf8');
+    // The words beside the picture, and what each form field holds, which a screenshot shows but
+    // the page's text leaves out. A later run can say whether either changed.
+    writeFileSync(join(job.outDir, `${step.screenshot.name}.txt`), redactor.redact(await pageSnapshotText(page)), 'utf8');
     return { statusCode: 0 };
   }
   return { statusCode: 0 };
@@ -586,7 +589,161 @@ function finishStep(
   };
 }
 
-const MESSAGE_SELECTORS = '[role="alert"], [data-test="error"], [aria-live="assertive"], .error-message-container, .flash, .alert, .error, .invalid-feedback';
+const MESSAGE_SELECTORS =
+  '[role="alert"], [data-test="error"], [aria-live="assertive"], .error-message-container, .flash, .alert, .error, .invalid-feedback, .toast-message, .toast, .snackbar, .notification, [role="status"]';
+
+const FORM_FIELDS = 'input:not([type="hidden"]):not([type="password"]):not([type="file"]):not([type="submit"]):not([type="button"]), select, textarea';
+
+/**
+ * The page's visible words, then what each visible form field holds and which buttons are
+ * disabled. The page's text alone leaves out field values, so it cannot show that a field reads
+ * "missing value" or that Confirm is greyed out. Password fields are never read.
+ */
+export async function pageSnapshotText(page: Page): Promise<string> {
+  const body = await page.locator('body').innerText().catch(() => '');
+  const fields = await page
+    .locator(FORM_FIELDS)
+    .evaluateAll((elements) =>
+      elements
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+        })
+        .map((element) => {
+          const field = element as HTMLInputElement;
+          const name =
+            field.labels?.[0]?.textContent?.trim() ||
+            field.getAttribute('aria-label') ||
+            field.getAttribute('placeholder') ||
+            field.getAttribute('name') ||
+            field.getAttribute('data-test') ||
+            field.id ||
+            field.tagName.toLowerCase();
+          let value: string;
+          if (field.tagName === 'SELECT') {
+            const choice = element as HTMLSelectElement;
+            value = choice.value ? (choice.selectedOptions[0]?.textContent?.trim() ?? choice.value) : '(nothing chosen)';
+          }
+          else if (field.type === 'checkbox' || field.type === 'radio') value = field.checked ? 'checked' : 'not checked';
+          else value = field.value ? field.value : '(empty)';
+          return `- ${name.replace(/\s+/g, ' ').slice(0, 60)}: ${value.replace(/\s+/g, ' ').slice(0, 120)}${field.disabled ? ' (disabled)' : ''}`;
+        }),
+    )
+    .catch(() => [] as string[]);
+  const disabled = await page
+    .locator('button:disabled, input[type="submit"]:disabled, [role="button"][aria-disabled="true"]')
+    .evaluateAll((elements) =>
+      elements
+        .filter((element) => element.getBoundingClientRect().width > 0)
+        .map((element) => `- ${((element as HTMLElement).innerText || element.getAttribute('value') || element.getAttribute('aria-label') || 'button').trim().slice(0, 60)} (disabled)`),
+    )
+    .catch(() => [] as string[]);
+  const sections = [body.trim()];
+  if (fields.length > 0) sections.push(`Form fields:\n${fields.join('\n')}`);
+  if (disabled.length > 0) sections.push(`Disabled buttons:\n${disabled.join('\n')}`);
+  return `${sections.join('\n\n')}\n`;
+}
+
+async function captureFailure(page: Page, job: JobRequest, index: number, secrets: SecretMap, redactor: Redactor, screenshots: string[]): Promise<void> {
+  try {
+    await maskSecrets(page, secrets);
+    const path = join(job.outDir, `failed-step-${index}.png`);
+    await page.screenshot({ path, timeout: 5_000, mask: [page.locator('input[type="password"], [data-hornet-swarm-secret]')] });
+    screenshots.push(path);
+    writeFileSync(join(job.outDir, `failed-step-${index}.txt`), redactor.redact(await pageSnapshotText(page)), 'utf8');
+  } catch {
+    // A page that has crashed or closed has nothing to capture. The step error still stands.
+  }
+}
+
+/** Similarity of two short strings from 0 to 1, by edit distance. */
+export function similarity(left: string, right: string): number {
+  const a = left.toLowerCase();
+  const b = right.toLowerCase();
+  if (a === b) return 1;
+  if (!a.length || !b.length) return 0;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    previous = current;
+  }
+  return 1 - (previous[b.length] ?? 0) / Math.max(a.length, b.length);
+}
+
+/** The words on the page closest to what a check expected, such as "Reltded products" for "Related products". */
+export function closestText(lines: string[], expected: string): string | undefined {
+  const want = expected.trim();
+  const size = want.split(/\s+/).length;
+  let best: { text: string; score: number } | undefined;
+  for (const line of lines) {
+    const words = line.trim().split(/\s+/).filter(Boolean);
+    for (let start = 0; start + size <= words.length; start += 1) {
+      const text = words.slice(start, start + size).join(' ');
+      const score = similarity(text, want);
+      if (score < 1 && score >= 0.6 && (!best || score > best.score)) best = { text, score };
+    }
+  }
+  return best?.text;
+}
+
+const ERROR_LINE = /\berr+or\b|went wrong|failed|invalid|missing|required|unavailable|out of stock|sold out/i;
+
+/**
+ * What the page shows about a failed step: its own message, the state of the element the step
+ * used (disabled, hidden, or what it actually reads), the closest words to an expected text, and
+ * other error lines on the page. Each is short, and the whole list is kept under 500 characters.
+ */
+export async function failureClues(page: Page, step: Step, template: TemplateContext): Promise<string[]> {
+  const clues: string[] = [];
+  const said = await visibleMessage(page);
+  if (said) clues.push(`page said: "${said}"`);
+  let target = '';
+  if ('click' in step) target = step.click.selector;
+  else if ('fill' in step) target = step.fill.selector;
+  else if ('select' in step) target = step.select.selector;
+  else if ('wait' in step && step.wait.selector) target = step.wait.selector;
+  else if ('assert' in step && (step.assert.type === 'selector_visible' || step.assert.type === 'field_value')) target = step.assert.selector ?? step.assert.value ?? '';
+  const hasText = /:has-text\((['"])(.*?)\1\)/.exec(target);
+  const base = target.replace(/:has-text\((['"]).*?\1\)/g, '').replace(/:enabled\b/g, '').trim();
+  if (base) {
+    try {
+      const element = locate(page, base).first();
+      if ((await element.count()) > 0) {
+        if (await element.isDisabled({ timeout: 1_000 }).catch(() => false)) clues.push('it is on the page but disabled');
+        else if (!(await element.isVisible().catch(() => true))) clues.push('it is on the page but hidden');
+        if (hasText?.[2]) {
+          const reads = ((await element.innerText({ timeout: 1_000 }).catch(() => '')) || (await element.inputValue({ timeout: 500 }).catch(() => ''))).replace(/\s+/g, ' ').trim();
+          if (reads && !reads.includes(hasText[2])) clues.push(`it reads "${reads.slice(0, 60)}"`);
+        }
+      } else if (!('assert' in step && step.assert.type === 'field_value')) {
+        clues.push(`nothing on the page matches ${base}`);
+      }
+    } catch {
+      // A selector the page cannot parse adds no clue.
+    }
+  }
+  const body = await page.locator('body').innerText().catch(() => '');
+  const lines = body.split('\n').map((line) => line.replace(/\s+/g, ' ').trim()).filter((line) => line.length > 0 && line.length <= 160);
+  const expected = 'assert' in step && step.assert.type === 'text_visible' ? renderTemplate(step.assert.value ?? '', template) : hasText?.[2];
+  if (expected) {
+    const near = closestText(lines, expected);
+    if (near) clues.push(`closest text on the page: "${near}"`);
+  }
+  const errors = [...new Set(lines.filter((line) => ERROR_LINE.test(line) && !said.includes(line)))].slice(0, 2);
+  for (const line of errors) clues.push(`page also shows: "${line.slice(0, 120)}"`);
+  const kept: string[] = [];
+  let length = 0;
+  for (const clue of clues) {
+    if (length + clue.length > 500) break;
+    kept.push(clue);
+    length += clue.length;
+  }
+  return kept;
+}
 
 /** The first visible error or alert text on the page, up to 200 characters. */
 async function visibleMessage(page: Page): Promise<string> {

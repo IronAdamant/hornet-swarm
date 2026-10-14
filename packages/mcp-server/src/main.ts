@@ -3,7 +3,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { parallelRunners, Redactor, validateJourneyYaml } from '@hornet-swarm/core';
 import {
@@ -29,6 +30,7 @@ import {
   swarmSnapshot,
 } from '@hornet-swarm/controller';
 import { homedir } from 'node:os';
+import { changedSince, settledFingerprints, staleBuilds } from './freshness.js';
 
 const home = () => process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm');
 const sessionAgentId = `mcp-${randomBytes(16).toString('hex')}`;
@@ -60,7 +62,38 @@ function useAgent(supplied: string | undefined): { ok: true; agentId: string } |
 
 
 
+// A server started before `pnpm build` keeps serving the old journey rules. It refuses to start on
+// a stale build, and once the build changes under it, every tool asks for a restart instead.
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const startedAt = Date.now();
+const startPrints = settledFingerprints(repoRoot);
+const staleAtStart = staleBuilds(repoRoot);
+if (staleAtStart.length > 0) {
+  process.stderr.write(`Hornet Swarm's source is newer than its build in ${staleAtStart.join(', ')}. Run pnpm build, then start the MCP server again.\n`);
+  process.exit(1);
+}
+let freshness = { checkedAt: 0, message: '' };
+function rebuiltMessage(): string {
+  if (Date.now() - freshness.checkedAt < 2_000) return freshness.message;
+  const rebuilt = changedSince(repoRoot, startPrints);
+  freshness = {
+    checkedAt: Date.now(),
+    message:
+      rebuilt.length > 0
+        ? `Hornet Swarm was rebuilt (${rebuilt.join(', ')}) after this MCP server started at ${new Date(startedAt).toISOString()}. Restart the MCP server so it uses the new code. Nothing was run.`
+        : '',
+  };
+  return freshness.message;
+}
+
 const server = new McpServer({ name: 'hornet-swarm', version: '0.1.0' });
+type ToolHandler = (...args: unknown[]) => unknown;
+const registerOriginal = server.registerTool.bind(server) as unknown as (name: string, config: unknown, handler: ToolHandler) => unknown;
+(server as unknown as { registerTool: typeof registerOriginal }).registerTool = (name, config, handler) =>
+  registerOriginal(name, config, async (...args: unknown[]) => {
+    const stale = rebuiltMessage();
+    return stale ? pack(undefined, { ok: false, error: stale }) : handler(...args);
+  });
 
 server.registerTool(
   'register_agent',

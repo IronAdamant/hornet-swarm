@@ -159,7 +159,10 @@ A page is checked the way a person would see it.
 - `wait: { for: navigation }` waits for the page to navigate after the last action, including a single-page app that changes the URL with `history.pushState`. A login that renders in place without changing the URL ends the wait once the network has been quiet for half a second.
 - `url_contains` and `text_visible` retry for up to 10 seconds, like `selector_visible`. `access_denied` retries for up to 5 seconds. `selector_absent` waits for the network to go quiet (up to 3 seconds) first, so content that renders late is still seen.
 - `http_status` and `access_denied` read the status of the last page load, whether a `navigate` step or a click caused it.
-- A failed step records the page's own visible error text, such as `(page said: "Sorry, this user has been locked out.")`.
+- A failed step quotes the page in brackets: its message or toast (`page said: "Sorry, this user has been locked out."`), whether the control was disabled or what it reads (`it reads "Serch"`), the closest words to an expected text (`closest text on the page: "Reltded products"`), and other error lines (`page also shows: "Errror 304 - Missing Payment Gateway"`). It also saves `failed-step-<n>.png` and `failed-step-<n>.txt`.
+- Each `.txt` beside a screenshot holds the page's visible words, then `Form fields:` with what each field holds and `Disabled buttons:`. A page's text alone leaves out field values. Password fields are never read. The parent packet lists these files in `page_text_paths`.
+- `gate_passed` only means every account signed in. A summary for a failed run says so.
+- The MCP server refuses to start when the source is newer than the build, and once the code is rebuilt under it, every tool asks for a restart and runs nothing.
 - `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
 - `select: { selector, label }` (or `value`) chooses from a dropdown. It focuses the field, chooses, and leaves it, as a person does, because some forms only record a choice from a field that was touched.
 - `assert: { type: field_value, selector, value }` checks what a form field holds, such as a profile's first name. It may not read the password field. A failure names what the field held.
@@ -208,7 +211,7 @@ The fixture includes pages shaped like a real site: a single-page app sign-in, a
 
 On 14 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 25 files passed and 173 tests passed.
+`pnpm test` exited 0. 25 files passed and 182 tests passed.
 
 `pnpm test:e2e` passed. 18 files passed and 51 tests passed.
 

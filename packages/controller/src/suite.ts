@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { parse } from 'yaml';
 import {
   activitiesPermitted,
@@ -102,6 +102,8 @@ export type ParentPacket = {
   evidence_zip: string;
   html_path: string;
   screenshot_paths: string[];
+  /** The page's words and form-field values beside each screenshot. Quote these, not a reading of the picture. */
+  page_text_paths: string[];
   trace_paths: string[];
   packet_path: string;
   instruction: string;
@@ -159,7 +161,8 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   const knownSecrets = projectSecretValues(project.id, home);
   for (const journey of journeys) {
     const checked = validateJourneyYaml(journey.text, project, knownSecrets);
-    if (!checked.valid || !checked.journey) throw new HornetError(checked.errors.join('; '), 3);
+    // Name the journey, so "steps.19: Invalid input" says which of several files to fix.
+    if (!checked.valid || !checked.journey) throw new HornetError(`${journeyIdOf(journey.text) ?? basename(journey.file)}: ${checked.errors.join('; ')}`, 3);
     journey.journey = checked.journey;
   }
   const activities = activitiesPermitted(auth, { signIn: true, journeys: journeys.map((entry) => entry.journey as Journey) });
@@ -193,6 +196,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
    * Returns 'busy' when another agent holds the label, and 'stopped' when the kill switch or the
    * deadline came while this run waited for one of the project's runner slots.
    */
+  const busyUntil = new Map<string, string | undefined>();
   const hold = async (label: string, work: () => Promise<void>): Promise<'held' | 'busy' | 'stopped'> => {
     const acquire = (audit: boolean) =>
       acquireLease({
@@ -223,7 +227,8 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
     }
     if (!lease.ok) {
       if (lease.reason === 'agent_already_holds') throw new HornetError('agent already holds a login', 3);
-      if (phaseResults.length === 0) throw new HornetError(`busy until ${lease.busyUntil ?? 'later'}`, 3);
+      busyUntil.set(label, lease.busyUntil);
+      if (phaseResults.length === 0) throw new HornetError(busyMessage(label, lease.busyUntil), 3);
       return 'busy';
     }
     const intervalMs = Math.max(20, Math.min(60_000, Math.floor(ttlMs / 3)));
@@ -253,7 +258,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         if (phase1.report.blocked_reason === 'duration') durationStop = true;
       });
       // A login another agent took mid-run is recorded for that label. The labels already checked keep their results.
-      if (held === 'busy') phaseResults.push({ label, report: leaseBusyReport() });
+      if (held === 'busy') phaseResults.push({ label, report: leaseBusyReport(label, busyUntil.get(label)) });
       if (held === 'stopped') phaseResults.push({ label, report: killed ? killReport() : durationReport() });
       if (killed || durationStop) break;
     }
@@ -421,8 +426,21 @@ export function runOutcome(statuses: ReadonlyArray<StepResult['status']>): 'fail
   return 'none';
 }
 
-function leaseBusyReport(): JobReport {
-  return { ok: false, status: 'blocked', blocked_reason: 'lease_busy', steps: [], chaosApplied: [] };
+/** A login another agent holds: which label, until when, and that it says nothing about the site. */
+export function busyMessage(label: string, until?: string): string {
+  const when = until && !Number.isNaN(Date.parse(until)) ? isoOffset(new Date(until)) : 'later';
+  return `${label} is busy until ${when}: another agent holds its login. This is not a site failure. Run it again after that time.`;
+}
+
+function leaseBusyReport(label: string, until?: string): JobReport {
+  const now = new Date().toISOString();
+  return {
+    ok: false,
+    status: 'blocked',
+    blocked_reason: 'lease_busy',
+    steps: [{ index: 0, type: 'lease', status: 'blocked', duration_ms: 0, started_at: now, finished_at: now, blocked_reason: 'lease_busy', error: busyMessage(label, until) }],
+    chaosApplied: [],
+  };
 }
 
 /** A runner that is missing, unhealthy, or drops the connection becomes an error for that label only. The other labels keep running. */
@@ -762,6 +780,7 @@ export function writeErrorOutcome(input: {
       evidence_zip: '',
       html_path: '',
       screenshot_paths: [],
+      page_text_paths: [],
       trace_paths: [],
       packet_path: packetPath,
       instruction: PARENT_INSTRUCTION,
@@ -1332,8 +1351,9 @@ function writeRunReports(
   writeFileSync(join(runDir, 'report.html'), emit(htmlReport(result, summary, artifacts)));
 }
 
-function collectArtifacts(runDir: string): { screenshots: string[]; traces: string[] } {
+function collectArtifacts(runDir: string): { screenshots: string[]; texts: string[]; traces: string[] } {
   const screenshots: string[] = [];
+  const texts: string[] = [];
   const traces: string[] = [];
   const walk = (dir: string) => {
     if (!existsSync(dir)) return;
@@ -1343,12 +1363,16 @@ function collectArtifacts(runDir: string): { screenshots: string[]; traces: stri
         walk(path);
         continue;
       }
-      if (name.endsWith('.png')) screenshots.push(path);
+      if (name.endsWith('.png')) {
+        screenshots.push(path);
+        const text = path.replace(/\.png$/, '.txt');
+        if (existsSync(text)) texts.push(text);
+      }
       if (name === 'trace.zip') traces.push(path);
     }
   };
   walk(runDir);
-  return { screenshots, traces };
+  return { screenshots, texts, traces };
 }
 
 export async function publishParent(input: {
@@ -1361,7 +1385,7 @@ export async function publishParent(input: {
   durationStop: boolean;
   killed: boolean;
   redactor: Redactor;
-  artifacts: { screenshots: string[]; traces: string[] };
+  artifacts: { screenshots: string[]; texts?: string[]; traces: string[] };
   redactionFailed: boolean;
   maxRunDurationMin?: number;
   deadline?: number;
@@ -1387,6 +1411,7 @@ export async function publishParent(input: {
     evidence_zip: evidenceZip,
     html_path: join(input.runDir, 'report.html'),
     screenshot_paths: input.artifacts.screenshots,
+    page_text_paths: input.artifacts.texts ?? [],
     trace_paths: input.artifacts.traces,
     packet_path: packetPath,
     instruction: PARENT_INSTRUCTION,
@@ -1397,7 +1422,7 @@ export async function publishParent(input: {
   };
   let encoded = JSON.stringify(packet, null, 2);
   if (input.redactor.contains(encoded)) {
-    const candidates = [evidenceZip, join(input.runDir, 'evidence.zip'), join(input.runDir, 'report.html'), ...input.artifacts.screenshots, ...input.artifacts.traces];
+    const candidates = [evidenceZip, join(input.runDir, 'evidence.zip'), join(input.runDir, 'report.html'), ...input.artifacts.screenshots, ...(input.artifacts.texts ?? []), ...input.artifacts.traces];
     for (const file of candidates) {
       if (!file || !fileContainsSecret(file, input.redactor)) continue;
       quarantineFile(file);
@@ -1407,6 +1432,7 @@ export async function publishParent(input: {
     packet.analysis = { withheld: true };
     packet.evidence_zip = '';
     packet.screenshot_paths = [];
+    packet.page_text_paths = [];
     packet.trace_paths = [];
     packet.html_path = '';
     encoded = JSON.stringify(packet, null, 2);

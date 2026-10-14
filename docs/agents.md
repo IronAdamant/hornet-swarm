@@ -10,14 +10,16 @@ The owner does these. An agent does not.
 2. The project exists with its logins stored. For the practice sites: `node scripts/setup-practice.mjs the-internet` or `saucedemo`.
 3. `hornet-swarm env up --project <id>` has started one healthy runner per label.
 
-Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. In Claude Code, `.mcp.json` in this repo registers it as `hornet-swarm`, and `.claude/agents/hornet-swarm-tester.md` defines a sub-agent for one label.
+Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. Restart it after every `pnpm build`. A server whose code was rebuilt under it answers every tool with "Restart the MCP server" and runs nothing, and it refuses to start when the source is newer than the build. In Claude Code, `.mcp.json` in this repo registers it as `hornet-swarm`, and `.claude/agents/hornet-swarm-tester.md` defines a sub-agent for one label.
 
 ## The parent
 
 1. `get_swarm` for the project. Check `ready` is true, `kill_switch` is false, and each label's runner is healthy. Read each label's `personality`, `rules`, and latest `notes`.
 2. Give each sub-agent one label, that label's personality and rules, the website, and the task. Give no passwords. There are none to give.
 3. If the sub-agents share your MCP connection, each one calls `register_agent` and uses its own id. One id holds one login at a time.
-4. Every result is a packet with `validation_required: true`. Check each sub-agent's report against its packet: the status, the first problem in `analysis`, and the screenshots. Then tell the owner the outcome with the run ids.
+4. Every result is a packet with `validation_required: true`. Check each sub-agent's report against its packet: the status, every `Failed:` line in the summary, and the page text. Then tell the owner the outcome with the run ids.
+   - `gate_passed: true` only means every account signed in. It says nothing about the journeys.
+   - "qa-user-5 is busy until ..." means another agent holds that login. It is not a site failure. Run it again after that time.
 5. After several runs, `get_reliability` gives pass rates, p50 and p95 timings, retries, and failing streaks. Call a site reliable only from that, not from one run. Chaos runs are left out of those figures. Pass `chaos: true` to see them alone.
 
 ## A sub-agent
@@ -25,7 +27,9 @@ Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. I
 1. `register_agent`, then pass `agent_id` on every call.
 2. `run_signin_check` with `users: [<label>]`.
 3. `run_journey` with `users: [<label>]`, and `journey_id` or `journey_yaml`.
-4. Open the screenshots and check them before reporting anything as broken.
+4. Quote the page, not your reading of the picture. A failed step's error already quotes what the page showed: its message or toast, whether the control was disabled or what it reads, the closest words to the text the check expected, and other error lines. Every failed step also saves `failed-step-<n>.png` and `failed-step-<n>.txt`. `page_text_paths` in the packet lists each `.txt` beside its screenshot.
+   - A `.txt` holds the page's visible words, then `Form fields:` (what each field holds, such as `- Postcode: missing value`) and `Disabled buttons:`. Password fields are never read, and stored logins are masked.
+   - Copy spellings from the `.txt`. A screenshot is easy to misread: "Reltded" is not "Relteded", and "Oeps" is not "Oops".
 5. `add_agent_note` for what you learned, then `release_test_user`.
 
 ## What a status means

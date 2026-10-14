@@ -6,8 +6,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { authorisationSchema, chaosSequence, projectSchema, renderTemplate, validateJourneyDocument, type Project } from '../../packages/core/src/index.ts';
 import { reliabilityReport } from '../../packages/controller/src/suite.ts';
+import { utimesSync } from 'node:fs';
 import { failureList, summaryMarkdown } from '../../packages/report/src/render.ts';
-import { executeJob, type JobRequest } from '../../packages/runner/src/job.ts';
+import { closestText, executeJob, type JobRequest } from '../../packages/runner/src/job.ts';
+import { busyMessage } from '../../packages/controller/src/suite.ts';
+import { changedSince, settledFingerprints, staleBuilds } from '../../packages/mcp-server/src/freshness.ts';
+import { writeErrorsOnPassingSteps } from '../../packages/report/src/render.ts';
 
 const root = join(import.meta.dirname, '..', '..');
 const readYaml = (path: string): unknown => parse(readFileSync(path, 'utf8'));
@@ -154,6 +158,17 @@ describe('the runner on a real page', () => {
     server = createServer((req, res) => {
       if (req.url === '/submit') submits += 1;
       res.writeHead(200, { 'content-type': 'text/html' });
+      if (req.url === '/shop') {
+        res.end(`<!doctype html><html><body>
+<h2>Reltded products</h2>
+<div class="toast-message">Oeps, something went wrong.</div>
+<label for="postcode">Postcode</label><input id="postcode" value="missing value">
+<p>Errror 304 - Missing Payment Gateway</p>
+<button data-test="finish" disabled>Confirm</button>
+<button data-test="search">Serch</button>
+</body></html>`);
+        return;
+      }
       res.end(`<!doctype html><html><body>
 <select id="country"><option value="">Pick</option><option value="AU">Australia</option><option value="NZ">New Zealand</option></select>
 <input id="city" value="Testville"><input id="name">
@@ -228,4 +243,73 @@ describe('the runner on a real page', () => {
     expect(report.chaosApplied).toEqual(['refresh:skipped (form in progress)', 'double-click:double-click']);
     expect(submits - before).toBe(2);
   }, 60_000);
+
+  it('quotes the page when a check fails: the closest heading, the toast, and other error lines', async () => {
+    const request = job([{ navigate: { url: '/shop' } }, { assert: { type: 'text_visible', value: 'Related products' } }], 'quote');
+    const report = await executeJob(request, new Map(), () => false);
+    const error = report.steps.at(-1)?.error ?? '';
+    expect(error).toContain('closest text on the page: "Reltded products"');
+    expect(error).toContain('page said: "Oeps, something went wrong."');
+    expect(error).toContain('Errror 304 - Missing Payment Gateway');
+    // The failed step leaves its own picture and the page's words, form values included.
+    const text = readFileSync(join(request.outDir, 'failed-step-1.txt'), 'utf8');
+    expect(text).toContain('Reltded products');
+    expect(text).toContain('- Postcode: missing value');
+    expect(text).toContain('- Confirm (disabled)');
+    expect(report.steps.at(-1)?.screenshot_paths?.some((path) => path.endsWith('failed-step-1.png'))).toBe(true);
+  }, 60_000);
+
+  it('says a control is disabled, or what a button actually reads', async () => {
+    const disabled = await executeJob(job([{ navigate: { url: '/shop' } }, { assert: { type: 'selector_visible', value: "[data-test='finish']:enabled" } }], 'disabled'), new Map(), () => false);
+    expect(disabled.steps.at(-1)?.error).toContain('it is on the page but disabled');
+    expect(disabled.steps.at(-1)?.error).toContain('Errror 304 - Missing Payment Gateway');
+    const label = await executeJob(job([{ navigate: { url: '/shop' } }, { assert: { type: 'selector_visible', value: "[data-test='search']:has-text('Search')" } }], 'label'), new Map(), () => false);
+    expect(label.steps.at(-1)?.error).toContain('it reads "Serch"');
+  }, 60_000);
+});
+
+describe('small helpers behind the clearer reports', () => {
+  it('finds the closest words on the page, and nothing when no line is close', () => {
+    expect(closestText(['Home', 'Reltded products', 'Contakt'], 'Related products')).toBe('Reltded products');
+    expect(closestText(['Thanks for shopping'], 'Payment declined')).toBeUndefined();
+  });
+
+  it('names a busy login, its time, and that the site is not at fault', () => {
+    const text = busyMessage('qa-user-5', '2026-10-14T00:16:18.745Z');
+    expect(text).toContain('qa-user-5 is busy until 2026-10-14');
+    expect(text).toContain('This is not a site failure.');
+  });
+
+  it('notes a passing step whose write was refused', () => {
+    const users = [
+      { label: 'qa-user-4', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'favourites', name: 'Favourites', status: 'pass', duration_ms: 1, steps: [{ index: 7, type: 'click', status: 'pass', duration_ms: 1, started_at: '', finished_at: '', network_errors: [{ method: 'POST', url: 'http://host.docker.internal:8091/favorites', status: 409 }, { method: 'GET', url: 'http://host.docker.internal:8091/users/me', status: 401 }] }] }] },
+    ] as unknown as Parameters<typeof writeErrorsOnPassingSteps>[0];
+    expect(writeErrorsOnPassingSteps(users)).toEqual(['qa-user-4 · Favourites · step 7 passed, but POST /favorites answered 409.']);
+  });
+
+  it('spots a build older than its source, and a rebuild that changed the code', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hornet-fresh-'));
+    const src = join(root, 'packages', 'core', 'src');
+    const dist = join(root, 'packages', 'core', 'dist');
+    mkdirSync(src, { recursive: true });
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, 'index.js'), 'export const a = 1;');
+    writeFileSync(join(src, 'index.ts'), 'export const a = 1;');
+    utimesSync(join(dist, 'index.js'), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    expect(staleBuilds(root)).toEqual(['core']);
+    utimesSync(join(dist, 'index.js'), new Date(Date.now() + 5_000), new Date(Date.now() + 5_000));
+    expect(staleBuilds(root)).toEqual([]);
+    const prints = settledFingerprints(root);
+    writeFileSync(join(dist, 'index.js'), 'export const a = 1;');
+    expect(changedSince(root, prints)).toEqual([]);
+    writeFileSync(join(dist, 'index.js'), 'export const a = 2;');
+    expect(changedSince(root, prints)).toEqual(['core']);
+  });
+});
+
+describe('the summary explains the sign-in gate', () => {
+  it('says a passed gate does not mean the journeys passed', () => {
+    const users = [{ label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'cart', name: 'Cart', status: 'fail', duration_ms: 1, steps: [{ index: 3, type: 'assert', status: 'fail', duration_ms: 1, started_at: '', finished_at: '', error: 'text was not visible' }] }] }] as unknown as Parameters<typeof summaryMarkdown>[0];
+    expect(summaryMarkdown(users, 'failed')).toContain('Sign-in gate: passed, because every account signed in. It does not mean the journeys passed.');
+  });
 });

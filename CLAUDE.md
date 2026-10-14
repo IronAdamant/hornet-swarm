@@ -6,6 +6,7 @@ A local harness that checks websites through isolated Chromium containers, one p
 
 - `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:e2e`.
 - End-to-end tests import `packages/*/dist`. Rebuild after a source change. Rebuild the images with `pnpm image` after a change to the runner or to `egress-proxy.ts`.
+- Restart the MCP server after `pnpm build`. A running server whose code changed answers every tool with a restart request, and `pnpm hornet-swarm env reset --project <id>` puts runners on a rebuilt image.
 - Tests use the offline fixture in `test/fixture-app` only. Never point a test at a live site.
 - Commit as the owner: `git -c user.name="Aron Amos" -c user.email="aron.amos@ironadamant.com" commit ...`. Leave `.stele-context/` untracked.
 

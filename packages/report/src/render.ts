@@ -77,11 +77,41 @@ function pageLoadTimedOut(error?: string): boolean {
 /** What a failed step means, in words a site owner reads. Playwright's own timeouts become plain English. */
 function plainFailure(step: RichUser['journeys'][number]['steps'][number]): string {
   const error = firstLine(step.error ?? '');
-  if (/^locator\.waitFor: Timeout \d+ms exceeded/i.test(error)) {
-    return step.assertion?.startsWith('selector_visible') ? 'it did not appear within 10 seconds' : 'the page element did not appear in time';
+  // Keep the page's words that the runner added in brackets; only Playwright's own prefix changes.
+  const waited = /^locator\.waitFor: Timeout \d+ms exceeded\.?\s*/i.exec(error);
+  if (waited) {
+    const plain = step.assertion?.startsWith('selector_visible') ? 'it did not appear within 10 seconds' : 'the page element did not appear in time';
+    return `${plain}${error.slice(waited[0].length) ? ` ${error.slice(waited[0].length)}` : ''}`;
   }
-  if (/^locator\.(click|fill|selectOption|focus): Timeout/i.test(error)) return 'the page element was not there to use';
+  const acted = /^locator\.(click|fill|selectOption|focus|dblclick): Timeout \d+ms exceeded\.?\s*/i.exec(error);
+  if (acted) return `the page element was not there to use${error.slice(acted[0].length) ? ` ${error.slice(acted[0].length)}` : ''}`;
   return error || 'it failed';
+}
+
+/**
+ * A step can pass while a write behind it was refused, such as a favourite that was already saved
+ * (409). That is not a failure, but a reader should know, so each one gets a short note.
+ */
+export function writeErrorsOnPassingSteps(users: RichUser[]): string[] {
+  const notes: string[] = [];
+  for (const user of users) {
+    for (const journey of user.journeys) {
+      for (const step of journey.steps) {
+        if (step.status !== 'pass') continue;
+        for (const entry of step.network_errors ?? []) {
+          if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(entry.method) || entry.status < 400 || entry.status >= 500) continue;
+          let path = entry.url;
+          try {
+            path = new URL(entry.url).pathname;
+          } catch {
+            // Keep the address as recorded.
+          }
+          notes.push(`${user.label} · ${journey.name} · step ${step.index} passed, but ${entry.method} ${path} answered ${entry.status}.`);
+        }
+      }
+    }
+  }
+  return [...new Set(notes)].slice(0, 5);
 }
 
 /** Every failed journey, once. The same failure on several accounts is one line naming them all. */
@@ -123,7 +153,8 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   } else if (has('2fa')) {
     paragraph = 'The site asked for a second code, so the checks stopped. This is high. A person needs to look at that page.';
   } else if (has('lease_busy')) {
-    paragraph = 'Another agent was using one of these logins, so that account was not checked. Run it again when the login is free.';
+    const busy = users.filter((user) => user.phase1.blocked_reason === 'lease_busy').map((user) => user.phase1.error ?? `${user.label} is busy: another agent holds its login.`);
+    paragraph = `Another agent was using ${busy.length === 1 ? 'one of these logins' : 'some of these logins'}, so ${busy.length === 1 ? 'that account was' : 'those accounts were'} not checked. This is not a site failure. ${busy.join(' ')}`.trim();
   } else if (rateLimited) {
     paragraph = 'The site answered "too many requests" or "unavailable" (HTTP 429 or 503) to more than one request in ten, so the checks stopped to avoid overloading it. This is high. Check the site\'s capacity or its rate limits.';
   } else if (has('signin_limit')) {
@@ -153,6 +184,10 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   const findings = [users.length === 1 ? (signedIn ? 'Sign-in: the test account got in.' : 'Sign-in: the test account did not get in.') : `Sign-in: ${signedIn} of ${users.length} accounts got in.`];
   const ran = users.flatMap((user) => user.journeys.filter((journey) => journey.steps.length > 0));
   if (ran.length > 0) findings.push(`Journeys: ${ran.filter((journey) => journey.status === 'pass').length} of ${ran.length} passed.`);
+  // gate_passed only means every account signed in. Say so, so no agent reads it as a pass.
+  if (status !== 'passed' && users.length > 0 && signedIn === users.length) {
+    findings.push('Sign-in gate: passed, because every account signed in. It does not mean the journeys passed.');
+  }
   const failures = failureList(users);
   if (flaky) findings.push('One check had to be tried again, and the overall result stays failed.');
   if (breach) findings.push('One account could see a page that belongs to someone else.');
@@ -160,6 +195,7 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   if (has('2fa')) findings.push('A second code stopped the run.');
   if (rateLimited) findings.push('The site pushed back with HTTP 429 or 503.');
   for (const failure of failures) findings.push(`Failed: ${failure}`);
+  for (const note of writeErrorsOnPassingSteps(users)) findings.push(`Note: ${note}`);
   const first = diagnose(users, status);
   if (status !== 'passed' && failures.length === 0) findings.push(`First problem: ${first.suspected}`);
   if (status === 'passed' && !flaky) findings.push('Nothing needs a change.');
@@ -362,7 +398,7 @@ export function analysisMarkdown(analysis: Analysis): string {
     '',
     `Status: ${analysis.status}`,
     `Redaction: ${analysis.redaction}`,
-    `Gate: ${analysis.gate} (${analysis.gate_passed ? 'passed' : 'not passed'})`,
+    `Sign-in gate: ${analysis.gate} (${analysis.gate_passed ? 'passed: every account signed in. This says nothing about the journeys' : 'not passed'})`,
     `Confidence: ${analysis.confidence}`,
     '',
     '## Suspected cause',

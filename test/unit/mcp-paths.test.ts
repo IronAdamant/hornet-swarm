@@ -96,6 +96,88 @@ users:
   }, 30_000);
 });
 
+describe('a fresh MCP server serves the current journey rules and reliability split', () => {
+  const home = mkdtempSync(join(tmpdir(), 'hornet-mcp-fresh-'));
+  let client: Client;
+
+  beforeAll(async () => {
+    mkdirSync(join(home, 'projects', 'shop'), { recursive: true });
+    writeFileSync(
+      join(home, 'projects', 'shop', 'project.yaml'),
+      `id: shop
+name: Shop
+authorisation_id: shop-owner
+environment: test
+targets: { base_url: "http://127.0.0.1:4300", allowed_origins: ["http://127.0.0.1:4300"] }
+auth:
+  signin_url: /login
+  selectors: { username: "#email", password: "#password", submit: "#submit" }
+  success: [{ type: url_contains, value: /account }]
+runners: {}
+limits: { max_parallel_runners: 1 }
+users:
+  - { label: qa-user-1, role: r, tenant: a, vars: { first_name: Dev } }
+`,
+    );
+    // Two runs without chaos and one with it.
+    const write = (id: string, status: 'pass' | 'fail', chaos: boolean) => {
+      const dir = join(home, 'runs', id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'run.json'),
+        JSON.stringify({
+          schema_version: '1',
+          run_id: id,
+          project: 'shop',
+          started_at: `2026-10-14T0${id.slice(-1)}:00:00Z`,
+          status: status === 'pass' ? 'passed' : 'failed',
+          gate: 'per_user',
+          gate_passed: true,
+          totals: { users: 1, journeys: 1, steps: 1, passed: 1, failed: 0, skipped: 0 },
+          users: [{ label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 500 }, journeys: [{ id: 'contact', status, duration_ms: 900, steps: [] }] }],
+          environment: 'test',
+          authorisation_id: 'shop-owner',
+          redaction: 'pass',
+        }),
+      );
+      writeFileSync(join(dir, 'analysis.json'), JSON.stringify({ chaos: chaos ? { profile: 'default', seed: 's', actions: [] } : null }));
+    };
+    write('run_1', 'pass', false);
+    write('run_2', 'pass', false);
+    write('run_3', 'fail', true);
+    client = await openSession(home);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.close();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('accepts a select step and a field_value assertion', async () => {
+    const journey = [
+      'version: 1',
+      'id: profile-check',
+      'name: Profile',
+      'users: [qa-user-1]',
+      'steps:',
+      '  - navigate: { url: "/profile" }',
+      '  - select: { selector: "#country", label: "Australia" }',
+      '  - assert: { type: field_value, selector: "#first-name", value: "{{self.vars.first_name}}" }',
+    ].join('\n');
+    const body = await call(client, 'validate_journey', { project: 'shop', journey_yaml: journey });
+    expect(body.valid, JSON.stringify(body)).toBe(true);
+  }, 30_000);
+
+  it('leaves the chaos run out of get_reliability, and counts only it with chaos: true', async () => {
+    const normal = (await call(client, 'get_reliability', { project: 'shop' })) as ToolBody & { runs?: number; journeys?: { pass_rate: number | null }[]; last_run?: string };
+    expect(normal.runs).toBe(2);
+    expect(normal.journeys?.[0]?.pass_rate).toBe(1);
+    const chaos = (await call(client, 'get_reliability', { project: 'shop', chaos: true })) as ToolBody & { runs?: number; journeys?: { pass_rate: number | null }[] };
+    expect(chaos.runs).toBe(1);
+    expect(chaos.journeys?.[0]?.pass_rate).toBe(0);
+  }, 30_000);
+});
+
 async function openSession(home: string): Promise<Client> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
