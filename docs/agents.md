@@ -30,6 +30,7 @@ Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. R
 4. Quote the page, not your reading of the picture. A failed step's error already quotes what the page showed: its message or toast, whether the control was disabled or what it reads, the closest words to the text the check expected, and other error lines. Every failed step also saves `failed-step-<n>.png` and `failed-step-<n>.txt`. `page_text_paths` in the packet lists each `.txt` beside its screenshot.
    - A `.txt` holds the page's visible words, then `Form fields:` (what each field holds, such as `- Postcode: missing value`) and `Disabled buttons:`. Password fields are never read, and stored logins are masked. Dropdown options are left out of the visible words; the field line shows the chosen one.
    - A field's name in `Form fields:` is the label the page attaches to it. If a label looks wrong for its value, such as `Country: NSW`, the page has attached its labels to the wrong fields. That is a finding about the page.
+   - Not every error-looking word is an error. A misspelled dropdown option or a heading is page text, not a message the site showed. A request answered 401 while a page loads, such as `GET /users/me` before sign-in, is the site asking who is signed in; that is normal, not a finding.
    - Copy spellings from the `.txt`. A screenshot is easy to misread: "Reltded" is not "Relteded", and "Oeps" is not "Oops".
 5. `add_agent_note` for what you learned, then `release_test_user`.
 
