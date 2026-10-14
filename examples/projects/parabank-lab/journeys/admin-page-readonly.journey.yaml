@@ -1,0 +1,16 @@
+version: 1
+id: admin-page-readonly
+name: The Admin Page is readable without pressing Initialize or Clean
+description: >
+  Access check. Opens the Admin Page from the public header and stops.
+  It must not click Initialize, Clean, or the JMS button. The page text is the evidence.
+users: [qa-user-1]
+requires_phase1: false
+tags: [access-control]
+steps:
+  - navigate: { url: "index.htm" }
+  - click: { selector: "a:has-text('Admin Page')" }
+  - wait: { for: navigation }
+  - screenshot: { name: "admin-page" }
+  - assert: { type: text_visible, value: "Administration" }
+  - assert: { type: selector_absent, value: "text=Database Initialized" }

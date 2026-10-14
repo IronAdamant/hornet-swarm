@@ -7,7 +7,7 @@ Written from runs on the local ParaBank lab. The site is on this Mac only. No ot
 | | |
 |---|---|
 | Site | ParaBank, http://127.0.0.1:8095/parabank/ (lab copy). Docker publishes that port on 127.0.0.1 only. |
-| Authorisation | `lab-owner` (owner basis): `signin_smoke`, `functional_e2e`, and `chaos`. It does not list `access_control_checks`. That activity was not added. |
+| Authorisation | `lab-owner` (owner basis): `signin_smoke`, `functional_e2e`, `chaos`, and, since the owner's written approval on 14 October 2026, `access_control_checks`. The approval covers reading the Admin Page. It does not cover pressing Initialize, Clean, or JMS, or cross-account checks. |
 | Accounts | Five made-up customers. qa-user-5 is the one whose password contains a symbol, so the profile journey can show the update fault. |
 | Runs used | `run_20261014-170842_e1c117` for the Admin Page. Profile runs `run_20261014-165938_fd3ea3`, `run_20261014-170017_580e8d`, `run_20261014-170115_d27842`, and chaos run `run_20261014-170308_52cc01`. An earlier profile run, `run_20261014-163126_a9b11a`, has the same saved-request shape. |
 | Not in this pass | Toolshop and Restful Booker. Their runners were stopped. No security pass was made on them. |
@@ -38,7 +38,7 @@ The harness now masks a credential query value of at least 8 characters, includi
 - **Actual:** the page loads. It shows Administration, Database, INITIALIZE, CLEAN, and JMS Service with status Running. The customer login username on that page is empty.
 - **Evidence:** `run_20261014-170842_e1c117`, journey `admin-page-readonly`, file `qa-user-1/admin-page-readonly/admin-page.txt`. The page text includes `Admin Page`, `Customer Login`, `Username`, `Administration`, `Database`, `INITIALIZE`, `CLEAN`, `JMS Service`, and `Status: Running`. Form fields recorded there: `username: (empty)`, `initialBalance: 515.50`, `minimumBalance: 100.00`, `loanProvider: Web Service`, `loanProcessor: Available Funds`, `loanProcessorThreshold: 20`. The buttons were not pressed.
 - **Impact:** anyone who can open the lab on this Mac can reach controls that initialise or clean the database, and can see the service endpoints and loan settings. The port is bound to 127.0.0.1, so this is not reachable from another machine. It is still a missing access check on the lab. Initialize and Clean were not used, so the lab data was not wiped by this check.
-- **Harness note:** the read-only journey that produced this evidence is not part of the installed suite. A copy had been placed in the local project journeys, which would have made every later suite open this page. That copy was removed. The example file is still untracked. It should not be installed until the owner decides, and not until `lab-owner` lists the activity that covers it.
+- **Follow-up:** the owner then granted `access_control_checks` in writing and asked for this read to join the suite. The journey is tagged `access-control`, so the suite runs it under that activity. Its only click is the Admin Page link. The signed statement says the check must not press Initialize, Clean, or the JMS control.
 
 ### S-02 Update Profile sends the password in the URL, and the saved run kept a prefix
 
@@ -53,11 +53,11 @@ The harness now masks a credential query value of at least 8 characters, includi
 
 ## Corrections for the functional report
 
-None. P-01 already says the update request carries a 16-character password and that the customer is locked out. It does not claim the saved network log was clean. The saved-prefix fact is S-02 here. P-04's corrected wording was left as Claude wrote it.
+None on the findings. P-01 already says the update request carries a 16-character password and that the customer is locked out. It does not claim the saved network log was clean. The saved-prefix fact is S-02 here. P-04's corrected wording was left as Claude wrote it. The sample report's scope line still says cross-account checks were not run, which remains true. `lab-owner` now also lists `access_control_checks`. That line in the sample report was not edited.
 
 ## What was not checked
 
-- Cross-account access, access-denied paths, and expected 401 or 403 responses. `access_control_checks` is not in `lab-owner`, and it was not added.
+- Cross-account access, access-denied paths, and expected 401 or 403 responses. The new activity allows them to be written as journeys. None were added.
 - Pressing Initialize, Clean, or the JMS control. Those can wipe or restart the lab. Reset remains `node scripts/setup-lab.mjs --reset`.
 - Any host other than this lab on 127.0.0.1.
 - Captchas and second codes. None were solved.

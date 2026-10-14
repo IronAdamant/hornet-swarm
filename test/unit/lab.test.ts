@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { authorisationSchema, chaosSequence, projectSchema, renderTemplate, validateJourneyDocument, type Project } from '../../packages/core/src/index.ts';
+import { activitiesPermitted, authorisationSchema, chaosSequence, isAccessControlJourney, projectSchema, renderTemplate, validateJourneyDocument, type Project } from '../../packages/core/src/index.ts';
 import { reliabilityReport } from '../../packages/controller/src/suite.ts';
 import { utimesSync } from 'node:fs';
 import { failureList, summaryMarkdown } from '../../packages/report/src/render.ts';
@@ -21,11 +21,19 @@ const project = (id: string): Project => projectSchema.parse(readYaml(join(root,
 const chrome = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'].find((path) => existsSync(path));
 
 describe('the local labs', () => {
-  it('cover this Mac only, and leave cross-account checks out for now', () => {
+  it('cover this Mac only, and list access-control checks the owner granted', () => {
     const auth = authorisationSchema.parse(readYaml(join(root, 'examples/authorisations/lab-owner.yaml')));
     expect(auth.basis).toBe('owner');
     expect(auth.scope.domains.sort()).toEqual(['host.docker.internal', 'localhost']);
-    expect(auth.activities).not.toContain('access_control_checks');
+    expect(auth.activities).toEqual(['signin_smoke', 'functional_e2e', 'chaos', 'access_control_checks']);
+    const checked = validateJourneyDocument(readYaml(join(root, 'examples/projects/parabank-lab/journeys/admin-page-readonly.journey.yaml')), project('parabank-lab'));
+    expect(checked.valid, checked.errors.join('; ')).toBe(true);
+    const journey = checked.journey;
+    if (!journey) throw new Error('admin-page-readonly did not parse');
+    expect(isAccessControlJourney(journey)).toBe(true);
+    expect(activitiesPermitted(auth, { signIn: false, journeys: [journey] }).ok).toBe(true);
+    const clicks = journey.steps.flatMap((step) => ('click' in step ? [step.click.selector] : []));
+    expect(clicks).toEqual(["a:has-text('Admin Page')"]);
     for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab']) {
       const config = project(id);
       expect(config.authorisation_id).toBe('lab-owner');

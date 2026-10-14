@@ -75,7 +75,7 @@ steps:
 - A selector is CSS, or `role=button[name='Sign in']` for an accessible name.
 - `validate_journey` checks a journey without running it. A journey that navigates off the allowed site, fills a passive third party, or contains a literal password is refused. A navigate URL is checked after its `{{vars}}` are filled in, and `//host/` counts as a site.
 - Name journeys by id, such as `signin-dashboard`. A file path is refused.
-- A journey with an `access_denied` assertion, an expected 401 or 403, or the tag `access-control` is an access check. It runs only when the authorisation lists `access_control_checks`, which a practice site never does.
+- A journey with an `access_denied` assertion, an expected 401 or 403, or the tag `access-control` is an access check. It runs only when the authorisation lists `access_control_checks`. A public practice site never lists that activity. `lab-owner` lists it for the local labs. ParaBank's `admin-page-readonly` journey uses the tag and must not press Initialize, Clean, or JMS.
 - `requires_phase1: false` lets a journey run when the label's sign-in check failed. Use it only for pages that need no login.
 - An `upload` step attaches a file the runner image ships: `sample.txt`, `sample.png`, or `sample.pdf`.
 

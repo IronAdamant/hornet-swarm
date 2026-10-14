@@ -93,7 +93,7 @@ pnpm hornet-swarm suite --project toolshop-lab --chaos default --seed lab-1
 pnpm hornet-swarm stats --project toolshop-lab           # chaos runs are left out; add --chaos to see them alone
 ```
 
-The script builds the shop's front end once, starts `labs/docker-compose.yml`, and writes an `owner` authorisation (`lab-owner`) that covers this Mac only, for 90 days. It allows sign-in checks, functional journeys, and chaos, but not cross-account checks yet. It signs up the made-up customers through the shop's own API and stores every login in the encrypted store. The shop admin's password is read from Toolshop's README. No password is kept in this repo or printed.
+The script builds the shop's front end once, starts `labs/docker-compose.yml`, and writes an `owner` authorisation (`lab-owner`) that covers this Mac only, for 90 days. It allows sign-in checks, functional journeys, chaos, and access-control checks. The access-control journey reads ParaBank's Admin Page and does not press Initialize, Clean, or JMS. It signs up the made-up customers through the shop's own API and stores every login in the encrypted store. The shop admin's password is read from Toolshop's README. No password is kept in this repo or printed.
 
 The Toolshop journeys assert what a working shop does, so each planted bug becomes a failed step with the page's own words: the search button, the product page heading, an order that never gets its invoice, cash on delivery that cannot be confirmed, and a profile with the names swapped.
 

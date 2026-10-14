@@ -13,8 +13,9 @@ granted_to: Aron Amos (Iron Adamant) and the agents he runs
 scope:
   domains: [localhost, host.docker.internal]
   environments: [test]
-# Cross-account checks are left out until the security work is scoped.
-activities: [signin_smoke, functional_e2e, chaos]
+# The owner granted access_control_checks on 2026-10-14. The check in the suite reads
+# ParaBank's Admin Page and must not press Initialize, Clean, or JMS.
+activities: [signin_smoke, functional_e2e, chaos, access_control_checks]
 exclusions:
   - Any host other than this Mac
   - Real personal or payment details
