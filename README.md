@@ -82,12 +82,12 @@ Three testing-practice apps run in Docker on this Mac, for hard practice that to
 
 - **Toolshop** (`toolshop-lab`, http://127.0.0.1:4300): the sprint 5 edition of Practice Software Testing, which ships with deliberate bugs. Five made-up customers with `example.com` addresses and random passwords, plus the seeded shop admin.
 - **Restful Booker** (`booker-lab`, http://127.0.0.1:3300): a bed-and-breakfast site with an admin panel. Its published admin password is a common word that its own pages also show, so redacting it would blank ordinary text. Its admin login is stored only when you set `HORNET_BOOKER_ADMIN_PASSWORD`.
-- **ParaBank** (`parabank-lab`, http://127.0.0.1:8095/parabank/): Parasoft's demo online bank. Four made-up customers, each starting with $515.50. The journeys check that money adds up: after opening an account, a transfer, and a bill payment, every balance and the total must match what moved. A new customer is signed up on each run, so the expected balances never drift.
+- **ParaBank** (`parabank-lab`, http://127.0.0.1:8095/parabank/): Parasoft's demo online bank. Five made-up customers, each starting with $515.50. Their passwords are letters and digits, because ParaBank's Update Profile page cuts a password short at a `#`; qa-user-5 keeps a symbol so a journey shows that fault. `docs/sample-report-parabank-lab.md` is the write-up. The journeys check that money adds up: after opening an account, a transfer, and a bill payment, every balance and the total must match what moved. A new customer is signed up on each run, so the expected balances never drift.
 
 ```bash
 pnpm build
 node scripts/setup-lab.mjs                       # --reset wipes both labs back to their seed data
-pnpm hornet-swarm env up --project toolshop-lab
+pnpm hornet-swarm env up --project toolshop-lab        # --count n keeps n runners; without it, the project's runners.count
 pnpm hornet-swarm suite --project toolshop-lab
 pnpm hornet-swarm suite --project toolshop-lab --chaos default --seed lab-1
 pnpm hornet-swarm stats --project toolshop-lab           # chaos runs are left out; add --chaos to see them alone
@@ -212,7 +212,7 @@ The fixture includes pages shaped like a real site: a single-page app sign-in, a
 
 On 14 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 25 files passed and 185 tests passed.
+`pnpm test` exited 0. 25 files passed and 187 tests passed.
 
 `pnpm test:e2e` passed. 18 files passed and 51 tests passed.
 

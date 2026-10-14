@@ -1,5 +1,5 @@
 # Installed to ~/.hornet-swarm/projects/parabank-lab/ by: node scripts/setup-lab.mjs
-# ParaBank, Parasoft's demo online bank, running on this Mac. Four made-up customers, each opened
+# ParaBank, Parasoft's demo online bank, running on this Mac. Five made-up customers, each opened
 # with $515.50. The journeys check that money adds up: after every transfer, payment, and loan the
 # balances and the total must match what moved.
 id: parabank-lab
@@ -23,7 +23,7 @@ auth:
     - { type: selector_visible, value: "a:has-text('Log Out')" }
   auth_endpoints: ["**/login.htm", "**/register.htm"]
 runners:
-  count: 4
+  count: 5
   memory: 1g
   cpus: 1
 limits:
@@ -42,3 +42,5 @@ users:
   - { label: qa-user-2, role: customer, tenant: parabank, vars: { first_name: Omar, last_name: Penny } }
   - { label: qa-user-3, role: customer, tenant: parabank, vars: { first_name: Ruth, last_name: Sterling } }
   - { label: qa-user-4, role: customer, tenant: parabank, vars: { first_name: Kai, last_name: Mint } }
+  # qa-user-5's password has a symbol in it. See journeys/profile-keeps-password.journey.yaml.
+  - { label: qa-user-5, role: customer, tenant: parabank, vars: { first_name: Zoe, last_name: Symbol } }

@@ -72,7 +72,7 @@ export async function envUp(options: { project: string; count?: number }): Promi
   const docker = createDocker();
   await assertImages(docker);
   const settings = loadSettings(options.project, options.count);
-  saveRuntime(options.project, settings);
+  saveRuntime(options.project, settings, options.count !== undefined || savedCount(options.project) !== undefined);
   await ensureNetwork(docker, options.project);
   await ensureControlVolume(docker, options.project);
   await ensureProxy(docker, options.project, settings);
@@ -350,15 +350,20 @@ function runtimePath(project: string): string {
   return join(aegisHome(), 'projects', project, 'runtime.json');
 }
 
-function saveRuntime(project: string, settings: RunnerSettings): void {
+/** `chosen` records a count the owner picked with --count, which sticks. A default follows the project file. */
+function saveRuntime(project: string, settings: RunnerSettings, chosen: boolean): void {
   ensureDir(join(aegisHome(), 'projects', project));
-  writeFileSync(runtimePath(project), `${JSON.stringify({ count: settings.count, labels: settings.labels })}\n`);
+  writeFileSync(runtimePath(project), `${JSON.stringify({ count: settings.count, labels: settings.labels, chosen })}\n`);
 }
 
-function savedCount(project: string): number | undefined {
+/**
+ * The count the owner chose with --count on an earlier start. A count that only came from the
+ * project file is not kept, so a project that gains a label gets a runner for it on the next start.
+ */
+export function savedCount(project: string): number | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(runtimePath(project), 'utf8')) as { count?: number };
-    return typeof parsed.count === 'number' ? parsed.count : undefined;
+    const parsed = JSON.parse(readFileSync(runtimePath(project), 'utf8')) as { count?: number; chosen?: boolean };
+    return parsed.chosen === true && typeof parsed.count === 'number' ? parsed.count : undefined;
   } catch {
     return undefined;
   }

@@ -33,6 +33,9 @@ const PARABANK_CUSTOMERS = {
   'qa-user-2': { first_name: 'Omar', last_name: 'Penny', personality: 'A busy professional who moves money between accounts and pays bills in a hurry.' },
   'qa-user-3': { first_name: 'Ruth', last_name: 'Sterling', personality: 'A first-home buyer applying for a loan, who wants a clear yes or no.' },
   'qa-user-4': { first_name: 'Kai', last_name: 'Mint', personality: 'A customer who just moved house and updates their contact details.' },
+  // A password with a symbol, as many real customers choose. Its own login never updates its
+  // profile, so it stays usable; its journey shows what a profile update does to such a password.
+  'qa-user-5': { first_name: 'Zoe', last_name: 'Symbol', symbol: true, personality: 'A customer whose password has a symbol in it, who updates their phone number and signs back in.' },
 };
 
 const SHARED_RULES = [
@@ -249,7 +252,7 @@ let bankSignedUp = 0;
 let bankKept = 0;
 for (const [label, person] of Object.entries(PARABANK_CUSTOMERS)) {
   const username = `${person.first_name}${person.last_name}`.toLowerCase();
-  const password = bankPassword();
+  const password = person.symbol ? strongPassword() : bankPassword();
   const bank = await bankSession();
   await bank('register.htm');
   const page = await bank('register.htm', {

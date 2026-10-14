@@ -10,6 +10,7 @@ import { utimesSync } from 'node:fs';
 import { failureList, summaryMarkdown } from '../../packages/report/src/render.ts';
 import { closestText, executeJob, type JobRequest } from '../../packages/runner/src/job.ts';
 import { busyMessage } from '../../packages/controller/src/suite.ts';
+import { savedCount } from '../../packages/controller/src/env.ts';
 import { changedSince, settledFingerprints, staleBuilds } from '../../packages/mcp-server/src/freshness.ts';
 import { chaosFailureGroups, writeErrorsOnPassingSteps } from '../../packages/report/src/render.ts';
 import { bankPassword } from '../../scripts/lab-passwords.mjs';
@@ -61,7 +62,9 @@ describe('the local labs', () => {
 
   it('gives ParaBank an alphanumeric password, because the profile page puts it in a URL', () => {
     const script = readFileSync(join(root, 'scripts/setup-lab.mjs'), 'utf8');
-    expect(script).toContain('const password = bankPassword()');
+    // Only qa-user-5 keeps a symbol, on purpose, for the journey that shows the profile fault.
+    expect(script).toContain('const password = person.symbol ? strongPassword() : bankPassword()');
+    expect(script.match(/symbol: true/g)).toHaveLength(1);
     for (let index = 0; index < 40; index += 1) {
       const password = bankPassword();
       expect(password).toMatch(/^[A-Za-z0-9]{20}$/);
@@ -370,6 +373,27 @@ describe('chaos summaries', () => {
     expect(lines[0]).toContain('the same failure stopped 3 journeys');
     expect(lines[0]).toContain('qa-user-1 · Cart (step 5); qa-user-1 · Checkout (step 5); qa-user-4 · Profile (step 5)');
     expect(summaryMarkdown(users, 'failed', { profile: 'default', seed: 'lab-1' })).toContain('Failed: the same failure stopped 3 journeys');
+  });
+});
+
+describe('runner counts', () => {
+  it('keep a count chosen with --count, and follow the project file otherwise', () => {
+    const home = mkdtempSync(join(tmpdir(), 'hornet-count-'));
+    const before = process.env.AEGIS_HOME;
+    process.env.AEGIS_HOME = home;
+    try {
+      mkdirSync(join(home, 'projects', 'bank'), { recursive: true });
+      const write = (body: unknown) => writeFileSync(join(home, 'projects', 'bank', 'runtime.json'), JSON.stringify(body));
+      write({ count: 4, labels: ['qa-user-1'] });
+      expect(savedCount('bank')).toBeUndefined();
+      write({ count: 4, labels: ['qa-user-1'], chosen: false });
+      expect(savedCount('bank')).toBeUndefined();
+      write({ count: 3, labels: ['qa-user-1'], chosen: true });
+      expect(savedCount('bank')).toBe(3);
+    } finally {
+      if (before === undefined) delete process.env.AEGIS_HOME;
+      else process.env.AEGIS_HOME = before;
+    }
   });
 });
 
