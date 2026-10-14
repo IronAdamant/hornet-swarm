@@ -1,0 +1,34 @@
+version: 1
+id: checkout
+name: A signed-in customer pays by bank transfer and gets an invoice
+users: [qa-user-1]
+tags: [shopping, checkout]
+steps:
+  - navigate: { url: "/#/auth/login" }
+  - fill: { selector: "[data-test='email']", credential: "self.username" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='login-submit']" }
+  - wait: { for: navigation }
+  - assert: { type: selector_visible, value: "[data-test='nav-user-menu']" }
+  - navigate: { url: "/#/product/1" }
+  - wait: { for: selector, selector: "[data-test='add-to-cart']" }
+  - click: { selector: "[data-test='add-to-cart']" }
+  - assert: { type: selector_visible, value: "[data-test='cart-quantity']" }
+  - click: { selector: "[data-test='nav-cart']" }
+  - click: { selector: "[data-test='proceed-1']" }
+  - assert: { type: text_visible, value: "you are already logged in" }
+  - click: { selector: "[data-test='proceed-2']" }
+  - wait: { for: selector, selector: "[data-test='postcode']" }
+  - screenshot: { name: "billing-address" }
+  # The address is filled in from the profile. A shopper adds what is missing.
+  - fill: { selector: "[data-test='postcode']", value: "2000" }
+  - fill: { selector: "[data-test='state']", value: "NSW" }
+  - click: { selector: "[data-test='proceed-3']" }
+  - select: { selector: "[data-test='payment-method']", label: "Bank Transfer" }
+  - fill: { selector: "[data-test='account-name']", value: "Lab Tester" }
+  - fill: { selector: "[data-test='account-number']", value: "12345678" }
+  - click: { selector: "[data-test='finish']" }
+  - assert: { type: text_visible, value: "Payment was successful" }
+  - click: { selector: "[data-test='finish']" }
+  - assert: { type: text_visible, value: "Thanks for your order!" }
+  - screenshot: { name: "order-confirmed" }

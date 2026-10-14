@@ -1,0 +1,18 @@
+version: 1
+id: profile
+name: The profile shows the details the customer signed up with
+users: [qa-user-2, qa-user-3]
+tags: [account]
+steps:
+  - navigate: { url: "/#/auth/login" }
+  - fill: { selector: "[data-test='email']", credential: "self.username" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='login-submit']" }
+  - wait: { for: navigation }
+  - assert: { type: selector_visible, value: "[data-test='nav-user-menu']" }
+  - navigate: { url: "/#/account/profile" }
+  - wait: { for: selector, selector: "[data-test='first-name']" }
+  - screenshot: { name: "profile" }
+  - assert: { type: field_value, selector: "[data-test='first-name']", value: "{{self.vars.first_name}}" }
+  - assert: { type: field_value, selector: "[data-test='last-name']", value: "{{self.vars.last_name}}" }
+  - assert: { type: field_value, selector: "[data-test='city']", value: "{{self.vars.city}}" }

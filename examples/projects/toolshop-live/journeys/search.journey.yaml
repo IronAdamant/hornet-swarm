@@ -1,0 +1,18 @@
+version: 1
+id: search
+name: Search finds a product and labels its button
+description: A visitor searches the catalogue for pliers. Needs no sign-in.
+users: [qa-user-2]
+requires_phase1: false
+tags: [catalogue]
+steps:
+  - navigate: { url: "/#/" }
+  - wait: { for: selector, selector: "a.card >> nth=0" }
+  - fill: { selector: "[data-test='search-query']", value: "pliers" }
+  - click: { selector: "[data-test='search-submit']" }
+  - assert: { type: text_visible, value: "Searched for: pliers" }
+  - assert: { type: selector_visible, value: "a.card >> nth=0" }
+  - assert: { type: text_visible, value: "Pliers" }
+  - screenshot: { name: "search-pliers" }
+  # The button a visitor presses should say Search.
+  - assert: { type: selector_visible, value: "[data-test='search-submit']:has-text('Search')" }

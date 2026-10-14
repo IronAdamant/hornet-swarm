@@ -3,6 +3,7 @@
 //
 //   node scripts/setup-practice.mjs the-internet
 //   node scripts/setup-practice.mjs saucedemo
+//   node scripts/setup-practice.mjs toolshop-live    (the hosted Toolshop, signs up made-up customers)
 //   node scripts/setup-practice.mjs saucedemo --no-statement   (skip saving the statement page)
 //
 // It copies the authorisation, the project, and its journeys into ~/.hornet-swarm, stores the
@@ -16,6 +17,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parse, stringify } from 'yaml';
+import { strongPassword } from './lab-passwords.mjs';
 
 const root = join(import.meta.dirname, '..');
 const home = process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm');
@@ -92,6 +94,35 @@ const SITES = {
       'qa-user-6': {
         personality: 'A returning customer whose account has been locked.',
         rules: `${SHARED_RULES} This account is built to be refused at sign-in. A refused sign-in is the expected result.`,
+      },
+    },
+  },
+  // The hosted Toolshop, sprint 5 with deliberate bugs: the same app as the local toolshop-lab, on
+  // the public internet. Other testers share it, so it gets its own made-up customers instead of
+  // the published accounts anyone can change, and the gentlest limits.
+  'toolshop-live': {
+    project: 'toolshop-live',
+    authorisation: 'toolshop-live-practice',
+    signUp: {
+      api: 'https://api-with-bugs.practicesoftwaretesting.com',
+      people: {
+        'qa-user-1': { first_name: 'Mara', last_name: 'Quill' },
+        'qa-user-2': { first_name: 'Tobin', last_name: 'Reyes' },
+        'qa-user-3': { first_name: 'Iris', last_name: 'Calloway' },
+      },
+    },
+    agents: {
+      'qa-user-1': {
+        personality: 'A careful first-time shopper on a real connection. The control account.',
+        rules: `${SHARED_RULES} This is a live site other testers share. Place at most one order per run.`,
+      },
+      'qa-user-2': {
+        personality: 'A bargain hunter who searches before buying anything.',
+        rules: `${SHARED_RULES} This is a live site other testers share. Do not create accounts beyond your own.`,
+      },
+      'qa-user-3': {
+        personality: 'A shopper who tries cash on delivery and keeps a favourites list.',
+        rules: `${SHARED_RULES} This is a live site other testers share. Change only your own favourites.`,
       },
     },
   },
@@ -183,11 +214,54 @@ for (const file of readdirSync(join(sourceDir, 'journeys')).filter((entry) => en
   copyFileSync(join(sourceDir, 'journeys', file), join(journeysDir, file));
 }
 
-// Published logins go into the encrypted store, never into a project file.
-const password = await practicePassword(site);
-for (const [label, username] of Object.entries(site.usernames)) {
-  setSecret(site.project, label, 'username', username, home);
-  setSecret(site.project, label, 'password', password, home);
+// Logins go into the encrypted store, never into a project file. A site with its own sign-up gets
+// made-up customers with random passwords; the others use the login each site publishes.
+let count = 0;
+if (site.signUp) {
+  const { listFields } = await import(join(root, 'packages/controller/dist/index.js'));
+  for (const [label, person] of Object.entries(site.signUp.people)) {
+    const email = `${person.first_name}.${person.last_name}.hornet@example.com`.toLowerCase();
+    const password = strongPassword();
+    const response = await fetch(`${site.signUp.api}/users/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify({
+        first_name: person.first_name,
+        last_name: person.last_name,
+        dob: '1990-01-01',
+        address: '1 Test Street',
+        city: 'Testville',
+        state: 'NSW',
+        country: 'AU',
+        postcode: '2000',
+        phone: '0412345678',
+        email,
+        password,
+      }),
+    });
+    if (response.status === 200 || response.status === 201) {
+      setSecret(site.project, label, 'username', email, home);
+      setSecret(site.project, label, 'password', password, home);
+    } else if (response.status === 409 || response.status === 422) {
+      // Signed up on an earlier run. The stored login still holds, if there is one.
+      if (!listFields(site.project, label, home).includes('password')) {
+        process.stderr.write(`${label} already exists on the site but has no stored login here.\n`);
+        process.exit(6);
+      }
+    } else {
+      process.stderr.write(`Could not sign up ${label} (HTTP ${response.status}).\n`);
+      process.exit(6);
+    }
+    count += 1;
+  }
+} else {
+  const password = await practicePassword(site);
+  for (const [label, username] of Object.entries(site.usernames)) {
+    setSecret(site.project, label, 'username', username, home);
+    setSecret(site.project, label, 'password', password, home);
+  }
+  count = Object.keys(site.usernames).length;
 }
 
 // The swarm board agents read with get_swarm. Existing notes are kept.
@@ -200,7 +274,6 @@ const board = {
 };
 writeFileSync(join(projectDir, 'swarm.json'), `${JSON.stringify(board, null, 2)}\n`);
 
-const count = Object.keys(site.usernames).length;
 process.stdout.write(
   [
     `Installed ${site.project} with ${count} login${count === 1 ? '' : 's'}.${existsSync(join(projectDir, 'notes')) ? ' Existing agent notes were kept.' : ''}`,

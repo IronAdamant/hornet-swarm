@@ -74,6 +74,8 @@ pnpm hornet-swarm stats --project the-internet
 
 The script installs a `public_practice` authorisation, the project, its journeys, and a swarm board with a personality and rules for each label, and it stores the published logins in the encrypted store. It reads each site's password from that site's own login page at install time, so no password is kept in this repo. If the page has changed, it asks for the password, or reads `HORNET_PRACTICE_PASSWORD`. It saves a dated copy of the page where each site says it is for practice as the authorisation's document. A `public_practice` authorisation needs that statement, refuses chaos and access-control probing, and caps a run at 10 requests a second in total, 5 per runner, and 6 runners working at once. Other people use these sites too.
 
+A third practice site is the hosted Toolshop, `node scripts/setup-practice.mjs toolshop-live`: the same app as the local `toolshop-lab`, on the public internet, so a comparison shows what live conditions change. Other testers share it, so the script signs up three made-up customers of its own instead of using the published accounts, and the project keeps to two browsers at two requests a second and at most one order per run. `docs/live-report-toolshop.md` is the comparison.
+
 The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoint stalls when several files load at once over one connection, about one page load in three. `curl --http2` reproduces it with no Hornet Swarm involved. Its project sets `runners.http2: false` so the journeys run over HTTP/1.1. Set it to `true` to measure the stall.
 
 ## Local labs
