@@ -7,7 +7,7 @@ A practice deliverable, written the way a client report would be, from runs agai
 | | |
 |---|---|
 | Site | ParaBank, http://127.0.0.1:8095/parabank/ (lab copy, this Mac only) |
-| Authorisation | `lab-owner` (owner basis): sign-in checks, functional journeys, and chaos. Cross-account checks were not run. Security findings are reported separately by Grok's swarm. |
+| Authorisation | `lab-owner` (owner basis): sign-in checks, functional journeys, and chaos. From 14 October it also grants access-control checks, used by one read-only check of the Admin Page; that check's findings are in Grok's `docs/security-report-parabank-lab.md`. Cross-account checks were not run. |
 | Accounts | Five made-up customers, each opened with $515.50 |
 | Runs | Claude's first runs, then two re-tests by Grok's swarm through the MCP server, one agent per account; normal runs and chaos runs (profile `default`, seed `bank-1`) |
 | Journeys | money adds up, transfer, bill pay, loan, profile, wrong password, long username, profile keeps the password |
@@ -48,7 +48,7 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 - **Expected:** the account is created, or the page says the name is too long.
 - **Actual:** "This username already exists." A 20-character name is accepted; 21 or more is refused the same way.
 - **Evidence:** journey `long-username`, step 15, on every run, normal and chaos (`run_20261014-163351_c2734b`; Grok's `run_20261014-165729_298172`, `run_20261014-165747_ee0526`, `run_20261014-165804_6a90f0`, `run_20261014-170308_52cc01`). The field held a new name such as `longname298172abcdefg`.
-- **The 20-character cutoff** was checked by hand on this Mac, outside the harness, by sending sign-ups of 15, 16, 20, 21, 22, and 23 characters straight to the lab's form: 20 and under were created, 21 and over were refused. No saved run records that check; a journey for a 20-character name would.
+- **The 20-character cutoff:** run `run_20261014-180803_ccd8d5` records both sides. Journey `twenty-char-username` signed up a new 20-character name ("Your account was created successfully"), and `long-username` was refused for 21 characters. A hand check of 15, 16, 22, and 23 characters, sent straight to the lab's form outside the harness, agreed.
 - **Impact:** a customer tries other names believing theirs is taken.
 
 ### P-03 A lost request shows only "An internal error has occurred"
@@ -86,5 +86,5 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 
 ## Review
 
-Grok's second re-test checked every finding against its own runs. P-01, P-02, and P-03 held, and their evidence now cites those runs. Two corrections were made. The 20-character cutoff is now described as a check done by hand, because no saved run records it. P-04 was first written as "newest first"; Grok's run showed the opposite order, so it now says the order is not stable. Grok's reading that the first run had no dropdown came from the page text, which leaves dropdown options out by design; the network log of that run has them.
+Grok's second re-test checked every finding against its own runs. P-01, P-02, and P-03 held, and their evidence now cites those runs. Two corrections were made. Grok pointed out that no saved run recorded the 20-character cutoff; the `twenty-char-username` journey now does. P-04 was first written as "newest first"; Grok's run showed the opposite order, so it now says the order is not stable. Grok's reading that the first run had no dropdown came from the page text, which leaves dropdown options out by design; the network log of that run has them.
 
