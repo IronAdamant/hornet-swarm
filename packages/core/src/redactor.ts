@@ -51,12 +51,12 @@ export class Redactor {
       seen.add(form);
       output = output.split(form).join(token);
     }
-    return maskCredentialQueries(output, this.secrets);
+    return maskSessionMaterial(maskCredentialQueries(output, this.secrets));
   }
 
   contains(input: string): boolean {
     if (this.forms.some(({ form }) => form.length > 0 && input.includes(form))) return true;
-    return credentialQueryIsRaw(input);
+    return credentialQueryIsRaw(input) || sessionMaterialIsRaw(input);
   }
 
   redactUnknown(value: unknown): unknown {
@@ -194,6 +194,107 @@ function maskCredentialQueries(input: string, secrets: { label: string; value: s
     const label = credentialLabel(secrets, key, decoded);
     return `${separator}${key}=${label ? `[REDACTED:${label}]` : '[REDACTED:query]'}`;
   });
+}
+
+/**
+ * Values that are a session even when they are not one of the stored logins: a credential
+ * JSON field (including a password hash), a JWT, a Cloudflare challenge token in a URL, and
+ * the challenge cookies when they appear outside a header that was already masked.
+ */
+const SESSION_JSON_KEY = 'access_token|refresh_token|id_token|totp_secret|api_key|password|passwd|secret|totp|pwd';
+const JWT_PATTERN = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/;
+const CHALLENGE_PATH = /\/cdn-cgi\/challenge-platform\/[^\s"'<>\\]*/;
+const CHALLENGE_COOKIE = /\b(cf_clearance|__cf_bm|_cfuvid|cf_chl_[A-Za-z0-9_]+)=([^\s;"',]+)/;
+
+function maskSessionMaterial(input: string): string {
+  return maskChallengeCookies(maskChallengeTokens(maskJwts(maskCredentialJson(input))));
+}
+
+function sessionMaterialIsRaw(input: string): boolean {
+  return credentialJsonIsRaw(input) || jwtIsRaw(input) || challengeTokenIsRaw(input) || challengeCookieIsRaw(input);
+}
+
+function maskCredentialJson(input: string): string {
+  return maskJsonSpelling(maskJsonSpelling(input, false), true);
+}
+
+function maskJsonSpelling(input: string, escaped: boolean): string {
+  return input.replace(credentialJsonPattern(escaped), (match, open: string, value: string, close: string) => {
+    if (isRedactedToken(value) || value.length < MIN_SECRET_LENGTH) return match;
+    const token = JWT_PATTERN.test(value) ? '[REDACTED:jwt]' : '[REDACTED:field]';
+    return `${open}${token}${close}`;
+  });
+}
+
+function credentialJsonPattern(escaped: boolean): RegExp {
+  if (escaped) return new RegExp(`(\\\\"(?:${SESSION_JSON_KEY})\\\\"\\s*:\\s*\\\\")([^"\\\\]*)(\\\\")`, 'gi');
+  return new RegExp(`("(?:${SESSION_JSON_KEY})"\\s*:\\s*")((?:\\\\.|[^"\\\\])*)(")`, 'gi');
+}
+
+function credentialJsonIsRaw(input: string): boolean {
+  return jsonSpellingIsRaw(input, false) || jsonSpellingIsRaw(input, true);
+}
+
+function jsonSpellingIsRaw(input: string, escaped: boolean): boolean {
+  for (const match of input.matchAll(credentialJsonPattern(escaped))) {
+    const value = match[2] ?? '';
+    if (!isRedactedToken(value) && value.length >= MIN_SECRET_LENGTH) return true;
+  }
+  return false;
+}
+
+function isRedactedToken(value: string): boolean {
+  return /^\[REDACTED:[^\]]+\]$/.test(value);
+}
+
+function maskJwts(input: string): string {
+  return input.replace(new RegExp(JWT_PATTERN.source, 'g'), '[REDACTED:jwt]');
+}
+
+function jwtIsRaw(input: string): boolean {
+  return new RegExp(JWT_PATTERN.source).test(input);
+}
+
+function maskChallengeTokens(input: string): string {
+  return input.replace(new RegExp(CHALLENGE_PATH.source, 'g'), (path) =>
+    path
+      .split('/')
+      .map((segment) => (challengeSegment(segment) ? '[REDACTED:challenge]' : segment))
+      .join('/'),
+  );
+}
+
+function challengeTokenIsRaw(input: string): boolean {
+  for (const match of input.matchAll(new RegExp(CHALLENGE_PATH.source, 'g'))) {
+    if (match[0].split('/').some((segment) => challengeSegment(segment))) return true;
+  }
+  return false;
+}
+
+function challengeSegment(segment: string): boolean {
+  if (!segment || segment.startsWith('[REDACTED:')) return false;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    decoded = segment;
+  }
+  return decoded.includes(':') && decoded.length >= MIN_SECRET_LENGTH;
+}
+
+function maskChallengeCookies(input: string): string {
+  return input.replace(new RegExp(CHALLENGE_COOKIE.source, 'g'), (match, name: string, value: string) => {
+    if (isRedactedToken(value) || value.length < MIN_SECRET_LENGTH) return match;
+    return `${name}=[REDACTED:challenge]`;
+  });
+}
+
+function challengeCookieIsRaw(input: string): boolean {
+  for (const match of input.matchAll(new RegExp(CHALLENGE_COOKIE.source, 'g'))) {
+    const value = match[2] ?? '';
+    if (!isRedactedToken(value) && value.length >= MIN_SECRET_LENGTH) return true;
+  }
+  return false;
 }
 
 function credentialQueryIsRaw(input: string): boolean {

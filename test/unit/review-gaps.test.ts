@@ -142,6 +142,33 @@ describe('trace and HAR handling', () => {
     expect(after.file('resources/other.css')).not.toBeNull();
     expect(await after.file('trace.network')!.async('string')).not.toContain('Hunter2');
   });
+
+  it('masks a session token inside a trace that is itself inside an evidence zip', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hornet-nested-'));
+    const hash = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const header = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ sub: '1' })).toString('base64url');
+    const jwt = `${header}.${payload}.signaturevalue`;
+    const inner = new JSZip();
+    inner.file('resources/login.json', JSON.stringify({ access_token: jwt, token_type: 'bearer' }));
+    inner.file('resources/me.json', JSON.stringify({ password: hash, email: 'kept@example.test' }));
+    const outer = new JSZip();
+    outer.file('qa-user-1/phase1/trace.zip', await inner.generateAsync({ type: 'nodebuffer' }));
+    writeFileSync(join(dir, 'evidence.zip'), await outer.generateAsync({ type: 'nodebuffer' }));
+    const redactor = new Redactor();
+    expect(await scanTree(dir, redactor)).not.toEqual([]);
+    await redactTree(dir, redactor);
+    expect(await scanTree(dir, redactor)).toEqual([]);
+    const evidence = await JSZip.loadAsync(readFileSync(join(dir, 'evidence.zip')));
+    const nested = await JSZip.loadAsync(await evidence.file('qa-user-1/phase1/trace.zip')!.async('nodebuffer'));
+    const login = await nested.file('resources/login.json')!.async('string');
+    const me = await nested.file('resources/me.json')!.async('string');
+    expect(login).toContain('[REDACTED:jwt]');
+    expect(login).not.toContain(jwt);
+    expect(me).toContain('[REDACTED:field]');
+    expect(me).not.toContain(hash);
+    expect(me).toContain('kept@example.test');
+  });
 });
 
 describe('the harness does not make a working site look broken', () => {

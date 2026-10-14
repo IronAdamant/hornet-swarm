@@ -44,22 +44,36 @@ export async function scanTree(dir: string, redactor: Redactor): Promise<string[
   const hits: string[] = [];
   for (const file of walkFiles(dir)) {
     const bytes = readFileSync(file);
-    if (redactor.contains(bytes.toString('utf8')) || redactor.contains(bytes.toString('latin1'))) {
-      hits.push(file);
+    if (file.endsWith('.zip')) {
+      hits.push(...(await scanZipBuffer(bytes, redactor, file)));
       continue;
     }
-    if (!file.endsWith('.zip')) continue;
-    try {
-      const zip = await JSZip.loadAsync(bytes);
-      for (const name of Object.keys(zip.files)) {
-        const entry = zip.files[name];
-        if (!entry || entry.dir) continue;
-        const data = await entry.async('nodebuffer');
-        if (redactor.contains(data.toString('utf8')) || redactor.contains(data.toString('latin1'))) hits.push(`${file}!${name}`);
-      }
-    } catch {
-      hits.push(file);
+    if (redactor.contains(bytes.toString('utf8')) || redactor.contains(bytes.toString('latin1'))) hits.push(file);
+  }
+  return hits;
+}
+
+/** A trace saved inside an evidence zip is a zip entry. Scan it the same way as a file on disk. */
+async function scanZipBuffer(bytes: Buffer, redactor: Redactor, label: string): Promise<string[]> {
+  const hits: string[] = [];
+  if (redactor.contains(bytes.toString('utf8')) || redactor.contains(bytes.toString('latin1'))) hits.push(label);
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(bytes);
+  } catch {
+    if (hits.length === 0) hits.push(label);
+    return hits;
+  }
+  for (const name of Object.keys(zip.files)) {
+    const entry = zip.files[name];
+    if (!entry || entry.dir) continue;
+    const data = await entry.async('nodebuffer');
+    const where = `${label}!${name}`;
+    if (name.endsWith('.zip')) {
+      hits.push(...(await scanZipBuffer(data, redactor, where)));
+      continue;
     }
+    if (redactor.contains(data.toString('utf8')) || redactor.contains(data.toString('latin1'))) hits.push(where);
   }
   return hits;
 }
@@ -124,12 +138,35 @@ const IMAGE_ENTRY = /\.(png|jpe?g|webp)$/i;
  */
 async function redactZip(file: string, redactor: Redactor): Promise<void> {
   const zip = await JSZip.loadAsync(readFileSync(file));
+  if (!(await redactLoadedZip(zip, redactor))) return;
+  const next = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  if (redactor.contains(next.toString('latin1'))) {
+    unlinkSync(file);
+    writeFileSync(`${file}.dropped`, 'trace dropped because redaction could not clean it\n');
+    return;
+  }
+  writeFileSync(file, next);
+}
+
+async function redactLoadedZip(zip: JSZip, redactor: Redactor): Promise<boolean> {
   let changed = false;
   const images: { name: string; bytes: Buffer }[] = [];
   for (const name of Object.keys(zip.files)) {
     const entry = zip.files[name];
     if (!entry || entry.dir) continue;
     const bytes = await entry.async('nodebuffer');
+    if (name.endsWith('.zip')) {
+      try {
+        const nested = await JSZip.loadAsync(bytes);
+        if (await redactLoadedZip(nested, redactor)) {
+          zip.file(name, await nested.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+          changed = true;
+        }
+        continue;
+      } catch {
+        // Not a zip. Fall through and treat the bytes like any other entry.
+      }
+    }
     if (IMAGE_ENTRY.test(name)) {
       images.push({ name, bytes });
       continue;
@@ -155,14 +192,7 @@ async function redactZip(file: string, redactor: Redactor): Promise<void> {
     zip.file(name, PLACEHOLDER_PNG);
     changed = true;
   }
-  if (!changed) return;
-  const next = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-  if (redactor.contains(next.toString('latin1'))) {
-    unlinkSync(file);
-    writeFileSync(`${file}.dropped`, 'trace dropped because redaction could not clean it\n');
-    return;
-  }
-  writeFileSync(file, next);
+  return changed;
 }
 
 function strictUtf8(bytes: Buffer): string | undefined {

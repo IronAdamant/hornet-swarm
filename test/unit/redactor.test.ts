@@ -146,4 +146,51 @@ describe('redactor', () => {
     expect(unknown.redact(wrong)).toBe('https://bank.test/login?password=[REDACTED:query]');
     expect(unknown.contains(unknown.redact(wrong))).toBe(false);
   });
+
+  it('masks a session token, a password hash, and a challenge value that are not stored logins', () => {
+    const redactor = new Redactor();
+    const hash = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const header = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ sub: '1', role: 'user' })).toString('base64url');
+    const jwt = `${header}.${payload}.signaturevalue`;
+    const profile = JSON.stringify({ email: 'kept@example.test', password: hash });
+    const login = JSON.stringify({ access_token: jwt, token_type: 'bearer', expires_in: 3600 });
+    const har = JSON.stringify({ text: profile });
+    const challenge =
+      'https://shop.test/cdn-cgi/challenge-platform/h/g/jsd/oneshot/build123/0.5:1700000000:MadeUpChallengeTokenValue/abcd';
+    const script = 'https://shop.test/cdn-cgi/challenge-platform/h/g/scripts/jsd/build123/main.js';
+    const cookie = 'cf_clearance=MadeUpClearanceValue99; __cf_bm=short';
+
+    expect(redactor.contains(profile)).toBe(true);
+    expect(redactor.contains(login)).toBe(true);
+    expect(redactor.contains(har)).toBe(true);
+    expect(redactor.contains(challenge)).toBe(true);
+    expect(redactor.contains(cookie)).toBe(true);
+    expect(redactor.contains(script)).toBe(false);
+    expect(redactor.contains(JSON.stringify({ password: 'short' }))).toBe(false);
+
+    const cleanedProfile = redactor.redact(profile);
+    expect(cleanedProfile).toBe('{"email":"kept@example.test","password":"[REDACTED:field]"}');
+    expect(cleanedProfile).not.toContain(hash);
+    const cleanedLogin = redactor.redact(login);
+    expect(cleanedLogin).toContain('[REDACTED:jwt]');
+    expect(cleanedLogin).not.toContain(jwt);
+    expect(cleanedLogin).toContain('"token_type":"bearer"');
+    const cleanedHar = redactor.redact(har);
+    expect(cleanedHar).not.toContain(hash);
+    expect(cleanedHar).toContain('[REDACTED:field]');
+    const cleanedChallenge = redactor.redact(challenge);
+    expect(cleanedChallenge).toBe(
+      'https://shop.test/cdn-cgi/challenge-platform/h/g/jsd/oneshot/build123/[REDACTED:challenge]/abcd',
+    );
+    expect(redactor.redact(script)).toBe(script);
+    expect(redactor.redact(cookie)).toBe('cf_clearance=[REDACTED:challenge]; __cf_bm=short');
+    expect(redactor.redact(JSON.stringify({ password: '[REDACTED:qa-user-1.password]' }))).toBe(
+      '{"password":"[REDACTED:qa-user-1.password]"}',
+    );
+
+    for (const cleaned of [cleanedProfile, cleanedLogin, cleanedHar, cleanedChallenge, redactor.redact(cookie)]) {
+      expect(redactor.contains(cleaned)).toBe(false);
+    }
+  });
 });
