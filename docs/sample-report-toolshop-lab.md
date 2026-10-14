@@ -58,7 +58,8 @@ Under chaos, a sign-in request lost once leaves the customer on the login page w
 - **Steps:** enter an email and password, press Login, and lose the network request once (a dropped connection on a mobile network has the same effect).
 - **Expected:** a message such as "Could not sign in, please try again".
 - **Actual:** nothing happens. The customer stays on the login page with the form filled in and no message.
-- **Evidence:** chaos run `run_20261014-083903_e82cd0`, `qa-user-1` cart journey (drop at step 3, sign-in never completed). Reproduced by hand on this Mac by aborting one `POST /users/login`.
+- **Evidence:** chaos run `run_20261014-083903_e82cd0`, `qa-user-1` cart journey (drop at step 3, sign-in never completed). Reproduced by hand on this Mac by aborting one `POST /users/login`. Grok's chaos run `run_20261014-130842_7b6831` stopped seven journeys at the same sign-in step, which is this one finding.
+- **Possibly related, seen once:** in that chaos run, `qa-user-3` checkout never showed "Payment was successful", so a lost payment check may also leave the customer without a message. Not yet reproduced by hand.
 
 ### F-04 The profile shows the last name as the first name
 
@@ -76,6 +77,7 @@ Under chaos, a sign-in request lost once leaves the customer on the login page w
 
 - The top menu reads "Contakt".
 - The billing step's heading reads "Blliling Adress", and the sort control reads "Sorth".
+- The sign-up form attaches the label "Country" to the state field and "State" to the country field, so screen readers and autofill get them the wrong way round (`label for="state"` reads "Country").
 - A toast reading "Oeps, something went wrong." appears on product, cart, and checkout pages.
 - The account menu reads "User Data not found" instead of the customer's name (`qa-user-4/profile/profile.png`).
 - The shop logo does not load.

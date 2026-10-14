@@ -28,7 +28,8 @@ Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. R
 2. `run_signin_check` with `users: [<label>]`.
 3. `run_journey` with `users: [<label>]`, and `journey_id` or `journey_yaml`.
 4. Quote the page, not your reading of the picture. A failed step's error already quotes what the page showed: its message or toast, whether the control was disabled or what it reads, the closest words to the text the check expected, and other error lines. Every failed step also saves `failed-step-<n>.png` and `failed-step-<n>.txt`. `page_text_paths` in the packet lists each `.txt` beside its screenshot.
-   - A `.txt` holds the page's visible words, then `Form fields:` (what each field holds, such as `- Postcode: missing value`) and `Disabled buttons:`. Password fields are never read, and stored logins are masked.
+   - A `.txt` holds the page's visible words, then `Form fields:` (what each field holds, such as `- Postcode: missing value`) and `Disabled buttons:`. Password fields are never read, and stored logins are masked. Dropdown options are left out of the visible words; the field line shows the chosen one.
+   - A field's name in `Form fields:` is the label the page attaches to it. If a label looks wrong for its value, such as `Country: NSW`, the page has attached its labels to the wrong fields. That is a finding about the page.
    - Copy spellings from the `.txt`. A screenshot is easy to misread: "Reltded" is not "Relteded", and "Oeps" is not "Oops".
 5. `add_agent_note` for what you learned, then `release_test_user`.
 
@@ -91,5 +92,6 @@ The Internet and Sauce Demo are public sites built for test-automation practice.
 `node scripts/setup-lab.mjs` starts Toolshop (`toolshop-lab`) and Restful Booker (`booker-lab`) in Docker on this Mac. An `owner` authorisation covers them, so chaos is allowed and nothing touches a live service. Use made-up details only: `example.com` addresses, Testville, and test bank numbers.
 
 - Toolshop is the edition with deliberate bugs. A failed journey there is usually a real finding, not a broken test. Check the screenshot, then say which bug it is.
-- Under chaos, compare with a normal run of the same journeys. A check that passes normally but fails under chaos shows where the site does not recover. The analysis lists every chaos action, including those skipped because a form was half filled.
+- Under chaos, compare with a normal run of the same journeys. Journeys that stopped at the same step with the same page words share one `Failed:` line, which is one finding, not several. Chaos never drops the page load itself; `drop:spared the page load` in the analysis records it.
+- Under chaos, the same journeys still meet the same planted bugs. Only a journey that passes normally and fails under chaos shows a recovery problem. A check that passes normally but fails under chaos shows where the site does not recover. The analysis lists every chaos action, including those skipped because a form was half filled.
 

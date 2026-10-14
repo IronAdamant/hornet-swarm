@@ -209,9 +209,15 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
     await context.route('**/*', async (route) => {
       const url = route.request().url();
       if (dropLeft > 0) {
-        dropLeft -= 1;
-        await route.abort('failed');
-        return;
+        // A lost page load leaves only the browser's own error page, which no site can recover
+        // from, so chaos drops the requests a page makes, never the page itself.
+        if (mainFrameNavigation(route.request())) {
+          chaosApplied.push('drop:spared the page load');
+        } else {
+          dropLeft -= 1;
+          await route.abort('failed');
+          return;
+        }
       }
       if (!url.startsWith('about:') && !url.startsWith('data:') && !originAllowed(url, job.allowOrigins)) {
         await route.abort('blockedbyclient');
@@ -592,6 +598,32 @@ function finishStep(
 const MESSAGE_SELECTORS =
   '[role="alert"], [data-test="error"], [aria-live="assertive"], .error-message-container, .flash, .alert, .error, .invalid-feedback, .toast-message, .toast, .snackbar, .notification, [role="status"]';
 
+/**
+ * The page's visible words without the options inside dropdowns. A page's text lists every option
+ * of every dropdown, such as "Error 101: Subject not found" in a subject list, which reads like an
+ * error on the page when it is only a choice nobody made. `Form fields:` shows the chosen option.
+ */
+export async function visibleWords(page: Page): Promise<string> {
+  const body = await page.locator('body').innerText().catch(() => '');
+  const options = await page
+    .locator('select option')
+    .evaluateAll((elements) => elements.map((element) => (element.textContent ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean))
+    .catch(() => [] as string[]);
+  if (options.length === 0) return body;
+  const left = new Map<string, number>();
+  for (const option of options) left.set(option, (left.get(option) ?? 0) + 1);
+  return body
+    .split('\n')
+    .filter((line) => {
+      const key = line.replace(/\s+/g, ' ').trim();
+      const count = left.get(key) ?? 0;
+      if (count === 0) return true;
+      left.set(key, count - 1);
+      return false;
+    })
+    .join('\n');
+}
+
 const FORM_FIELDS = 'input:not([type="hidden"]):not([type="password"]):not([type="file"]):not([type="submit"]):not([type="button"]), select, textarea';
 
 /**
@@ -600,7 +632,7 @@ const FORM_FIELDS = 'input:not([type="hidden"]):not([type="password"]):not([type
  * "missing value" or that Confirm is greyed out. Password fields are never read.
  */
 export async function pageSnapshotText(page: Page): Promise<string> {
-  const body = await page.locator('body').innerText().catch(() => '');
+  const body = await visibleWords(page);
   const fields = await page
     .locator(FORM_FIELDS)
     .evaluateAll((elements) =>
@@ -726,7 +758,7 @@ export async function failureClues(page: Page, step: Step, template: TemplateCon
       // A selector the page cannot parse adds no clue.
     }
   }
-  const body = await page.locator('body').innerText().catch(() => '');
+  const body = await visibleWords(page);
   const lines = body.split('\n').map((line) => line.replace(/\s+/g, ' ').trim()).filter((line) => line.length > 0 && line.length <= 160);
   const expected = 'assert' in step && step.assert.type === 'text_visible' ? renderTemplate(step.assert.value ?? '', template) : hasText?.[2];
   if (expected) {

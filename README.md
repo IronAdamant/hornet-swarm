@@ -160,7 +160,7 @@ A page is checked the way a person would see it.
 - `url_contains` and `text_visible` retry for up to 10 seconds, like `selector_visible`. `access_denied` retries for up to 5 seconds. `selector_absent` waits for the network to go quiet (up to 3 seconds) first, so content that renders late is still seen.
 - `http_status` and `access_denied` read the status of the last page load, whether a `navigate` step or a click caused it.
 - A failed step quotes the page in brackets: its message or toast (`page said: "Sorry, this user has been locked out."`), whether the control was disabled or what it reads (`it reads "Serch"`), the closest words to an expected text (`closest text on the page: "Reltded products"`), and other error lines (`page also shows: "Errror 304 - Missing Payment Gateway"`). It also saves `failed-step-<n>.png` and `failed-step-<n>.txt`.
-- Each `.txt` beside a screenshot holds the page's visible words, then `Form fields:` with what each field holds and `Disabled buttons:`. A page's text alone leaves out field values. Password fields are never read. The parent packet lists these files in `page_text_paths`.
+- Each `.txt` beside a screenshot holds the page's visible words, then `Form fields:` with what each field holds and `Disabled buttons:`. Dropdown options are left out of the visible words, so a choice such as "Error 101: Subject not found" is not mistaken for a message; the field line shows the option that was chosen. A page's text alone leaves out field values. Password fields are never read. The parent packet lists these files in `page_text_paths`.
 - `gate_passed` only means every account signed in. A summary for a failed run says so.
 - The MCP server refuses to start when the source is newer than the build, and once the code is rebuilt under it, every tool asks for a restart and runs nothing.
 - `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
@@ -168,7 +168,7 @@ A page is checked the way a person would see it.
 - `assert: { type: field_value, selector, value }` checks what a form field holds, such as a profile's first name. It may not read the password field. A failure names what the field held.
 - Templates: `{{run.id}}` for a fresh made-up email on every run, `{{run.label}}`, `{{self.vars.first_name}}` for the running label's own values, and `{{date.+30}}` for the date 30 days from today.
 
-Chaos (`--chaos <profile> --seed <seed>`) adds delays, dropped requests, refreshes, back presses, and double clicks to journeys. The seed is joined with each label and journey, so each one meets a different pattern that the same seed repeats. A refresh or back is skipped while a form is half filled in, because a person who reloads mid-form types it again. A double click lands on the button the step presses, so it tests a double submission. Every skip is logged. Compare a chaos run with a normal one: a check that passes normally but fails under chaos shows where the site does not recover. On Toolshop, the first chaos runs found that a sign-in request lost once leaves the customer on the login page with no error.
+Chaos (`--chaos <profile> --seed <seed>`) adds delays, dropped requests, refreshes, back presses, and double clicks to journeys. The seed is joined with each label and journey, so each one meets a different pattern that the same seed repeats. A refresh or back is skipped while a form is half filled in, because a person who reloads mid-form types it again. A double click lands on the button the step presses, so it tests a double submission. A dropped request is never the page load itself, because no site can recover from the browser's own error page; the drop moves to the next request the page makes. Every skip is logged. In a chaos summary, journeys that stopped at the same step with the same page words share one line. Compare a chaos run with a normal one: a check that passes normally but fails under chaos shows where the site does not recover. On Toolshop, the first chaos runs found that a sign-in request lost once leaves the customer on the login page with no error.
 
 Requests are paced, not dropped. Each runner may send `limits.request_burst_per_runner` requests at once (20 by default), then its share of the total per second. A busy page loads slower. It does not load broken. The share is `max_requests_per_second_total` divided by the number of runners that can work at once (the smaller of `max_parallel_runners` and the number of labels), and never more than `max_requests_per_second_per_runner`. The egress proxy sees an HTTPS connection only as a tunnel, so it cannot count the requests inside one. It paces new connections, and the runners keep the request total. Service workers are blocked, so a page's worker cannot send requests that skip this pacing. A run is `rate_limited` only when the site itself answers 429 or 503 to more than one request in ten.
 
@@ -211,7 +211,7 @@ The fixture includes pages shaped like a real site: a single-page app sign-in, a
 
 On 14 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 25 files passed and 182 tests passed.
+`pnpm test` exited 0. 25 files passed and 185 tests passed.
 
 `pnpm test:e2e` passed. 18 files passed and 51 tests passed.
 

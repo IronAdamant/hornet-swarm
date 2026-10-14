@@ -11,7 +11,7 @@ import { failureList, summaryMarkdown } from '../../packages/report/src/render.t
 import { closestText, executeJob, type JobRequest } from '../../packages/runner/src/job.ts';
 import { busyMessage } from '../../packages/controller/src/suite.ts';
 import { changedSince, settledFingerprints, staleBuilds } from '../../packages/mcp-server/src/freshness.ts';
-import { writeErrorsOnPassingSteps } from '../../packages/report/src/render.ts';
+import { chaosFailureGroups, writeErrorsOnPassingSteps } from '../../packages/report/src/render.ts';
 
 const root = join(import.meta.dirname, '..', '..');
 const readYaml = (path: string): unknown => parse(readFileSync(path, 'utf8'));
@@ -158,6 +158,14 @@ describe('the runner on a real page', () => {
     server = createServer((req, res) => {
       if (req.url === '/submit') submits += 1;
       res.writeHead(200, { 'content-type': 'text/html' });
+      if (req.url === '/form') {
+        res.end(`<!doctype html><html><body>
+<label for="subject">Subject</label>
+<select id="subject"><option value="">Select a subject</option><option value="cs" selected>Customer service</option><option value="e101">Error 101: Subject not found</option></select>
+<p>Contact us</p>
+</body></html>`);
+        return;
+      }
       if (req.url === '/shop') {
         res.end(`<!doctype html><html><body>
 <h2>Reltded products</h2>
@@ -266,6 +274,22 @@ describe('the runner on a real page', () => {
     const label = await executeJob(job([{ navigate: { url: '/shop' } }, { assert: { type: 'selector_visible', value: "[data-test='search']:has-text('Search')" } }], 'label'), new Map(), () => false);
     expect(label.steps.at(-1)?.error).toContain('it reads "Serch"');
   }, 60_000);
+
+  it('leaves dropdown options out of the page text and the clues, and shows the chosen one', async () => {
+    const request = job([{ navigate: { url: '/form' } }, { assert: { type: 'text_visible', value: 'Thanks for your message' } }], 'options');
+    const report = await executeJob(request, new Map(), () => false);
+    expect(report.steps.at(-1)?.error).not.toContain('Error 101');
+    const text = readFileSync(join(request.outDir, 'failed-step-1.txt'), 'utf8');
+    expect(text).not.toContain('Error 101: Subject not found');
+    expect(text).toContain('Contact us');
+    expect(text).toContain('- Subject: Customer service');
+  }, 60_000);
+
+  it('never drops the page load itself under chaos, and says so', async () => {
+    const report = await executeJob(job([{ navigate: { url: '/' } }, { assert: { type: 'selector_visible', value: '#send' } }], 'spare', [{ step: 0, kind: 'drop', detail: 'once' }]), new Map(), () => false);
+    expect(report.status, JSON.stringify(report.steps.map((entry) => entry.error))).toBe('passed');
+    expect(report.chaosApplied).toContain('drop:spared the page load');
+  }, 60_000);
 });
 
 describe('small helpers behind the clearer reports', () => {
@@ -313,3 +337,19 @@ describe('the summary explains the sign-in gate', () => {
     expect(summaryMarkdown(users, 'failed')).toContain('Sign-in gate: passed, because every account signed in. It does not mean the journeys passed.');
   });
 });
+
+describe('chaos summaries', () => {
+  it('turns one cause across many journeys into one line', () => {
+    const failed = (name: string) => ({ id: name, name, status: 'fail', duration_ms: 1, steps: [{ index: 5, type: 'assert', status: 'fail', duration_ms: 1, started_at: '', finished_at: '', assertion: "selector_visible [data-test='nav-user-menu']", error: 'locator.waitFor: Timeout 10000ms exceeded.' }] });
+    const users = [
+      { label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [failed('Cart'), failed('Checkout')] },
+      { label: 'qa-user-4', phase1: { status: 'pass', duration_ms: 1 }, journeys: [failed('Profile')] },
+    ] as unknown as Parameters<typeof chaosFailureGroups>[0];
+    const lines = chaosFailureGroups(users);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('the same failure stopped 3 journeys');
+    expect(lines[0]).toContain('qa-user-1 · Cart (step 5); qa-user-1 · Checkout (step 5); qa-user-4 · Profile (step 5)');
+    expect(summaryMarkdown(users, 'failed', { profile: 'default', seed: 'lab-1' })).toContain('Failed: the same failure stopped 3 journeys');
+  });
+});
+

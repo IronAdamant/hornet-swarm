@@ -133,6 +133,28 @@ export function failureList(users: RichUser[]): string[] {
   return [...groups.values()].map((group) => `${group.labels.join(', ')} · ${group.line}`);
 }
 
+/**
+ * Under chaos, many journeys often stop at the same shared step, such as their sign-in. One line
+ * per cause, naming every journey it stopped, reads as the one finding it is.
+ */
+export function chaosFailureGroups(users: RichUser[]): string[] {
+  const groups = new Map<string, string[]>();
+  for (const user of users) {
+    if (user.phase1.status !== 'pass') continue;
+    for (const journey of user.journeys) {
+      if (journey.status !== 'fail' && journey.status !== 'error' && journey.status !== 'flaky') continue;
+      const step = journey.steps.find((entry) => entry.status !== 'pass' && entry.status !== 'skipped');
+      const cause = step ? `${describeStep(step)}: ${journey.status === 'flaky' ? 'passed only on a retry' : plainFailure(step)}` : 'it failed before its first step';
+      const members = groups.get(cause) ?? [];
+      members.push(`${user.label} · ${journey.name}${step ? ` (step ${step.index})` : ''}`);
+      groups.set(cause, members);
+    }
+  }
+  return [...groups.entries()].map(([cause, members]) =>
+    members.length === 1 ? `${members[0]}: ${cause}` : `the same failure stopped ${members.length} journeys: ${cause}. Seen in ${members.join('; ')}`,
+  );
+}
+
 export function summaryMarkdown(users: RichUser[], status: RunResult['status'], chaos?: { profile: string; seed: string }): string {
   const flaky = users.some((user) => user.journeys.some((journey) => journey.status === 'flaky' || journey.steps.some((step) => step.status === 'flaky')));
   const phaseFailed = users.some((user) => user.phase1.status === 'fail' || user.phase1.status === 'error');
@@ -194,7 +216,7 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   if (has('captcha')) findings.push('A human check stopped the run.');
   if (has('2fa')) findings.push('A second code stopped the run.');
   if (rateLimited) findings.push('The site pushed back with HTTP 429 or 503.');
-  for (const failure of failures) findings.push(`Failed: ${failure}`);
+  for (const failure of chaos ? chaosFailureGroups(users) : failures) findings.push(`Failed: ${failure}`);
   for (const note of writeErrorsOnPassingSteps(users)) findings.push(`Note: ${note}`);
   const first = diagnose(users, status);
   if (status !== 'passed' && failures.length === 0) findings.push(`First problem: ${first.suspected}`);
