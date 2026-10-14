@@ -1,0 +1,21 @@
+version: 1
+id: admin-pages
+name: The admin's dashboard, products, orders, and brands load
+users: [qa-user-6]
+tags: [admin]
+steps:
+  - navigate: { url: "/#/auth/login" }
+  - fill: { selector: "[data-test='email']", credential: "self.username" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='login-submit']" }
+  - wait: { for: navigation }
+  - assert: { type: selector_visible, value: "[data-test='nav-admin-menu']" }
+  - assert: { type: text_visible, value: "Latest orders" }
+  - screenshot: { name: "dashboard" }
+  - navigate: { url: "/#/admin/products" }
+  - assert: { type: selector_visible, value: "tr:has-text('Combination Pliers')" }
+  - navigate: { url: "/#/admin/orders" }
+  - assert: { type: text_visible, value: "Invoice Number" }
+  - screenshot: { name: "orders" }
+  - navigate: { url: "/#/admin/brands" }
+  - assert: { type: selector_visible, value: "td:text-is('Brand name 1')" }

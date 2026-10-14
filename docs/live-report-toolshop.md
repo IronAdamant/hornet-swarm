@@ -11,7 +11,7 @@ The first run against a live site run by someone else, done the way a client job
 | Activities | Sign-in checks and functional journeys. Chaos, load, access-control probing, and the admin account are excluded. |
 | Accounts | Three made-up customers signed up for this run (Mara Quill, Tobin Reyes, Iris Calloway), not the published accounts other testers share |
 | Limits | Two browsers at a time, two requests a second each, four in total, at most one order per run |
-| Runs | Claude: sign-in check `run_20261014-210517_026cbb`; watched run of three journeys `run_20261014-210554_a64497`; full suite `run_20261014-211103_baaa2c` and `run_20261014-211436_0139bb`. Grok's swarm, later the same evening: one agent per account, the same journeys (`run_20261014-214717_d49ec7` to `run_20261014-214853_5c19a7`) |
+| Runs | Claude: sign-in check `run_20261014-210517_026cbb`; watched run of three journeys `run_20261014-210554_a64497`; full suite `run_20261014-211103_baaa2c` and `run_20261014-211436_0139bb`. Grok's swarm, later the same evening: one agent per account, the same journeys (`run_20261014-214717_d49ec7` to `run_20261014-214853_5c19a7`). Claude, later: nine more full suites from 23:01 to 00:12, five and ten minutes apart (`run_20261014-230113_c9ccb2` to `run_20261015-001252_094a91`) |
 | Journeys | search, cart, checkout, cash on delivery, favourites, profile. Sign-up and contact were left out so the runs would not add accounts or messages to a shared site. |
 
 ## Summary
@@ -24,7 +24,7 @@ Three things differ from the lab. Confirming an order works only some of the tim
 
 | ID | Finding | Severity | How often |
 |---|---|---|---|
-| L-01 | An order is confirmed only some of the time | High | 1 of 3 checkouts failed |
+| L-01 | An order is confirmed only some of the time | High | 2 of 5 checkouts failed |
 | L-02 | During an API slowdown, a sign-in hangs with no message | Medium | Once, in a slowdown of a few minutes |
 | L-03 | Pages are two to three times slower than in the lab | Low | Every run |
 
@@ -32,8 +32,8 @@ Three things differ from the lab. Confirming an order works only some of the tim
 
 - **Steps:** sign in, add product 1, check out, pay by bank transfer, press Confirm twice.
 - **Expected:** "Thanks for your order!" every time.
-- **Actual:** in `run_20261014-211103_baaa2c` the invoice request (`POST /invoices`) answered 500 and the page stayed on "Payment was successful". In `run_20261014-211436_0139bb` the same request answered 201 and the page said "Thanks for your order! Your invoice number is INV-2026000005." Grok's later run `run_20261014-214836_1a79e8` also succeeded ("INV-2026000006").
-- **Lab:** the same step failed with 500 on every run (F-01 in `docs/sample-report-toolshop-lab.md`).
+- **Actual:** in `run_20261014-211103_baaa2c` the invoice request (`POST /invoices`) answered 500 and the page stayed on "Payment was successful". In `run_20261014-211436_0139bb` the same request answered 201 and the page said "Thanks for your order! Your invoice number is INV-2026000005." Grok's later run `run_20261014-214836_1a79e8` also succeeded ("INV-2026000006"). Of the two later checkouts, `run_20261014-234948_2a261b` failed and `run_20261014-235811_69651b` succeeded. Across all five, two failed.
+- **Lab:** the same step failed with 500 on every normal run (F-01 in `docs/sample-report-toolshop-lab.md`), but the lab's admin order list shows two orders that went through during Grok's chaos round. So the fault is intermittent in the lab too; live, it simply shows up in ordinary runs.
 - **Impact:** some customers pay and get no order. Because it sometimes works, it is harder to notice and to reproduce than a fault that always happens.
 
 ### L-02 During an API slowdown, a sign-in hangs with no message
@@ -53,6 +53,15 @@ Three things differ from the lab. Confirming an order works only some of the tim
 
 Live slowness alone is not a fault, but a sign-in that sometimes takes 9 seconds sits close to where customers give up.
 
+### The site deletes its accounts about once an hour
+
+This is how the demo is run, not a fault, but a client's staging site can do the same when it is refreshed, so the swarm must notice it.
+
+- Our three customers signed in at 21:05, 21:14, and 21:48. At 23:01, and on every run until 23:46, all three were refused with "Invalid email or password". Signing them up again succeeded, so the accounts no longer existed. They signed in again at 23:49 and 23:58, then were refused again at 00:06 and 00:12.
+- So the site reset its data between 21:48 and 23:01, and again between 23:58 and 00:06, close to the hour.
+- The summary now says, when every account is refused with the site's own words, that the site may have deleted them and how to create them again. `setup-practice.mjs` now says how many customers it signed up and how many it kept, so a reset shows at once.
+- Runs blocked by a reset say nothing about the site's journeys. The 60% sign-in rate below comes from them: apart from L-02's stall, every refused sign-in was "Invalid email or password" after a reset.
+
 ## Planted faults, confirmed live
 
 Each failed at the same step with the same page words as in the lab:
@@ -68,7 +77,18 @@ Each failed at the same step with the same page words as in the lab:
 
 - Sign-in: 12 of 12 attempts, through Cloudflare's invisible bot check, which the harness correctly did not treat as a captcha.
 - Favourites: 2 of 2. On the second run the page said the product was already saved, and the summary noted that `POST /favorites` answered 409 on a passing step.
-- Checkout: 2 of 3 (see L-01).
+- Checkout: 3 of 5 (see L-01).
+
+## Reliability over the evening
+
+24 runs, 21:05 to 00:12. Journeys count only the runs where the accounts existed.
+
+| Check | Attempts with a verdict | Passed | Median | Slowest 5% |
+|---|---|---|---|---|
+| Sign-in | 52 | 31 (60%, see the reset above) | 3.6 s | 7.9 s |
+| Favourites | 5 | 5 | 9.1 s | 9.5 s |
+| Checkout | 5 | 3 | 10.3 s | 10.4 s |
+| Cart, cash on delivery, profile, search | every attempt | 0, the planted faults | | |
 
 ## Live conditions, and how the harness handled them
 
@@ -83,7 +103,7 @@ Each failed at the same step with the same page words as in the lab:
 - Chaos and load. A public practice permission refuses both, as a client's live site would.
 - Security. Grok's swarm covers it in `docs/security-report-toolshop-live.md`, within what the public permission allows.
 - The admin account, sign-up, and the contact form, to leave the shared site's data alone.
-- Reliability over many runs. Four runs is fewer than the five the stats ask for; more runs on another day would show how often L-01 and L-02 happen.
+- Reliability over a full day. The 24 runs span three hours of one evening, and two resets blocked nine of them.
 
 ## How this was produced
 

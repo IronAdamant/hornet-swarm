@@ -45,7 +45,8 @@ The shared scale in `docs/severity.md`:
 - **Expected:** "Thanks for your order!" and an invoice number.
 - **Actual:** the page stays on "Payment was successful". The request that creates the invoice (`POST /invoices`) returns 500.
 - **Evidence:** run `run_20261014-082202_2a2c2b`, step 25 failed with `(page said: "Payment was successful")`. The network log shows `POST /payment/check` 200, then `POST /invoices` 500. The same in every run since, including Grok's `run_20261014-140940_8776ca` and `run_20261014-141715_7e59d7`.
-- **Impact:** customers believe they have paid and receive no order.
+- **Not every time:** every normal checkout in the lab failed this way, but the admin's order list shows two lab orders that did go through, `INV-2026000005` and `INV-2026000006`, created at 19:43 and 19:48 on 14 October, during Grok's chaos round. The hosted site also confirms some orders and not others (L-01 in `docs/live-report-toolshop.md`). The fault is intermittent, not total.
+- **Impact:** some customers believe they have paid and receive no order. Because some orders do go through, the fault is harder to notice.
 
 ### F-02 Cash on delivery cannot be confirmed
 
@@ -109,11 +110,12 @@ These are worth journeys of their own before a client report relies on them.
 - Contact: the message is sent and the page thanks the customer.
 - Favourites: a saved product appears in the favourites list.
 - Sign-up: a new customer signs up with a fresh address and signs straight in.
+- Admin: the dashboard, products, orders, and brands pages load, and the admin can add a brand made for the run, find it, and delete it again (`run_20261014-231046_c9f0a7`).
 
 ## What was not checked
 
 - Cross-account access ("can one customer see another's invoice?"). Left out of this authorisation on purpose.
-- The admin's catalogue and order pages. The admin signs in, but no admin journey was run yet.
+- Editing products and orders as the admin. The admin journeys add and delete only a brand made for the run.
 - Price filters and sorting.
 - The stylesheet the page loads from a public CDN, which stayed blocked to keep the lab offline. Icons from it do not show on the screenshots.
 - Restful Booker, the second lab, which is guest-only for now.

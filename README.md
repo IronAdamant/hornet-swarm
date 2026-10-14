@@ -82,8 +82,8 @@ The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoin
 
 Three testing-practice apps run in Docker on this Mac, for hard practice that touches no live service. Every port is bound to `127.0.0.1`.
 
-- **Toolshop** (`toolshop-lab`, http://127.0.0.1:4300): the sprint 5 edition of Practice Software Testing, which ships with deliberate bugs. Five made-up customers with `example.com` addresses and random passwords, plus the seeded shop admin.
-- **Restful Booker** (`booker-lab`, http://127.0.0.1:3300): a bed-and-breakfast site with an admin panel. Its published admin password is a common word that its own pages also show, so redacting it would blank ordinary text. Its admin login is stored only when you set `HORNET_BOOKER_ADMIN_PASSWORD`.
+- **Toolshop** (`toolshop-lab`, http://127.0.0.1:4300): the sprint 5 edition of Practice Software Testing, which ships with deliberate bugs. Five made-up customers with `example.com` addresses and random passwords, plus the seeded shop admin, whose journeys add a brand made for the run, find it, and delete it again.
+- **Restful Booker** (`booker-lab`, http://127.0.0.1:3300): a bed-and-breakfast site with an admin panel. qa-user-3 is a guest and runs the guest journeys with `suite --user qa-user-3`. Its published admin password is a common word that its own pages also show, so redacting it would blank ordinary text. Its admin login is stored only when you set `HORNET_BOOKER_ADMIN_PASSWORD`.
 - **ParaBank** (`parabank-lab`, http://127.0.0.1:8095/parabank/): Parasoft's demo online bank. Five made-up customers, each starting with $515.50. Their passwords are letters and digits, because ParaBank's Update Profile page cuts a password short at a `#`; qa-user-5 keeps a symbol so a journey shows that fault. `docs/sample-report-parabank-lab.md` is the write-up. The journeys check that money adds up: after opening an account, a transfer, and a bill payment, every balance and the total must match what moved. A new customer is signed up on each run, so the expected balances never drift.
 
 ```bash
@@ -169,19 +169,20 @@ A page is checked the way a person would see it.
 - `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
 - `select: { selector, label }` (or `value`, or `index` where 0 is the first option, for lists such as account numbers that change per customer) chooses from a dropdown. It focuses the field, chooses, and leaves it, as a person does, because some forms only record a choice from a field that was touched.
 - `assert: { type: field_value, selector, value }` checks what a form field holds, such as a profile's first name. It may not read the password field. A failure names what the field held.
+- Templates work in selectors as well as values, such as `tr:has-text('Lab Brand {{run.tag}}')` for a row this run created.
 - Templates: `{{run.id}}` for a fresh made-up email on every run, `{{run.tag}}` for its short last part (for sites that limit username length), `{{run.label}}`, `{{self.vars.first_name}}` for the running label's own values, and `{{date.+30}}` for the date 30 days from today.
 
 Chaos (`--chaos <profile> --seed <seed>`) adds delays, dropped requests, refreshes, back presses, and double clicks to journeys. The seed is joined with each label and journey, so each one meets a different pattern that the same seed repeats. A refresh or back is skipped while a form is half filled in, because a person who reloads mid-form types it again. It is also skipped on a page that a sent form produced, because reloading it sends the form again, which a browser does only after asking. A double click lands on the button the step presses, so it tests a double submission. A dropped request is never the page load itself, because no site can recover from the browser's own error page; the drop moves to the next request the page makes. Every skip is logged. In a chaos summary, journeys that stopped at the same step with the same page words share one line. Compare a chaos run with a normal one: a check that passes normally but fails under chaos shows where the site does not recover. On Toolshop, the first chaos runs found that a sign-in request lost once leaves the customer on the login page with no error.
 
 Requests are paced, not dropped. Each runner may send `limits.request_burst_per_runner` requests at once (20 by default), then its share of the total per second. A busy page loads slower. It does not load broken. The share is `max_requests_per_second_total` divided by the number of runners that can work at once (the smaller of `max_parallel_runners` and the number of labels), and never more than `max_requests_per_second_per_runner`. The egress proxy sees an HTTPS connection only as a tunnel, so it cannot count the requests inside one. It paces new connections, and the runners keep the request total. Service workers are blocked, so a page's worker cannot send requests that skip this pacing. A run is `rate_limited` only when the site itself answers 429 or 503 to more than one request in ten.
 
-A captcha stops the journey only when a person could see it: a visible widget or challenge frame, or the words "verify you are human". Invisible reCAPTCHA v3, the reCAPTCHA badge, and a Turnstile script that never shows a widget are ignored. A second-code prompt needs a one-time-code field, a field named for a code, or wording that a code was sent. A postcode, promo code, or other short field is not a second code. A texted or emailed code waits for you on the local code page for up to `auth.operator_code_wait_sec` seconds (600 by default), and never past the run deadline.
+A captcha stops the journey only when a person could see it: a visible widget or challenge frame, or the words "verify you are human". Invisible reCAPTCHA v3, the reCAPTCHA badge, and a Turnstile script that never shows a widget are ignored. A second-code prompt needs a one-time-code field, a field named for a code, or wording that a code was sent. A postcode, promo code, or other short field is not a second code. An authenticator code is made with at least 15 seconds of its 30-second window left, waiting for the next window if needed, so a site that accepts only the current code does not see it expire between being made and being typed. A texted or emailed code waits for you on the local code page for up to `auth.operator_code_wait_sec` seconds (600 by default), and never past the run deadline.
 
 A runner that is missing or crashes becomes an error for that account only. The other accounts keep their results. A run where every account hit such an error is `error`, not `failed`, because the harness broke, not the site.
 
-A journey that failed, errored, or was flaky for any label in a `suite` run is copied to `~/.hornet-swarm/regressions/<project>/` and joins later `suite` runs. It is fixed after three `suite` runs in a row where it passed for every label. Then the copy is removed and the ledger stays. A single `journey` or `run_journey` call neither adds a regression nor counts toward fixing one.
+A journey that failed, errored, or was flaky for any label in a `suite` run is copied to `~/.hornet-swarm/regressions/<project>/` and joins later `suite` runs. It is fixed after three `suite` runs in a row where it passed for every label. Then the copy is removed and the ledger stays. While the project still has that journey, its current version runs, so fixing a journey's own mistake also fixes its regression; the saved copy runs only if the project's journey is gone. A single `journey` or `run_journey` call neither adds a regression nor counts toward fixing one.
 
-A journey with `requires_phase1: false` runs even when that label's sign-in check did not pass. Other journeys are skipped then. Each journey runs in a fresh browser either way, so a journey that needs a session signs in itself.
+A journey with `requires_phase1: false` runs even when that label's sign-in check did not pass. Other journeys are skipped then. A label with no stored login whose journeys all have `requires_phase1: false` is a guest, such as a visitor who books without an account: it is not signed in, the summary names it as a guest, and it does not hold back the sign-in gate. Each journey runs in a fresh browser either way, so a journey that needs a session signs in itself.
 
 ## Runner output folders
 
@@ -214,7 +215,7 @@ The fixture includes pages shaped like a real site: a single-page app sign-in, a
 
 On 14 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 25 files passed and 191 tests passed.
+`pnpm test` exited 0. 25 files passed and 197 tests passed.
 
 `pnpm test:e2e` passed. 18 files passed and 52 tests passed.
 

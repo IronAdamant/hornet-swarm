@@ -74,6 +74,24 @@ function pageLoadTimedOut(error?: string): boolean {
   return Boolean(error && PAGE_LOAD_TIMEOUT.test(error));
 }
 
+const REFUSED = /invalid (email|user ?name|login|credentials)|incorrect (email|user ?name|password)|could not be verified|not recogni[sz]ed/i;
+
+/** Every account that should sign in failed, each with the site's own refusal, such as "Invalid email or password". */
+function allRefusedByTheSite(users: RichUser[]): boolean {
+  const members = users.filter((user) => user.phase1.blocked_reason !== 'guest');
+  return members.length > 0 && members.every((user) => user.phase1.status === 'fail' && REFUSED.test(user.phase1.error ?? ''));
+}
+
+function refusalWords(users: RichUser[]): string {
+  const said = users.map((user) => /page said: "([^"]+)"/.exec(user.phase1.error ?? '')?.[1]).find(Boolean);
+  return said ? `"${said}"` : 'a refused sign-in';
+}
+
+/** A guest is not signed in on purpose: it has no login, and none of its journeys signs in. */
+function signedInOrGuest(user: RichUser): boolean {
+  return user.phase1.status === 'pass' || user.phase1.blocked_reason === 'guest';
+}
+
 /** What a failed step means, in words a site owner reads. Playwright's own timeouts become plain English. */
 function plainFailure(step: RichUser['journeys'][number]['steps'][number]): string {
   const error = firstLine(step.error ?? '');
@@ -118,7 +136,7 @@ export function writeErrorsOnPassingSteps(users: RichUser[]): string[] {
 export function failureList(users: RichUser[]): string[] {
   const groups = new Map<string, { labels: string[]; line: string }>();
   for (const user of users) {
-    if (user.phase1.status !== 'pass') continue;
+    if (!signedInOrGuest(user)) continue;
     for (const journey of user.journeys) {
       if (journey.status !== 'fail' && journey.status !== 'error' && journey.status !== 'flaky') continue;
       const step = journey.steps.find((entry) => entry.status !== 'pass' && entry.status !== 'skipped');
@@ -140,7 +158,7 @@ export function failureList(users: RichUser[]): string[] {
 export function chaosFailureGroups(users: RichUser[]): string[] {
   const groups = new Map<string, string[]>();
   for (const user of users) {
-    if (user.phase1.status !== 'pass') continue;
+    if (!signedInOrGuest(user)) continue;
     for (const journey of user.journeys) {
       if (journey.status !== 'fail' && journey.status !== 'error' && journey.status !== 'flaky') continue;
       const step = journey.steps.find((entry) => entry.status !== 'pass' && entry.status !== 'skipped');
@@ -187,6 +205,8 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
     paragraph = 'A page needed a site outside the allowed list, or the egress proxy failed, so the checks stopped. This is high. Check `targets.allowed_origins` and the proxy.';
   } else if (phaseFailed && users.every((user) => user.phase1.status === 'pass' || pageLoadTimedOut(user.phase1.error))) {
     paragraph = 'The sign-in page did not finish loading in time, so the later checks were not run. This is high. The site was slow or stalled. The trace and network.har show which requests never answered.';
+  } else if (phaseFailed && allRefusedByTheSite(users)) {
+    paragraph = `Every account was refused with the site's own words (${refusalWords(users)}). If these accounts signed in before, the site may have deleted them, as a demo or staging site can when it resets its data. Create them again, for a practice site with \`node scripts/setup-practice.mjs <site>\`, then run again. This says nothing yet about the site's journeys.`;
   } else if (phaseFailed) {
     const failedLabels = users.filter((user) => user.phase1.status === 'fail' || user.phase1.status === 'error').map((user) => user.label);
     paragraph =
@@ -200,14 +220,20 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   } else if (status !== 'passed') {
     paragraph = 'A check did not pass. This is high. Look at the first thing that failed.';
   } else {
-    paragraph = 'Sign-in worked and the checks that followed passed. Nothing needs fixing. This is low.';
+    paragraph = users.length > 0 && users.every((user) => user.phase1.blocked_reason === 'guest')
+      ? 'The checks passed, run as guests with no sign-in. Nothing needs fixing. This is low.'
+      : 'Sign-in worked and the checks that followed passed. Nothing needs fixing. This is low.';
   }
-  const signedIn = users.filter((user) => user.phase1.status === 'pass').length;
-  const findings = [users.length === 1 ? (signedIn ? 'Sign-in: the test account got in.' : 'Sign-in: the test account did not get in.') : `Sign-in: ${signedIn} of ${users.length} accounts got in.`];
+  const guests = users.filter((user) => user.phase1.blocked_reason === 'guest');
+  const members = users.filter((user) => user.phase1.blocked_reason !== 'guest');
+  const signedIn = members.filter((user) => user.phase1.status === 'pass').length;
+  const findings: string[] = [];
+  if (members.length > 0) findings.push(members.length === 1 ? (signedIn ? 'Sign-in: the test account got in.' : 'Sign-in: the test account did not get in.') : `Sign-in: ${signedIn} of ${members.length} accounts got in.`);
+  if (guests.length > 0) findings.push(`Guests, with no login and journeys that do not sign in: ${guests.map((user) => user.label).join(', ')}.`);
   const ran = users.flatMap((user) => user.journeys.filter((journey) => journey.steps.length > 0));
   if (ran.length > 0) findings.push(`Journeys: ${ran.filter((journey) => journey.status === 'pass').length} of ${ran.length} passed.`);
   // gate_passed only means every account signed in. Say so, so no agent reads it as a pass.
-  if (status !== 'passed' && users.length > 0 && signedIn === users.length) {
+  if (status !== 'passed' && members.length > 0 && signedIn === members.length) {
     findings.push('Sign-in gate: passed, because every account signed in. It does not mean the journeys passed.');
   }
   const failures = failureList(users);
@@ -276,7 +302,7 @@ export function diagnose(users: RichUser[], status: RunResult['status']): { susp
   const breach = isolationBreach(users);
   const problems: { text: string; reason?: string; repro: string[]; flaky: boolean; error: boolean; stalled: boolean }[] = [];
   for (const user of users) {
-    if (user.phase1.status !== 'pass') {
+    if (!signedInOrGuest(user)) {
       const reason = user.phase1.blocked_reason;
       problems.push({
         text: reason

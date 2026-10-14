@@ -184,7 +184,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   const rich: RichUser[] = [];
   let killed = false;
   let durationStop = false;
-  const phaseResults: { label: string; report: JobReport }[] = [];
+  const phaseResults: { label: string; report: JobReport; guest?: boolean }[] = [];
   const totpCodes: string[] = [];
   const renewQuietly = () => {
     try {
@@ -253,6 +253,13 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         phaseResults.push({ label, report: durationReport() });
         break;
       }
+      // A guest has no stored login, and every journey it runs skips sign-in, such as a visitor
+      // who books without an account. It is not signed in, and that is not a failure.
+      const labelJourneys = journeys.filter((entry) => entry.journey?.users.includes(label));
+      if (listFields(project.id, label, home).length === 0 && labelJourneys.length > 0 && labelJourneys.every((entry) => entry.journey?.requires_phase1 === false)) {
+        phaseResults.push({ label, report: guestReport(), guest: true });
+        continue;
+      }
       const held = await hold(label, async () => {
         const phase1 = await runPhase1(project, label, runId, home, agentId, deadline, totpCodes);
         phaseResults.push({ label, report: phase1.report });
@@ -304,7 +311,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         }
         userJourneys.push({ id: entry.journey?.id ?? 'journey', name: entry.journey?.name ?? 'Check', status: 'skipped', duration_ms: 0, steps: [] });
       }
-      rich.push({ label: item.label, phase1: phaseRecord(item.report), journeys: userJourneys });
+      rich.push({ label: item.label, phase1: item.guest ? { status: 'skipped', duration_ms: 0, blocked_reason: 'guest' } : phaseRecord(item.report), journeys: userJourneys });
     }
     if (includeRegressions) {
       for (const { entry, statuses } of outcomes.values()) rememberRegression(home, project.id, entry, runOutcome(statuses));
@@ -330,7 +337,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
     const code = error instanceof HornetError ? error.exitCode : 4;
     throw new HornetError(wrote.message, code);
   }
-  const gatePassed = rich.every((user) => user.phase1.status === 'pass');
+  const gatePassed = rich.every((user) => user.phase1.status === 'pass' || user.phase1.blocked_reason === 'guest');
   const status = foldRunStatus({ killed, gatePassed, users: rich, durationStop });
   const result = runResultSchema.parse({
     schema_version: '1',
@@ -432,6 +439,11 @@ export function runOutcome(statuses: ReadonlyArray<StepResult['status']>): 'fail
 export function busyMessage(label: string, until?: string): string {
   const when = until && !Number.isNaN(Date.parse(until)) ? isoOffset(new Date(until)) : 'later';
   return `${label} is busy until ${when}: another agent holds its login. This is not a site failure. Run it again after that time.`;
+}
+
+/** Sign-in for a guest: nothing to check. Recorded as skipped, with the reason guest. */
+function guestReport(): JobReport {
+  return { ok: true, status: 'passed', steps: [], chaosApplied: [] };
 }
 
 function leaseBusyReport(label: string, until?: string): JobReport {
@@ -566,7 +578,8 @@ async function executeIssued(
     });
   }
   const endpoint = await endpointFor(project.id, label);
-  const injected = await injectSecrets(project.id, label, endpoint, home);
+  // A guest has no login to hand over. A journey that asks for one fails at its fill step and says so.
+  const injected = listFields(project.id, label, home).length > 0 ? await injectSecrets(project.id, label, endpoint, home) : { ok: true, handles: [] };
   if (project.auth.totp.enabled) {
     const totp = await injectTotp(project.id, label, endpoint, home);
     if (totp.code) codes.push(totp.code);
@@ -1075,9 +1088,22 @@ function loadJourneys(home: string, project: Project, files: string[], includeRe
   const loaded = selected.map((file) => ({ file, text: readFileSync(file, 'utf8') }));
   if (!includeRegressions) return loaded;
   // An open regression joins the run once. It is skipped when the run already has a journey with that id.
+  // While the project still has that journey, its current version runs, so fixing a journey's own
+  // mistake also fixes its regression. The saved copy runs only when the project's journey is gone.
   const ids = new Set(loaded.map((entry) => journeyIdOf(entry.text)));
+  const ownerDir = resolveJourneys(home, project);
+  const current = new Map<string, { file: string; text: string }>();
+  for (const name of readdirSync(ownerDir).filter((entry) => entry.endsWith('.yaml'))) {
+    const file = join(ownerDir, name);
+    const text = readFileSync(file, 'utf8');
+    const id = journeyIdOf(text);
+    if (id) current.set(id, { file, text });
+  }
   const regressions = regressionFiles(home, project.id)
-    .map((file) => ({ file, text: readFileSync(file, 'utf8') }))
+    .map((file) => {
+      const text = readFileSync(file, 'utf8');
+      return current.get(journeyIdOf(text) ?? '') ?? { file, text };
+    })
     .filter((entry) => !ids.has(journeyIdOf(entry.text)));
   return [...loaded, ...regressions];
 }

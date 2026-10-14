@@ -439,15 +439,17 @@ async function runStep(
     return { statusCode: nav.status };
   }
   if ('click' in step) {
-    selectors.push(step.click.selector);
-    const target = locate(page, step.click.selector);
+    const clickSelector = renderTemplate(step.click.selector, template);
+    selectors.push(clickSelector);
+    const target = locate(page, clickSelector);
     // Chaos double-click presses the step's own button twice, as an impatient person does.
     if (doubleClick) await target.dblclick({ timeout: 15_000 });
     else await target.click({ timeout: 15_000 });
     return { statusCode: 0 };
   }
   if ('fill' in step) {
-    selectors.push(step.fill.selector);
+    const fillSelector = renderTemplate(step.fill.selector, template);
+    selectors.push(fillSelector);
     if (originAllowed(page.url(), job.passiveOrigins ?? [])) throw new Error('blocked_by_allowlist: passive origin');
     let text = '';
     if (step.fill.value !== undefined) text = renderTemplate(step.fill.value, template);
@@ -461,11 +463,12 @@ async function runStep(
       if (!value) throw new Error('missing totp code');
       text = value;
     }
-    await locate(page, step.fill.selector).fill(text, { timeout: 15_000 });
+    await locate(page, fillSelector).fill(text, { timeout: 15_000 });
     return { statusCode: 0 };
   }
   if ('select' in step) {
-    selectors.push(step.select.selector);
+    const selectSelector = renderTemplate(step.select.selector, template);
+    selectors.push(selectSelector);
     const option =
       step.select.index !== undefined
         ? { index: step.select.index }
@@ -474,7 +477,7 @@ async function runStep(
           : { label: renderTemplate(step.select.label ?? '', template) };
     // Focus, choose, then leave the field, as a person does. Some forms (Angular's among them)
     // only record the choice once the field has been touched.
-    const target = locate(page, step.select.selector);
+    const target = locate(page, selectSelector);
     await target.focus({ timeout: 15_000 });
     await target.selectOption(option, { timeout: 15_000 });
     await target.blur();
@@ -489,8 +492,9 @@ async function runStep(
       await waitForNavigationOrSettle(page, nav, isAborted, step.wait.ms ?? 15_000);
       return { statusCode: 0 };
     }
-    selectors.push(step.wait.selector ?? '');
-    await locate(page, step.wait.selector ?? 'body').waitFor({ state: step.wait.state ?? 'visible', timeout: step.wait.ms ?? 15_000 });
+    const waitSelector = step.wait.selector ? renderTemplate(step.wait.selector, template) : '';
+    selectors.push(waitSelector);
+    await locate(page, waitSelector || 'body').waitFor({ state: step.wait.state ?? 'visible', timeout: step.wait.ms ?? 15_000 });
     return { statusCode: 0 };
   }
   if ('assert' in step) {
@@ -517,7 +521,7 @@ async function runStep(
       }
     }
     if (step.assert.type === 'field_value') {
-      const field = step.assert.selector ?? '';
+      const field = renderTemplate(step.assert.selector ?? '', template);
       selectors.push(field);
       assertions[assertions.length - 1] = `field_value ${field} = ${value}`;
       const read = () => locate(page, field).inputValue({ timeout: 2_000 }).catch(() => undefined);
@@ -547,10 +551,11 @@ async function runStep(
     return { statusCode: 0 };
   }
   if ('upload' in step) {
-    selectors.push(step.upload.selector);
+    const uploadSelector = renderTemplate(step.upload.selector, template);
+    selectors.push(uploadSelector);
     const file = join(fixturesDir(), step.upload.fixture);
     if (!existsSync(file)) throw new Error(`upload fixture ${step.upload.fixture} is not in the runner image. Add it to images/runner/fixtures and run pnpm image.`);
-    await locate(page, step.upload.selector).setInputFiles(file);
+    await locate(page, uploadSelector).setInputFiles(file);
     return { statusCode: 0 };
   }
   if ('screenshot' in step) {
@@ -752,6 +757,7 @@ export async function failureClues(page: Page, step: Step, template: TemplateCon
   else if ('select' in step) target = step.select.selector;
   else if ('wait' in step && step.wait.selector) target = step.wait.selector;
   else if ('assert' in step && (step.assert.type === 'selector_visible' || step.assert.type === 'field_value')) target = step.assert.selector ?? step.assert.value ?? '';
+  target = renderTemplate(target, template);
   const hasText = /:has-text\((['"])(.*?)\1\)/.exec(target);
   const base = target.replace(/:has-text\((['"]).*?\1\)/g, '').replace(/:enabled\b/g, '').trim();
   if (base) {

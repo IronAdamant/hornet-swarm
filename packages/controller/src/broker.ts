@@ -7,7 +7,7 @@ import { Redactor } from '@hornet-swarm/core';
 import { aegisHome, ensureDir } from './home.js';
 import { withFileLock, writeFileAtomic } from './leases-store.js';
 import { runnerFetch } from './runner-auth.js';
-import { totpCode } from './totp.js';
+import { totpCode, waitForFreshCode } from './totp.js';
 
 const SERVICE = 'hornet-swarm-age-key';
 const LEGACY_SERVICE = 'aegis-age-key';
@@ -92,6 +92,10 @@ export function setSecrets(project: string, updates: Record<string, Partial<Reco
 export async function injectTotp(project: string, label: string, endpoint: string, home = aegisHome()): Promise<InjectedHandle> {
   const secret = readUsers(home, project)[label]?.totp_secret;
   if (!secret) return { ok: true, handles: [] };
+  // A strict site accepts only the current 30-second code. The journey types it a few steps later,
+  // so a code made near the end of its window could expire first. Wait for a fresh one.
+  const wait = waitForFreshCode();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   const code = totpCode(secret);
   const response = await runnerFetch(
     project,

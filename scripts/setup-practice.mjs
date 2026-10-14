@@ -217,6 +217,8 @@ for (const file of readdirSync(join(sourceDir, 'journeys')).filter((entry) => en
 // Logins go into the encrypted store, never into a project file. A site with its own sign-up gets
 // made-up customers with random passwords; the others use the login each site publishes.
 let count = 0;
+let signedUp = 0;
+let kept = 0;
 if (site.signUp) {
   const { listFields } = await import(join(root, 'packages/controller/dist/index.js'));
   for (const [label, person] of Object.entries(site.signUp.people)) {
@@ -243,12 +245,14 @@ if (site.signUp) {
     if (response.status === 200 || response.status === 201) {
       setSecret(site.project, label, 'username', email, home);
       setSecret(site.project, label, 'password', password, home);
+      signedUp += 1;
     } else if (response.status === 409 || response.status === 422) {
       // Signed up on an earlier run. The stored login still holds, if there is one.
       if (!listFields(site.project, label, home).includes('password')) {
         process.stderr.write(`${label} already exists on the site but has no stored login here.\n`);
         process.exit(6);
       }
+      kept += 1;
     } else {
       process.stderr.write(`Could not sign up ${label} (HTTP ${response.status}).\n`);
       process.exit(6);
@@ -277,6 +281,12 @@ writeFileSync(join(projectDir, 'swarm.json'), `${JSON.stringify(board, null, 2)}
 process.stdout.write(
   [
     `Installed ${site.project} with ${count} login${count === 1 ? '' : 's'}.${existsSync(join(projectDir, 'notes')) ? ' Existing agent notes were kept.' : ''}`,
+    ...(site.signUp
+      ? [
+          `Signed up ${signedUp} new customer${signedUp === 1 ? '' : 's'}, kept ${kept} from before.`,
+          ...(signedUp > 0 && kept === 0 && existsSync(join(projectDir, 'secrets.sops.yaml')) ? ['If these customers existed before, the site has reset its data since. Their old logins were replaced.'] : []),
+        ]
+      : []),
     '',
     'Next:',
     `  pnpm hornet-swarm env up --project ${site.project}`,

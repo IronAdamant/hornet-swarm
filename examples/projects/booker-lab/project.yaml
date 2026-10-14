@@ -1,7 +1,8 @@
 # Installed to ~/.hornet-swarm/projects/booker-lab/ by: node scripts/setup-lab.mjs
 # Restful Booker Platform, a bed-and-breakfast site with an admin panel, running on this Mac.
 # The site has one admin login, published in its README, so the three labels share it. Guests book
-# and send messages without signing in. Restarting the booker's services resets its data.
+# and send messages without signing in: qa-user-3 has no stored login, so it runs as a guest with
+# `suite --user qa-user-3`. Restarting the booker's services resets its data.
 id: booker-lab
 name: Restful Booker lab (local)
 authorisation_id: lab-owner

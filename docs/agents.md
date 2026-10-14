@@ -66,6 +66,8 @@ steps:
   - screenshot: { name: "search" }
 ```
 
+- Templates work in selectors too: `tr:has-text('Lab Brand {{run.tag}}')` finds a row this run created.
+- A label with no stored login whose journeys all have `requires_phase1: false` runs as a guest. The summary names it as a guest, not a failed sign-in.
 - `self.username` and `self.password` mean the label running the journey. One journey can serve every label.
 - Each journey runs in a fresh browser, so it signs in itself.
 - Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label`, `value`, or `index`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`.

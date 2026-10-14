@@ -326,6 +326,21 @@ describe('the runner on a real page', () => {
     expect(text).toContain('- Subject: Customer service');
   }, 60_000);
 
+  it('fills in templates in selectors too, such as a row named for this run', async () => {
+    const request = job(
+      [
+        { navigate: { url: '/' } },
+        { fill: { selector: '#{{self.vars.field}}', value: 'Avery' } },
+        { assert: { type: 'field_value', selector: '#{{self.vars.field}}', value: 'Avery' } },
+        { wait: { for: 'selector', selector: '#{{self.vars.field}}' } },
+      ],
+      'selector-template',
+    );
+    request.users = { 'qa-user-1': { vars: { field: 'name' } } };
+    const report = await executeJob(request, new Map(), () => false);
+    expect(report.status, JSON.stringify(report.steps.map((entry) => entry.error))).toBe('passed');
+  }, 60_000);
+
   it('does not refresh a page that a sent form produced, so the form is sent once', async () => {
     const before = posts;
     const report = await executeJob(
@@ -427,3 +442,40 @@ describe('runner counts', () => {
   });
 });
 
+
+describe('authenticator codes', () => {
+  it('wait for a fresh 30-second window when the current one is nearly over', async () => {
+    const { waitForFreshCode, TOTP_FRESH_MS } = await import('../../packages/controller/src/totp.ts');
+    const start = 1_800_000_000_000 - (1_800_000_000_000 % 30_000);
+    expect(waitForFreshCode(start + 1_000)).toBe(0);
+    expect(waitForFreshCode(start + 30_000 - TOTP_FRESH_MS)).toBe(0);
+    expect(waitForFreshCode(start + 25_000)).toBe(5_050);
+    expect(waitForFreshCode(start + 29_999)).toBe(51);
+  });
+});
+
+describe('guest accounts', () => {
+  it('are named as guests, not failed sign-ins, and their failures are listed', () => {
+    const guest = { label: 'qa-user-3', phase1: { status: 'skipped', duration_ms: 0, blocked_reason: 'guest' } };
+    const passing = [{ ...guest, journeys: [{ id: 'browse', name: 'Browse', status: 'pass', duration_ms: 1, steps: [] }] }] as unknown as Parameters<typeof summaryMarkdown>[0];
+    const passed = summaryMarkdown(passing, 'passed');
+    expect(passed).toContain('run as guests with no sign-in');
+    expect(passed).toContain('Guests, with no login and journeys that do not sign in: qa-user-3.');
+    expect(passed).not.toContain('Sign-in:');
+    const failing = [
+      { ...guest, journeys: [{ id: 'message', name: 'Message', status: 'fail', duration_ms: 1, steps: [{ index: 8, type: 'assert', status: 'fail', duration_ms: 1, started_at: '', finished_at: '', assertion: 'text_visible Thanks', error: 'text was not visible' }] }] },
+    ] as unknown as Parameters<typeof failureList>[0];
+    expect(failureList(failing)).toEqual(['qa-user-3 · Message · step 8 (assert text_visible Thanks): text was not visible']);
+  });
+});
+
+describe('a site that deleted its test accounts', () => {
+  it('says the accounts may be gone when every one is refused with the site\'s own words', () => {
+    const refused = (label: string) => ({ label, phase1: { status: 'fail', duration_ms: 1, error: 'locator.waitFor: Timeout 10000ms exceeded. (page said: "Invalid email or password")' }, journeys: [] });
+    const text = summaryMarkdown([refused('qa-user-1'), refused('qa-user-2')] as unknown as Parameters<typeof summaryMarkdown>[0], 'failed');
+    expect(text).toContain('Every account was refused with the site\'s own words ("Invalid email or password")');
+    expect(text).toContain('may have deleted them');
+    const one = summaryMarkdown([refused('qa-user-1'), { label: 'qa-user-2', phase1: { status: 'pass', duration_ms: 1 }, journeys: [] }] as unknown as Parameters<typeof summaryMarkdown>[0], 'failed');
+    expect(one).not.toContain('may have deleted them');
+  });
+});

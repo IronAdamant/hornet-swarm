@@ -1,0 +1,34 @@
+version: 1
+id: admin-brand
+name: The admin adds a brand, finds it, and deletes it again
+description: >
+  Uses a brand name made for this run, so it changes nothing else, and deletes it at the end so
+  the catalogue ends as it started.
+users: [qa-user-6]
+tags: [admin, catalogue]
+steps:
+  - navigate: { url: "/#/auth/login" }
+  - fill: { selector: "[data-test='email']", credential: "self.username" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='login-submit']" }
+  - wait: { for: navigation }
+  - assert: { type: selector_visible, value: "[data-test='nav-admin-menu']" }
+  - navigate: { url: "/#/admin/brands/add" }
+  - wait: { for: selector, selector: "[data-test='name']" }
+  - fill: { selector: "[data-test='name']", value: "Lab Brand {{run.tag}}" }
+  - fill: { selector: "[data-test='slug']", value: "lab-brand-{{run.tag}}" }
+  - click: { selector: "[data-test='brand-submit']" }
+  - wait: { for: timeout, ms: 1500 }
+  - screenshot: { name: "brand-saved" }
+  - navigate: { url: "/#/admin/brands" }
+  - wait: { for: selector, selector: "[data-test='brand-search-query']" }
+  - fill: { selector: "[data-test='brand-search-query']", value: "Lab Brand {{run.tag}}" }
+  - click: { selector: "[data-test='brand-search-submit']" }
+  - assert: { type: selector_visible, value: "tr:has-text('Lab Brand {{run.tag}}')" }
+  - screenshot: { name: "brand-found" }
+  - click: { selector: "tr:has-text('Lab Brand {{run.tag}}') >> text=Delete" }
+  - wait: { for: timeout, ms: 1500 }
+  - navigate: { url: "/#/admin/brands" }
+  - wait: { for: selector, selector: "[data-test='brand-search-query']" }
+  - assert: { type: selector_absent, value: "tr:has-text('Lab Brand {{run.tag}}')" }
+  - screenshot: { name: "brand-deleted" }
