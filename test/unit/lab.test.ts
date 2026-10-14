@@ -180,6 +180,7 @@ describe('the runner on a real page', () => {
   let server: Server;
   let port = 0;
   let submits = 0;
+  let posts = 0;
 
   beforeAll(async () => {
     process.env.AEGIS_HEADLESS = '1';
@@ -187,6 +188,15 @@ describe('the runner on a real page', () => {
     server = createServer((req, res) => {
       if (req.url === '/submit') submits += 1;
       res.writeHead(200, { 'content-type': 'text/html' });
+      if (req.url === '/post') {
+        res.end('<!doctype html><html><body><form method="post" action="/posted"><input name="n" value="Avery"><button id="go">Send</button></form></body></html>');
+        return;
+      }
+      if (req.url === '/posted' && req.method === 'POST') {
+        posts += 1;
+        res.end('<!doctype html><html><body><p>Thanks, sent</p></body></html>');
+        return;
+      }
       if (req.url === '/form') {
         res.end(`<!doctype html><html><body>
 <label for="subject">Subject</label>
@@ -314,6 +324,18 @@ describe('the runner on a real page', () => {
     expect(text).not.toContain('Error 101: Subject not found');
     expect(text).toContain('Contact us');
     expect(text).toContain('- Subject: Customer service');
+  }, 60_000);
+
+  it('does not refresh a page that a sent form produced, so the form is sent once', async () => {
+    const before = posts;
+    const report = await executeJob(
+      job([{ navigate: { url: '/post' } }, { click: { selector: '#go' } }, { assert: { type: 'text_visible', value: 'Thanks, sent' } }], 'resend', [{ step: 2, kind: 'refresh', detail: 'refresh' }]),
+      new Map(),
+      () => false,
+    );
+    expect(report.status, JSON.stringify(report.steps.map((entry) => entry.error))).toBe('passed');
+    expect(report.chaosApplied).toEqual(['refresh:skipped (the page came from a sent form)']);
+    expect(posts - before).toBe(1);
   }, 60_000);
 
   it('never drops the page load itself under chaos, and says so', async () => {

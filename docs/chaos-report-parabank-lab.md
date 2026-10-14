@@ -22,9 +22,13 @@ After each chaos pair, the following normal suite passed every journey that had 
 
 ## How severity is judged
 
-- **High:** money is wrong, a customer is locked out, or an order is lost.
-- **Medium:** the customer is not told that something failed, or is told something false.
-- **Low:** vague wording.
+The shared scale in `docs/severity.md`:
+
+- **High:** a customer cannot complete something the site exists for, or money is wrong, a customer is locked out, or an order or payment is lost.
+- **Medium:** the customer can carry on, but sees wrong data, is told something false, or is not told that something failed.
+- **Low:** wording, spelling, labels, ordering, or layout that does not stop anyone.
+
+Chaos findings are rated by what the customer is left with once the disruption has happened.
 
 ## Journeys, normal beside chaos
 
@@ -216,3 +220,8 @@ Sign-in p50 1952 ms, p95 2655 ms. The one sign-in failure is outside this matrix
 ## How this was produced
 
 HEAD `17b5990`. Each label used its own `register_agent` id on `run_suite`, three labels at a time. Chaos was requested as `{ profile, seed }` on `run_suite`. Quotes are from the `.txt` page text saved beside each screenshot. The chaos action named for a failed step is the matching string in that run's `analysis.json` `chaos.actions` list.
+
+## Review by Claude
+
+- **C-01** came from the harness more than the bank. Chaos refreshed the page straight after Register was pressed (step 12), and reloading that page sent the sign-up a second time, which a browser does only after asking. The first sign-up had already worked ("Welcome Nova Ledger"). The bank's "This username already exists." on a resent form is at most Low, since a site that redirects after a form is sent avoids it. From 14 October the harness skips a refresh or back on a page that a sent form produced, and logs `refresh:skipped (the page came from a sent form)`.
+- C-02 and C-03 are in the sample report as P-05. The scale above is the shared one in `docs/severity.md`.

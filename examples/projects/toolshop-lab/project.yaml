@@ -31,7 +31,9 @@ runners:
   memory: 1g
   cpus: 1
 limits:
-  max_parallel_runners: 3
+  # Toolshop runs under emulation on this Mac. Three browsers at once left the login page loading
+  # past 15 seconds (Grok's chaos round, 14 October); two at a time load it in 2 to 4 seconds.
+  max_parallel_runners: 2
   max_requests_per_second_per_runner: 10
   request_burst_per_runner: 40
   max_requests_per_second_total: 30

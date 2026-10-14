@@ -9,7 +9,7 @@ A practice deliverable, written the way a client report would be, from runs agai
 | Site | ParaBank, http://127.0.0.1:8095/parabank/ (lab copy, this Mac only) |
 | Authorisation | `lab-owner` (owner basis): sign-in checks, functional journeys, and chaos. From 14 October it also grants access-control checks, used by one read-only check of the Admin Page; that check's findings are in Grok's `docs/security-report-parabank-lab.md`. Cross-account checks were not run. |
 | Accounts | Five made-up customers, each opened with $515.50 |
-| Runs | Claude's first runs, then two re-tests by Grok's swarm through the MCP server, one agent per account; normal runs and chaos runs (profile `default`, seed `bank-1`) |
+| Runs | Claude's first runs, then two re-tests and a chaos round by Grok's swarm through the MCP server, one agent per account; normal runs and chaos runs (seed `bank-1` with profile `default`; seeds `bank-2` with `default` and `bank-3` with `slow-api`) |
 | Journeys | money adds up, transfer, bill pay, loan, profile, wrong password, long username, profile keeps the password |
 
 ## Summary
@@ -20,9 +20,11 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 
 ## How severity is judged
 
-- **High:** a customer cannot do something the site exists for, or is locked out.
-- **Medium:** a customer can carry on, but is misled or left without feedback.
-- **Low:** wording, ordering, or layout that does not stop anyone.
+The shared scale in `docs/severity.md`:
+
+- **High:** a customer cannot complete something the site exists for, or money is wrong, a customer is locked out, or an order or payment is lost.
+- **Medium:** the customer can carry on, but sees wrong data, is told something false, or is not told that something failed.
+- **Low:** wording, spelling, labels, ordering, or layout that does not stop anyone.
 
 ## Findings, worst first
 
@@ -30,8 +32,9 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 |---|---|---|---|---|
 | P-01 | Updating contact details breaks sign-in for a password with a symbol | High | Update Contact Info | Every run |
 | P-02 | A new username over 20 characters is refused as "already exists" | Medium | Register | Every run |
-| P-03 | A lost request shows only "An internal error has occurred" | Low | Money adds up, transfer, bill pay, loan | Every chaos run |
-| P-04 | The account order on Find Transactions is not stable | Low | Find Transactions | Seen once in two runs |
+| P-05 | Pages load half empty with no message when a background request fails | Medium | Update Contact Info, Transfer | Under chaos |
+| P-03 | A lost request shows only "An internal error has occurred" | Low | Money adds up, transfer, bill pay, loan, find transactions | Every chaos run |
+| P-04 | The account order is not stable between pages and runs | Low | Find Transactions, Bill Pay | Seen in several runs |
 
 ### P-01 Updating contact details breaks sign-in for a password with a symbol
 
@@ -53,15 +56,23 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 
 ### P-03 A lost request shows only "An internal error has occurred"
 
-- **Seen in:** chaos runs `run_20261014-144734_2f5d66`, `run_20261014-152902_94f98d`, and `run_20261014-170308_52cc01`. When a request was lost, money adds up (step 46), transfer (step 16), bill pay (step 20), and loan (step 11) showed "Error!" and "An internal error has occurred and has been logged." Each of those passes without chaos. Profile and wrong password passed under chaos.
-- **Good:** the customer is told something went wrong, and no money moved.
+- **Seen in:** chaos runs `run_20261014-144734_2f5d66`, `run_20261014-152902_94f98d`, and `run_20261014-170308_52cc01` (seed `bank-1`): money adds up (step 46), transfer (step 16), bill pay (step 20), and loan (step 11). Grok's chaos round: bill pay step 20 (`run_20261014-185311_d126ca`, `run_20261014-185549_8c3e89`), loan step 11 (`run_20261014-185549_58fd38`), and transfer and find transactions step 10 (`run_20261014-185549_8c3e89`, `run_20261014-185311_c36359`). Each page showed "Error!" and "An internal error has occurred and has been logged." Each of those journeys passes without chaos.
+- **Good:** the customer is told something went wrong. No saved overview showed a wrong balance, and the next normal runs' totals were right. Not every account's balance was checked straight after the error, so "no money moved" is likely but not proven for every case.
 - **Could be better:** the message does not say whether to try again or whether money moved.
+
+### P-05 Pages load half empty with no message when a background request fails
+
+- **Update Contact Info:** under slow requests, the page opened with every contact field empty while the header still said "Welcome Kai Mint" (`run_20261014-190335_cb2069`, step 7). A customer who presses Update Profile there could save blank details. The next normal run showed the right details.
+- **Transfer Funds:** the page loaded with "Amount: $" and no account to choose (`run_20261014-185549_e3ccd5`, step 26). The $25 transfer was not sent, and the journey stopped before money moved.
+- **Expected:** a message that the details could not be loaded, and no form to submit until they are.
+- **Impact:** a customer is not told that something failed, and could overwrite good data with blanks.
 
 ### P-04 The account order on Find Transactions is not stable
 
 - **Run `run_20261014-144344_088009`:** the page's dropdown, in the network log, listed the new savings account `15342` before the main account `15231`, so it started on the savings account. A search for a bill payment from the main account found nothing.
 - **Grok's run `run_20261014-170749_58cb0b`:** the page listed the older account `13566` before the new `18117`, and started on the older one.
-- **So:** the order is not newest first every time; it changes between customers. Every other page lists the main account first. The journey `find-transactions-order` records which account the page starts on, so more runs will show how often it starts on the wrong one.
+- **Bill Pay too:** between Grok's first normal run and its recovery run, qa-user-2's bill payment came from a different account (16119, then 16452), because Bill Pay starts on the first account in its list and that list's order changed.
+- **So:** the order is not newest first every time; it changes between customers and runs. The overview lists the main account first. The journey `find-transactions-order` records which account the page starts on, so more runs will show how often it starts on the wrong one.
 - **Impact:** a customer may search the wrong account and think a payment is missing. Low until it is seen more.
 
 ## What passed
@@ -87,4 +98,6 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 ## Review
 
 Grok's second re-test checked every finding against its own runs. P-01, P-02, and P-03 held, and their evidence now cites those runs. Two corrections were made. Grok pointed out that no saved run recorded the 20-character cutoff; the `twenty-char-username` journey now does. P-04 was first written as "newest first"; Grok's run showed the opposite order, so it now says the order is not stable. Grok's reading that the first run had no dropdown came from the page text, which leaves dropdown options out by design; the network log of that run has them.
+
+Grok's chaos round (seeds `bank-2` and `bank-3`, `docs/chaos-report-parabank-lab.md`) added P-05, more evidence for P-03 and P-04, and the point that "no money moved" was stronger than the saved pages prove. It also recorded a sign-up that ended on "This username already exists." while the header already said "Welcome Nova Ledger". That page came from chaos refreshing straight after Register was pressed, which sent the sign-up a second time; a browser would ask first. The harness no longer refreshes a page that a sent form produced. Every report now uses the scale in `docs/severity.md`.
 

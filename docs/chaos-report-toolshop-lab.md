@@ -26,11 +26,13 @@ After the chaos runs, a solo normal suite for each label signed in and reached t
 
 ## How severity is judged
 
-- **High:** money is wrong, a customer is locked out, or an order is lost.
-- **Medium:** the customer is not told that something failed, or is told something false.
-- **Low:** vague wording.
+The shared scale in `docs/severity.md`:
 
-This scale is the one for this comparison. The sample report uses a different scale.
+- **High:** a customer cannot complete something the site exists for, or money is wrong, a customer is locked out, or an order or payment is lost.
+- **Medium:** the customer can carry on, but sees wrong data, is told something false, or is not told that something failed.
+- **Low:** wording, spelling, labels, ordering, or layout that does not stop anyone.
+
+Chaos findings are rated by what the customer is left with once the disruption has happened.
 
 ## Journeys, normal beside chaos
 
@@ -186,3 +188,8 @@ The planted faults did not recover. They failed again at the same step.
 Without chaos: 40 runs, 12:57 to 19:52, 15 passed and 25 failed. 16 chaos runs were left out. Sign-in passed 36 of 40 (0.90), median 1551 ms, 95th percentile 7533 ms, last status pass. Contact, favourites, and register passed every attempt in the window (contact 3, one skipped; favourites 3; register 4). Cart, cash on delivery, checkout, profile, and search failed every attempt that ran. That is the planted faults, not a new outage. The window is wider than this matrix.
 
 With `chaos: true`: 16 chaos runs, 08:31 to 19:51, all 16 failed. 74 runs without chaos were left out. This window includes older chaos runs from earlier the same day, not only seeds `shop-2` and `shop-3`. Sign-in passed 38 of 40 attempts (0.95), median 1627 ms, 95th percentile 22118 ms, last status pass. Contact, favourites, and register each passed 1 of 8. Cart failed 15 in a row, checkout 15, profile 16, cash on delivery 8, search 8. Those streaks mix the planted faults with the chaos-only stops above.
+
+## Review by Claude
+
+- **T-08** is about the lab, not the shop. Toolshop runs under emulation on this Mac, and three browsers at once left the login page loading past 15 seconds. The project now runs two at a time (`max_parallel_runners: 2`).
+- T-02, T-03, and T-04 are in the sample report under F-03. The scale above is the shared one in `docs/severity.md`.

@@ -9,20 +9,22 @@ A practice deliverable, written the way a client report would be, from runs agai
 | Site | Toolshop, http://127.0.0.1:4300 (lab copy, this Mac only) |
 | Authorisation | `lab-owner` (owner basis): sign-in checks, functional journeys, and chaos. Cross-account checks were out of scope. |
 | Accounts | Five made-up customers and the seeded shop admin |
-| Runs | Claude's first pass, then three re-tests by Grok's swarm on 14 October; normal runs and chaos runs (profile `default`, seed `lab-1`) |
+| Runs | Claude's first pass, then three re-tests and a chaos round by Grok's swarm on 14 October; normal runs and chaos runs (seed `lab-1` with profile `default`; seeds `shop-2` with `default` and `shop-3` with `slow-api`) |
 | Journeys | search, cart, checkout, cash on delivery, favourites, profile, contact, sign-up |
 
 ## Summary
 
-Sign-in works: every customer account signed in on every run without chaos, with a median of about 1.5 seconds. Three journeys work every time: contact, favourites, and sign-up. Five journeys fail every time, each at the same step, so each is a real and repeatable fault. The most serious is that a customer can pay and never get a confirmed order, and that cash on delivery cannot be completed at all.
+Sign-in works: every customer account signed in on every run without chaos when the lab ran one or two browsers at a time, with a median of about 1.5 seconds. With three at once, the lab on this Mac (Toolshop runs under emulation) loaded the login page too slowly, so the project now runs two at a time. Three journeys work every time: contact, favourites, and sign-up. Five journeys fail every time, each at the same step, so each is a real and repeatable fault. The most serious is that a customer can pay and never get a confirmed order, and that cash on delivery cannot be completed at all.
 
 Under chaos, the shop never tells the customer when a request fails. A lost sign-in, sign-up, message, or payment check leaves the page as it was, with no error.
 
 ## How severity is judged
 
-- **High:** a customer cannot complete something the site exists for, such as paying for an order.
-- **Medium:** a customer can carry on, but sees wrong data or is left without feedback.
-- **Low:** wording, spelling, layout, or labels that do not stop anyone.
+The shared scale in `docs/severity.md`:
+
+- **High:** a customer cannot complete something the site exists for, or money is wrong, a customer is locked out, or an order or payment is lost.
+- **Medium:** the customer can carry on, but sees wrong data, is told something false, or is not told that something failed.
+- **Low:** wording, spelling, labels, ordering, or layout that does not stop anyone.
 
 ## Findings, worst first
 
@@ -54,16 +56,18 @@ Under chaos, the shop never tells the customer when a request fails. A lost sign
 
 ### F-03 The shop never says when a request fails
 
-When the network loses one request, the page stays as it was and shows nothing. The customer cannot tell whether to wait, retry, or give up. Seen four ways:
+When the network loses a request, the shop never says so. Either the page stays as it was, or it loads half empty and carries on as if nothing were wrong. The customer cannot tell whether to wait, retry, or give up. Seen these ways:
 
 | Where | What happened | Evidence |
 |---|---|---|
 | Sign-in | Login pressed, request lost: the customer stays on the login page, form filled in, no message | Reproduced by hand by aborting one `POST /users/login`. In Grok's chaos run `run_20261014-142116_7f1685`, five journeys stopped at the same sign-in step |
 | Sign-up | The form stays up after Register, with no message | Same chaos run, `qa-user-2` register, step 14 |
-| Contact | No thanks message and no error; the form stays up with the message typed in | Same chaos run, `qa-user-5` contact, step 11 |
-| Payment | "Payment was successful" never appears, and the payment form stays as filled in | Same chaos run, `qa-user-3` checkout, step 23 |
+| Contact | No thanks message and no error; the form stays up with the message typed in. In another run, the form instead asked for "First name is required", "Last name is required", and "Email is required", details the shop already holds for a signed-in customer | `qa-user-5` contact, step 11, in `run_20261014-142116_7f1685` and `run_20261014-195137_188041` |
+| Payment | "Payment was successful" never appears, and the payment form stays as filled in | `qa-user-1` checkout, step 23, in `run_20261014-194501_35477e` |
+| Billing address | The billing step loads with address, city, and country empty and the next button disabled | `qa-user-3` checkout, step 18, in `run_20261014-193940_322e9f` |
+| Favourites | "There are no favorites yet." for a customer who has one | `qa-user-4` favourites, step 11, in `run_20261014-193327_dfa864` |
 
-Only the sign-in case has been reproduced by hand. The other three come from chaos runs, where a dropped request is the likely cause.
+Only the sign-in case has been reproduced by hand. The others come from chaos runs, where a lost or slow request is the likely cause. In every case the next normal run worked, and no saved page showed a second payment or a lost total.
 
 - **Expected:** a message such as "Something went wrong, please try again", and a way to retry.
 
@@ -101,7 +105,7 @@ These are worth journeys of their own before a client report relies on them.
 
 ## What passed
 
-- Every customer account signed in on every run without chaos.
+- Every customer account signed in on every run without chaos, two browsers at a time.
 - Contact: the message is sent and the page thanks the customer.
 - Favourites: a saved product appears in the favourites list.
 - Sign-up: a new customer signs up with a fresh address and signs straight in.
@@ -127,3 +131,6 @@ Corrections made along the way:
 - Grok's first re-test doubted the cash-on-delivery account fields and the `missing value` postcode. Both hold. The page text of that time left out form-field values; the harness now records them.
 - An earlier version of this report said the cash-on-delivery page showed "Errror 304 - Missing Payment Gateway" as an error. It is an option in the payment-method dropdown. The page text of that time included every dropdown option, so it read like a message. The harness now leaves options out, and F-02 rests on the disabled Confirm and the empty account fields alone.
 - Chaos failures in many journeys at the same sign-in step are one finding (F-03), not several. Chaos summaries now group them.
+- Grok's chaos round (seeds `shop-2` and `shop-3`, `docs/chaos-report-toolshop-lab.md`) added the billing, favourites, and contact cases to F-03, and showed that three browsers at once overload the lab on this Mac. The project now runs two at a time.
+- Every report now uses the scale in `docs/severity.md`.
+

@@ -182,6 +182,10 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   const steps: JobReport['steps'] = [];
   const chaosApplied: string[] = [];
   let formInProgress = false;
+  // A page that a sent form produced. Reloading it sends the form again, which a browser only does
+  // after asking, so chaos does not refresh it.
+  let formSent = false;
+  let lastPageLoadMethod = 'GET';
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   let context: BrowserContext | undefined;
   let status: JobReport['status'] = 'passed';
@@ -247,6 +251,9 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) nav.count += 1;
     });
+    page.on('request', (request) => {
+      if (mainFrameNavigation(request)) lastPageLoadMethod = request.method();
+    });
     page.on('request', () => {
       nav.inflight += 1;
       nav.lastActivity = Date.now();
@@ -296,7 +303,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           (count) => {
             dropLeft += count;
           },
-          { formInProgress, clickStep: 'click' in step },
+          { formInProgress, formSent, clickStep: 'click' in step },
         );
         const navBefore = nav.count;
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
@@ -305,6 +312,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         // Typed-in values stay on the page until it navigates away. Chaos must not refresh them away.
         if ('fill' in step || 'select' in step) formInProgress = true;
         if ('navigate' in step || nav.count !== navBefore) formInProgress = false;
+        if (nav.count !== navBefore) formSent = lastPageLoadMethod === 'POST';
         if (passiveNavigation) throw new Error(`blocked_by_allowlist: the page tried to open the passive origin ${passiveNavigation}`);
         const challenge = await detectChallenge(page);
         const decision = await resolveChallenge({
@@ -934,6 +942,8 @@ async function detectChallenge(page: Page): Promise<'captcha' | '2fa' | undefine
 /**
  * Applies this step's chaos. A refresh or back is skipped while a form is half filled in, because
  * a person who reloads mid-form types it again; wiping the form would test the robot, not the site.
+ * It is also skipped on a page that a sent form produced, because reloading it sends the form again,
+ * which a browser does only after asking.
  * A double-click lands on the step's own button, so only a click step can take one.
  */
 export async function applyChaos(
@@ -942,12 +952,16 @@ export async function applyChaos(
   context: BrowserContext,
   applied: string[],
   drop: (count: number) => void,
-  state: { formInProgress: boolean; clickStep: boolean } = { formInProgress: false, clickStep: false },
+  state: { formInProgress: boolean; formSent?: boolean; clickStep: boolean } = { formInProgress: false, clickStep: false },
 ): Promise<{ doubleClick: boolean }> {
   let doubleClick = false;
   for (const action of actions) {
     if ((action.kind === 'refresh' || action.kind === 'back') && state.formInProgress) {
       applied.push(`${action.kind}:skipped (form in progress)`);
+      continue;
+    }
+    if ((action.kind === 'refresh' || action.kind === 'back') && state.formSent) {
+      applied.push(`${action.kind}:skipped (the page came from a sent form)`);
       continue;
     }
     if (action.kind === 'double-click' && !state.clickStep) {
