@@ -111,4 +111,39 @@ describe('redactor', () => {
     totp.register('qa-user-1.totp_secret', 'JBSWY3DPEHPK3PXP');
     expect(totp.redact('jbswy3dpehpk3pxp')).toBe('[REDACTED:qa-user-1.totp_secret]');
   });
+
+  it('masks a password query that a hash cut down to a prefix', () => {
+    const secret = 'Abcdefghijklmnop#7a';
+    const redactor = new Redactor();
+    redactor.register('qa-user-5.password', secret);
+    const truncated = 'https://bank.test/parabank/updateprofile.htm?firstName=Zoe&amp;password=Abcdefghijklmnop&amp;username=zoefd3ea3';
+    expect(redactor.contains(truncated)).toBe(true);
+    const cleaned = redactor.redact(truncated);
+    expect(cleaned).toBe(
+      'https://bank.test/parabank/updateprofile.htm?firstName=Zoe&amp;password=[REDACTED:qa-user-5.password]&amp;username=zoefd3ea3',
+    );
+    expect(cleaned).not.toContain('Abcdefghijklmnop');
+    expect(cleaned).toContain('zoefd3ea3');
+    expect(redactor.contains(cleaned)).toBe(false);
+
+    const withHash = 'https://bank.test/update?password=Abcdefghijklmnop#7a&username=zoefd3ea3';
+    expect(redactor.redact(withHash)).toBe('https://bank.test/update?password=[REDACTED:qa-user-5.password]&username=zoefd3ea3');
+    expect(redactor.redact('https://bank.test/update?Password=Abcdefghijklmnop')).toBe(
+      'https://bank.test/update?Password=[REDACTED:qa-user-5.password]',
+    );
+    expect(redactor.redact('note%26password=Abcdefghijklmnop')).toBe('note%26password=[REDACTED:qa-user-5.password]');
+
+    const already = 'email=qa1%40example.test&amp;password=[REDACTED:qa-user-1.password]';
+    expect(redactor.redact(already)).toBe(already);
+    expect(redactor.contains(already)).toBe(false);
+    expect(redactor.redact('https://bank.test/search?q=Abcdefghijklmnop')).toBe('https://bank.test/search?q=Abcdefghijklmnop');
+    expect(redactor.redact('https://bank.test/login?password=short')).toBe('https://bank.test/login?password=short');
+    expect(redactor.contains('https://bank.test/login?password=short')).toBe(false);
+
+    const unknown = new Redactor();
+    const wrong = 'https://bank.test/login?password=notasecretvalue';
+    expect(unknown.contains(wrong)).toBe(true);
+    expect(unknown.redact(wrong)).toBe('https://bank.test/login?password=[REDACTED:query]');
+    expect(unknown.contains(unknown.redact(wrong))).toBe(false);
+  });
 });

@@ -1,3 +1,5 @@
+import { MIN_SECRET_LENGTH } from './secret-length.js';
+
 /** Headers that carry a session or an API credential. Their values are masked wherever they are saved. */
 export const SESSION_HEADER_NAMES: ReadonlySet<string> = new Set([
   'authorization',
@@ -16,9 +18,11 @@ export type RegisteredSecret = { label: string; value: string };
 
 export class Redactor {
   private forms: { form: string; token: string }[] = [];
+  private secrets: { label: string; value: string }[] = [];
 
   register(label: string, value: string): void {
     if (!value) return;
+    this.secrets.push({ label, value });
     const token = `[REDACTED:${label}]`;
     const forms = new Set<string>();
     const keepShort = value.length >= 8 || label.endsWith('.username');
@@ -47,11 +51,12 @@ export class Redactor {
       seen.add(form);
       output = output.split(form).join(token);
     }
-    return output;
+    return maskCredentialQueries(output, this.secrets);
   }
 
   contains(input: string): boolean {
-    return this.forms.some(({ form }) => form.length > 0 && input.includes(form));
+    if (this.forms.some(({ form }) => form.length > 0 && input.includes(form))) return true;
+    return credentialQueryIsRaw(input);
   }
 
   redactUnknown(value: unknown): unknown {
@@ -145,4 +150,97 @@ function addJsonEscapes(forms: Set<string>, value: string, keepShort: boolean): 
 export function maskHeader(name: string, value: string, redactor: Redactor): string {
   if (HEADER_NAMES.has(name.toLowerCase())) return '[REDACTED:header]';
   return redactor.redact(value);
+}
+
+/**
+ * Names of a query parameter that carry a credential. Longer names are listed first so
+ * `totp_secret` is not read as `secret`.
+ */
+const CREDENTIAL_QUERY_KEY = 'totp_secret|access_token|refresh_token|api_key|api-key|password|passwd|secret|totp|pwd';
+
+function credentialQueryPattern(): RegExp {
+  return new RegExp(`(^|[?#]|%26|&amp;|&)((?:${CREDENTIAL_QUERY_KEY}))=([^&#"'\\s<>\\\\]*)`, 'gi');
+}
+
+function decodeQueryComponent(value: string): string {
+  const plus = value.replace(/\+/g, ' ');
+  try {
+    return decodeURIComponent(plus);
+  } catch {
+    return plus;
+  }
+}
+
+function redactedToken(value: string): { token: string; suffix: string } | undefined {
+  const match = /^(\[REDACTED:[^\]]+\])(.*)$/u.exec(value);
+  if (!match?.[1]) return undefined;
+  return { token: match[1], suffix: match[2] ?? '' };
+}
+
+/**
+ * A `#` in a password ends the query string, so a saved URL can hold a prefix of the
+ * secret. That prefix is not one of the stored spellings. The whole parameter value is
+ * masked. A value that is already `[REDACTED:...]` is left as it is, label and all.
+ * Stored secrets are replaced first, so a `#` that is still part of the full secret
+ * is removed with it and is not left behind the mask.
+ */
+function maskCredentialQueries(input: string, secrets: { label: string; value: string }[]): string {
+  return input.replace(credentialQueryPattern(), (match, separator: string, key: string, value: string) => {
+    const existing = redactedToken(value);
+    if (existing && existing.suffix.length === 0) return match;
+    if (existing) return `${separator}${key}=${existing.token}`;
+    const decoded = decodeQueryComponent(value);
+    if (decoded.length < MIN_SECRET_LENGTH) return match;
+    const label = credentialLabel(secrets, key, decoded);
+    return `${separator}${key}=${label ? `[REDACTED:${label}]` : '[REDACTED:query]'}`;
+  });
+}
+
+function credentialQueryIsRaw(input: string): boolean {
+  for (const match of input.matchAll(credentialQueryPattern())) {
+    const value = match[3] ?? '';
+    const existing = redactedToken(value);
+    if (existing) {
+      if (existing.suffix.length > 0) return true;
+      continue;
+    }
+    if (decodeQueryComponent(value).length >= MIN_SECRET_LENGTH) return true;
+  }
+  return false;
+}
+
+function credentialLabel(secrets: { label: string; value: string }[], key: string, candidate: string): string | undefined {
+  const family = keyFamily(key);
+  let best: { label: string; family: boolean; exact: boolean; overlap: number } | undefined;
+  for (const secret of secrets) {
+    const fold = secret.label.endsWith('.password') || secret.label.endsWith('.totp_secret') || secret.label.endsWith('.username');
+    const stored = fold ? secret.value.toLowerCase() : secret.value;
+    const given = fold ? candidate.toLowerCase() : candidate;
+    if (stored.length < MIN_SECRET_LENGTH || given.length < MIN_SECRET_LENGTH) continue;
+    if (!stored.startsWith(given) && !given.startsWith(stored)) continue;
+    const next = {
+      label: secret.label,
+      family: family !== undefined && secret.label.endsWith(family),
+      exact: stored === given,
+      overlap: Math.min(stored.length, given.length),
+    };
+    if (!best || betterCredentialMatch(next, best)) best = next;
+  }
+  return best?.label;
+}
+
+function betterCredentialMatch(
+  next: { family: boolean; exact: boolean; overlap: number },
+  best: { family: boolean; exact: boolean; overlap: number },
+): boolean {
+  if (next.family !== best.family) return next.family;
+  if (next.exact !== best.exact) return next.exact;
+  return next.overlap > best.overlap;
+}
+
+function keyFamily(key: string): string | undefined {
+  const name = key.toLowerCase();
+  if (name === 'password' || name === 'passwd' || name === 'pwd') return '.password';
+  if (name === 'totp' || name === 'totp_secret') return '.totp_secret';
+  return undefined;
 }
