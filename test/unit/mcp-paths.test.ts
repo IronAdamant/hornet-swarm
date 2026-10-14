@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -145,6 +146,26 @@ users:
     write('run_1', 'pass', false);
     write('run_2', 'pass', false);
     write('run_3', 'fail', true);
+    // An owner authorisation that does not list chaos, with its signed statement.
+    const statement = 'Test statement: shop owner allows sign-in and journeys, not chaos.\n';
+    mkdirSync(join(home, 'authorisations', 'docs'), { recursive: true });
+    const doc = join(home, 'authorisations', 'docs', 'shop-owner.txt');
+    writeFileSync(doc, statement);
+    const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    writeFileSync(
+      join(home, 'authorisations', 'shop-owner.yaml'),
+      `id: shop-owner
+basis: owner
+client: Test shop
+authoriser: { name: Test Owner, role: Owner, email: owner@example.com }
+granted_to: Test runner
+scope: { domains: [localhost], environments: [test] }
+activities: [signin_smoke, functional_e2e]
+valid_from: "${day(-1)}"
+valid_until: "${day(30)}"
+document: { path: "${doc}", sha256: "${createHash('sha256').update(statement).digest('hex')}" }
+`,
+    );
     client = await openSession(home);
   }, 120_000);
 
@@ -166,6 +187,22 @@ users:
     ].join('\n');
     const body = await call(client, 'validate_journey', { project: 'shop', journey_yaml: journey });
     expect(body.valid, JSON.stringify(body)).toBe(true);
+  }, 30_000);
+
+  it('refuses an unknown chaos profile before anything runs', async () => {
+    const result = await client.callTool({ name: 'run_suite', arguments: { project: 'shop', chaos: { profile: 'earthquake', seed: 'x' } } });
+    const text = (result.content as Array<{ type: string; text?: string }> | undefined)?.find((entry) => entry.type === 'text')?.text ?? '';
+    expect(result.isError, text).toBe(true);
+    expect(text).toMatch(/profile/i);
+  }, 30_000);
+
+  it('refuses chaos when the authorisation does not list it', async () => {
+    for (const tool of ['run_suite', 'run_journey']) {
+      const args = tool === 'run_suite' ? { project: 'shop', chaos: { profile: 'latency', seed: 'shop-1' } } : { project: 'shop', journey_id: 'any', chaos: { profile: 'latency', seed: 'shop-1' } };
+      const body = await call(client, tool, args);
+      expect(body.ok, tool).toBe(false);
+      expect(body.error, tool).toContain('chaos_not_authorised');
+    }
   }, 30_000);
 
   it('leaves the chaos run out of get_reliability, and counts only it with chaos: true', async () => {

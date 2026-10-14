@@ -212,9 +212,9 @@ The fixture includes pages shaped like a real site: a single-page app sign-in, a
 
 On 14 October 2026 this Mac ran both commands against the offline fixture only.
 
-`pnpm test` exited 0. 25 files passed and 187 tests passed.
+`pnpm test` exited 0. 25 files passed and 190 tests passed.
 
-`pnpm test:e2e` passed. 18 files passed and 51 tests passed.
+`pnpm test:e2e` passed. 18 files passed and 52 tests passed.
 
 The same day, the Toolshop lab ran five suites without chaos and one with it. Every planted bug the journeys check failed on every run, at the same step, with the page's own words. Contact, favourites, and sign-up passed every time. `docs/sample-report-toolshop-lab.md` is the write-up, in the form a client report would take.
 

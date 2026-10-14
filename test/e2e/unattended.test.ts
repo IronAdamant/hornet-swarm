@@ -153,6 +153,23 @@ describe('unattended swarm', () => {
     expect(lines[2]).toContain('latest-parent-report.json');
   });
 
+  it('runs chaos through MCP run_suite and records the profile and seed', async () => {
+    clearSignins();
+    const client = await openMcp();
+    try {
+      const result = await client.callTool({ name: 'run_suite', arguments: { project: 'fixture', journeys: ['flag-check'], users: ['qa-user-1'], chaos: { profile: 'latency', seed: 'mcp-1' } } });
+      const text = (result.content as Array<{ type: string; text?: string }> | undefined)?.find((entry) => entry.type === 'text')?.text ?? '{}';
+      const body = JSON.parse(text) as { status?: string; parent?: { analysis?: { chaos?: { profile?: string; seed?: string } }; summary?: string } };
+      expect(body.status, text.slice(0, 400)).toBe('passed');
+      expect(body.parent?.analysis?.chaos?.profile).toBe('latency');
+      expect(body.parent?.analysis?.chaos?.seed).toBe('mcp-1');
+      expect(body.parent?.summary).toContain('This run added chaos (profile latency, seed mcp-1)');
+      expect(text).not.toContain(secret);
+    } finally {
+      await client.close();
+    }
+  }, 180_000);
+
   it('stops at the run limit without turning on the kill switch', () => {
     clearSignins();
     const original = readFileSync(projectFile, 'utf8');

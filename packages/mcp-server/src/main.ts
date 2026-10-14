@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { parallelRunners, Redactor, validateJourneyYaml } from '@hornet-swarm/core';
+import { CHAOS_PROFILES, parallelRunners, Redactor, validateJourneyYaml } from '@hornet-swarm/core';
 import {
   acquireLease,
   addAgentNote,
@@ -41,6 +41,18 @@ const PROJECT_ID = /^[a-z0-9-]+$/;
 const RUN_ID = /^run_[A-Za-z0-9_-]+$/;
 const JOURNEY_ID = /^[a-z0-9-]+$/;
 const LABEL = /^qa-user-\d+$/;
+/**
+ * Chaos for run_suite and run_journey: delays, lost requests, refreshes, and double clicks. The
+ * project's authorisation must list chaos; runSuite refuses it otherwise, and on any public
+ * practice site.
+ */
+const chaosInput = z
+  .object({
+    profile: z.enum(CHAOS_PROFILES),
+    seed: z.string().regex(/^[A-Za-z0-9-]{1,40}$/, 'seed is 1 to 40 letters, digits, or dashes'),
+  })
+  .strict()
+  .optional();
 
 /** An agent names a project and its journeys by id. A path is refused before any file is read. */
 function badProject(project: string | undefined): { content: { type: 'text'; text: string }[] } | undefined {
@@ -149,9 +161,10 @@ server.registerTool(
       journey_yaml: z.string().max(100_000).optional(),
       users: z.array(z.string()).optional(),
       agent_id: z.string().min(1).optional(),
+      chaos: chaosInput,
     }),
   },
-  async ({ project, journey_id, journey_yaml, users, agent_id }) => {
+  async ({ project, journey_id, journey_yaml, users, agent_id, chaos }) => {
     const agent = useAgent(agent_id);
     if (!agent.ok) return pack(project, { ok: false, error: agent.error }, agent_id);
     if (!PROJECT_ID.test(project)) return pack(undefined, { ok: false, error: 'Unknown project.' }, agent.agentId);
@@ -167,6 +180,7 @@ server.registerTool(
           journeyPathsAllowed: false,
           includeRegressions: false,
           ...(users ? { users } : {}),
+          ...(chaos ? { chaos } : {}),
           via: 'mcp',
           agentId: agent.agentId,
         });
@@ -179,7 +193,8 @@ server.registerTool(
 server.registerTool(
   'run_suite',
   {
-    description: 'Run a suite',
+    description:
+      'Run a suite. Pass chaos { profile, seed } to add delays, lost requests, refreshes, and double clicks; the authorisation must list chaos. Compare a chaos run with a normal run of the same journeys.',
     inputSchema: z.object({
       project: z.string(),
       journeys: z.array(z.string()).optional(),
@@ -187,9 +202,10 @@ server.registerTool(
       gate: z.enum(['all', 'per_user']).optional(),
       confirm_production: z.boolean().optional(),
       agent_id: z.string().min(1).optional(),
+      chaos: chaosInput,
     }),
   },
-  async ({ project, journeys, users, gate, confirm_production, agent_id }) => {
+  async ({ project, journeys, users, gate, confirm_production, agent_id, chaos }) => {
     const invalid = badProject(project) ?? badJourneyIds(journeys, project);
     if (invalid) return invalid;
     const agent = useAgent(agent_id);
@@ -202,6 +218,7 @@ server.registerTool(
         ...(users ? { users } : {}),
         ...(gate ? { gate } : {}),
         confirmProduction: Boolean(confirm_production),
+        ...(chaos ? { chaos } : {}),
         via: 'mcp',
         agentId: agent.agentId,
       }),

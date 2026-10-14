@@ -10,6 +10,9 @@ const PROFILES: Record<string, string[]> = {
   'slow-api': ['slow-api', 'fail-api'],
 };
 
+/** The chaos profiles a run may ask for. The CLI and the MCP tools both check against this list. */
+export const CHAOS_PROFILES = Object.keys(PROFILES) as [string, ...string[]];
+
 export function chaosSequence(seed: string, profile: string, steps: number): ChaosAction[] {
   const kinds = PROFILES[profile];
   if (!kinds) throw new Error(`unknown chaos profile: ${profile}`);

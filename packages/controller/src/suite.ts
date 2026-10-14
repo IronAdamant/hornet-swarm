@@ -6,6 +6,7 @@ import { parse } from 'yaml';
 import {
   activitiesPermitted,
   analysisSchema,
+  CHAOS_PROFILES,
   chaosPermitted,
   chaosSequence,
   globalConfigSchema,
@@ -153,6 +154,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   const polite = practiceLimits(project, auth);
   if (!polite.ok) throw new HornetError(polite.reason, 3);
   if (request.chaos) {
+    if (!CHAOS_PROFILES.includes(request.chaos.profile)) throw new HornetError(`unknown chaos profile: ${request.chaos.profile}. Use one of ${CHAOS_PROFILES.join(', ')}.`, 3);
     const allowed = chaosPermitted(auth, project);
     if (!allowed.ok) throw new HornetError(allowed.reason, 3);
   }
