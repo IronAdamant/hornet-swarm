@@ -11,11 +11,12 @@
 // every login in the encrypted store. The shop admin's login is read from Toolshop's README, so no
 // password is kept in this repo. No password is printed.
 import { execFileSync } from 'node:child_process';
-import { createHash, randomInt } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
+import { bankPassword, strongPassword } from './lab-passwords.mjs';
 
 const root = join(import.meta.dirname, '..');
 const home = process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm');
@@ -80,14 +81,6 @@ async function readmeLogin(url, pattern) {
   const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
   return (await response.text()).match(pattern)?.[1]?.trim();
-}
-
-function strongPassword() {
-  // Upper, lower, digit, and symbol, as Toolshop's sign-up rules ask.
-  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-  let body = '';
-  for (let index = 0; index < 16; index += 1) body += letters[randomInt(letters.length)];
-  return `${body}#${randomInt(10)}a`;
 }
 
 // 1. The shop's front end, built once with its API at the address runners use.
@@ -256,7 +249,7 @@ let bankSignedUp = 0;
 let bankKept = 0;
 for (const [label, person] of Object.entries(PARABANK_CUSTOMERS)) {
   const username = `${person.first_name}${person.last_name}`.toLowerCase();
-  const password = strongPassword();
+  const password = bankPassword();
   const bank = await bankSession();
   await bank('register.htm');
   const page = await bank('register.htm', {

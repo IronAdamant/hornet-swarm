@@ -12,6 +12,7 @@ import { closestText, executeJob, type JobRequest } from '../../packages/runner/
 import { busyMessage } from '../../packages/controller/src/suite.ts';
 import { changedSince, settledFingerprints, staleBuilds } from '../../packages/mcp-server/src/freshness.ts';
 import { chaosFailureGroups, writeErrorsOnPassingSteps } from '../../packages/report/src/render.ts';
+import { bankPassword } from '../../scripts/lab-passwords.mjs';
 
 const root = join(import.meta.dirname, '..', '..');
 const readYaml = (path: string): unknown => parse(readFileSync(path, 'utf8'));
@@ -56,6 +57,16 @@ describe('the local labs', () => {
     const script = readFileSync(join(root, 'scripts/setup-lab.mjs'), 'utf8');
     expect(script).not.toMatch(/password:\s*['"`]/);
     expect(script).not.toMatch(/HORNET_BOOKER_ADMIN_PASSWORD\s*\?\?\s*['"`]/);
+  });
+
+  it('gives ParaBank an alphanumeric password, because the profile page puts it in a URL', () => {
+    const script = readFileSync(join(root, 'scripts/setup-lab.mjs'), 'utf8');
+    expect(script).toContain('const password = bankPassword()');
+    for (let index = 0; index < 40; index += 1) {
+      const password = bankPassword();
+      expect(password).toMatch(/^[A-Za-z0-9]{20}$/);
+      expect(password.includes('#')).toBe(false);
+    }
   });
 });
 
