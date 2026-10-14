@@ -1,0 +1,66 @@
+version: 1
+id: money-adds-up
+name: A new customer's money adds up after a transfer and a bill payment
+description: >
+  Signs up a fresh made-up customer, who starts with $515.50. Opens a savings account with
+  $100, moves $25 into it, pays a $30 bill, and checks every balance and the total each time.
+users: [qa-user-1]
+requires_phase1: false
+tags: [money, signup]
+steps:
+  - navigate: { url: "register.htm" }
+  - fill: { selector: "[id='customer.firstName']", value: "Nova" }
+  - fill: { selector: "[id='customer.lastName']", value: "Ledger" }
+  - fill: { selector: "[id='customer.address.street']", value: "1 Test Street" }
+  - fill: { selector: "[id='customer.address.city']", value: "Testville" }
+  - fill: { selector: "[id='customer.address.state']", value: "NSW" }
+  - fill: { selector: "[id='customer.address.zipCode']", value: "2000" }
+  - fill: { selector: "[id='customer.phoneNumber']", value: "0412345678" }
+  - fill: { selector: "[id='customer.ssn']", value: "123-45-6789" }
+  - fill: { selector: "[id='customer.username']", value: "nova{{run.tag}}" }
+  - fill: { selector: "[id='customer.password']", credential: "self.password" }
+  - fill: { selector: "#repeatedPassword", credential: "self.password" }
+  - click: { selector: "input[value='Register']" }
+  - assert: { type: text_visible, value: "Your account was created successfully" }
+  - navigate: { url: "overview.htm" }
+  - assert: { type: selector_visible, value: "tr:has-text('Total'):has-text('$515.50')" }
+  - navigate: { url: "openaccount.htm" }
+  - wait: { for: selector, selector: "#fromAccountId option >> nth=0", state: attached }
+  - select: { selector: "#type", label: "SAVINGS" }
+  - click: { selector: "input[value='Open New Account']" }
+  - assert: { type: text_visible, value: "Account Opened!" }
+  - navigate: { url: "overview.htm" }
+  - assert: { type: text_visible, value: "$415.50" }
+  - assert: { type: text_visible, value: "$100.00" }
+  - assert: { type: selector_visible, value: "tr:has-text('Total'):has-text('$515.50')" }
+  - navigate: { url: "transfer.htm" }
+  - wait: { for: selector, selector: "#toAccountId option >> nth=1", state: attached }
+  - fill: { selector: "#amount", value: "25" }
+  - select: { selector: "#toAccountId", index: 1 }
+  - click: { selector: "input[value='Transfer']" }
+  - assert: { type: text_visible, value: "Transfer Complete!" }
+  - navigate: { url: "overview.htm" }
+  - assert: { type: text_visible, value: "$390.50" }
+  - assert: { type: text_visible, value: "$125.00" }
+  - assert: { type: selector_visible, value: "tr:has-text('Total'):has-text('$515.50')" }
+  - navigate: { url: "billpay.htm" }
+  - fill: { selector: "[name='payee.name']", value: "Testville Power" }
+  - fill: { selector: "[name='payee.address.street']", value: "2 Grid Road" }
+  - fill: { selector: "[name='payee.address.city']", value: "Testville" }
+  - fill: { selector: "[name='payee.address.state']", value: "NSW" }
+  - fill: { selector: "[name='payee.address.zipCode']", value: "2000" }
+  - fill: { selector: "[name='payee.phoneNumber']", value: "0298765432" }
+  - fill: { selector: "[name='payee.accountNumber']", value: "55555" }
+  - fill: { selector: "[name='verifyAccount']", value: "55555" }
+  - fill: { selector: "[name='amount']", value: "30" }
+  - click: { selector: "input[value='Send Payment']" }
+  - assert: { type: text_visible, value: "Bill Payment Complete" }
+  - navigate: { url: "overview.htm" }
+  - assert: { type: text_visible, value: "$360.50" }
+  - assert: { type: selector_visible, value: "tr:has-text('Total'):has-text('$485.50')" }
+  - screenshot: { name: "balances-after-payment" }
+  # The payment shows in the paying account's activity. The overview lists that account first.
+  - click: { selector: "#accountTable a >> nth=0" }
+  - assert: { type: text_visible, value: "Account Details" }
+  - assert: { type: text_visible, value: "Bill Payment to Testville Power" }
+  - screenshot: { name: "payment-in-activity" }

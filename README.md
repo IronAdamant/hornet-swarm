@@ -78,10 +78,11 @@ The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoin
 
 ## Local labs
 
-Two open-source testing-practice apps run in Docker on this Mac, for hard practice that touches no live service. Every port is bound to `127.0.0.1`.
+Three testing-practice apps run in Docker on this Mac, for hard practice that touches no live service. Every port is bound to `127.0.0.1`.
 
 - **Toolshop** (`toolshop-lab`, http://127.0.0.1:4300): the sprint 5 edition of Practice Software Testing, which ships with deliberate bugs. Five made-up customers with `example.com` addresses and random passwords, plus the seeded shop admin.
 - **Restful Booker** (`booker-lab`, http://127.0.0.1:3300): a bed-and-breakfast site with an admin panel. Its published admin password is a common word that its own pages also show, so redacting it would blank ordinary text. Its admin login is stored only when you set `HORNET_BOOKER_ADMIN_PASSWORD`.
+- **ParaBank** (`parabank-lab`, http://127.0.0.1:8095/parabank/): Parasoft's demo online bank. Four made-up customers, each starting with $515.50. The journeys check that money adds up: after opening an account, a transfer, and a bill payment, every balance and the total must match what moved. A new customer is signed up on each run, so the expected balances never drift.
 
 ```bash
 pnpm build
@@ -164,9 +165,9 @@ A page is checked the way a person would see it.
 - `gate_passed` only means every account signed in. A summary for a failed run says so.
 - The MCP server refuses to start when the source is newer than the build, and once the code is rebuilt under it, every tool asks for a restart and runs nothing.
 - `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
-- `select: { selector, label }` (or `value`) chooses from a dropdown. It focuses the field, chooses, and leaves it, as a person does, because some forms only record a choice from a field that was touched.
+- `select: { selector, label }` (or `value`, or `index` where 0 is the first option, for lists such as account numbers that change per customer) chooses from a dropdown. It focuses the field, chooses, and leaves it, as a person does, because some forms only record a choice from a field that was touched.
 - `assert: { type: field_value, selector, value }` checks what a form field holds, such as a profile's first name. It may not read the password field. A failure names what the field held.
-- Templates: `{{run.id}}` for a fresh made-up email on every run, `{{run.label}}`, `{{self.vars.first_name}}` for the running label's own values, and `{{date.+30}}` for the date 30 days from today.
+- Templates: `{{run.id}}` for a fresh made-up email on every run, `{{run.tag}}` for its short last part (for sites that limit username length), `{{run.label}}`, `{{self.vars.first_name}}` for the running label's own values, and `{{date.+30}}` for the date 30 days from today.
 
 Chaos (`--chaos <profile> --seed <seed>`) adds delays, dropped requests, refreshes, back presses, and double clicks to journeys. The seed is joined with each label and journey, so each one meets a different pattern that the same seed repeats. A refresh or back is skipped while a form is half filled in, because a person who reloads mid-form types it again. A double click lands on the button the step presses, so it tests a double submission. A dropped request is never the page load itself, because no site can recover from the browser's own error page; the drop moves to the next request the page makes. Every skip is logged. In a chaos summary, journeys that stopped at the same step with the same page words share one line. Compare a chaos run with a normal one: a check that passes normally but fails under chaos shows where the site does not recover. On Toolshop, the first chaos runs found that a sign-in request lost once leaves the customer on the login page with no error.
 

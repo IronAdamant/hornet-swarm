@@ -43,8 +43,8 @@ export function validateJourneyDocument(
       errors.push(`step ${index}: only field_value takes a selector`);
     }
     if ('select' in step) {
-      const modes = [step.select.value, step.select.label].filter((value) => value !== undefined);
-      if (modes.length !== 1) errors.push(`step ${index}: select needs exactly one of value or label`);
+      const modes = [step.select.value, step.select.label, step.select.index].filter((value) => value !== undefined);
+      if (modes.length !== 1) errors.push(`step ${index}: select needs exactly one of value, label, or index`);
     }
     if ('screenshot' in step && knownSecrets.some((secret) => secret.length >= 1 && step.screenshot.name.includes(secret))) {
       errors.push(`step ${index}: literal value matches a stored secret`);

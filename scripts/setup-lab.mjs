@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// Sets up the local practice labs: Toolshop (sprint 5 with deliberate bugs) and Restful Booker
-// Platform, running in Docker on this Mac and bound to 127.0.0.1. Run `pnpm build` first.
+// Sets up the local practice labs: Toolshop (sprint 5 with deliberate bugs), Restful Booker
+// Platform, and ParaBank, running in Docker on this Mac and bound to 127.0.0.1. Run `pnpm build` first.
 //
-//   node scripts/setup-lab.mjs            start the labs and install both projects
-//   node scripts/setup-lab.mjs --reset    also wipe both labs' data back to the seed
+//   node scripts/setup-lab.mjs            start the labs and install their projects
+//   node scripts/setup-lab.mjs --reset    also wipe every lab's data back to the seed
 //
 // It builds the shop's front end once, starts labs/docker-compose.yml, writes an owner
-// authorisation for this Mac only, installs the toolshop-lab and booker-lab projects, signs up
-// five made-up Toolshop customers with random passwords, and stores every login in the encrypted
-// store. The two admin logins each site publishes in its README are read from that README, so no
+// authorisation for this Mac only, installs the toolshop-lab, booker-lab, and parabank-lab
+// projects, signs up made-up Toolshop and ParaBank customers with random passwords, and stores
+// every login in the encrypted store. The shop admin's login is read from Toolshop's README, so no
 // password is kept in this repo. No password is printed.
 import { execFileSync } from 'node:child_process';
 import { createHash, randomInt } from 'node:crypto';
@@ -25,6 +25,14 @@ const reset = process.argv.includes('--reset');
 const SHOP = 'http://127.0.0.1:4300';
 const SHOP_API = 'http://127.0.0.1:8091';
 const BOOKER = 'http://127.0.0.1:3300';
+const BANK = 'http://127.0.0.1:8095/parabank';
+
+const PARABANK_CUSTOMERS = {
+  'qa-user-1': { first_name: 'Nova', last_name: 'Ledger', personality: 'A careful saver who checks that every cent adds up after each transfer and payment.' },
+  'qa-user-2': { first_name: 'Omar', last_name: 'Penny', personality: 'A busy professional who moves money between accounts and pays bills in a hurry.' },
+  'qa-user-3': { first_name: 'Ruth', last_name: 'Sterling', personality: 'A first-home buyer applying for a loan, who wants a clear yes or no.' },
+  'qa-user-4': { first_name: 'Kai', last_name: 'Mint', personality: 'A customer who just moved house and updates their contact details.' },
+};
 
 const SHARED_RULES = [
   'Test only the lab on this Mac. Never open another site.',
@@ -119,6 +127,29 @@ if (!(await waitFor(`${BOOKER}/api/room/1`))) {
   say('The booker did not answer. See: docker compose -f labs/docker-compose.yml logs rbp-site');
   process.exit(5);
 }
+if (!(await waitFor(`${BANK}/index.htm`, (response) => response.status < 500))) {
+  say('ParaBank did not answer. See: docker compose -f labs/docker-compose.yml logs parabank');
+  process.exit(5);
+}
+
+/** A ParaBank page session: the bank keeps state in a session cookie, so each form post carries it. */
+async function bankSession() {
+  const first = await fetch(`${BANK}/index.htm`, { redirect: 'manual' });
+  const cookie = first.headers.getSetCookie().map((entry) => entry.split(';')[0]).join('; ');
+  return (path, form) =>
+    fetch(`${BANK}/${path}`, {
+      method: form ? 'POST' : 'GET',
+      redirect: 'follow',
+      headers: { cookie, ...(form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}) },
+      ...(form ? { body: new URLSearchParams(form).toString() } : {}),
+    }).then((response) => response.text());
+}
+
+if (reset) {
+  say('Resetting ParaBank to its starting data...');
+  const bank = await bankSession();
+  await bank('db.htm', { action: 'INIT' });
+}
 
 // 3. The owner's statement and authorisation. Covers this Mac only.
 const docsDir = join(home, 'authorisations', 'docs');
@@ -129,8 +160,9 @@ const until = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10);
 const statement = [
   `Owner statement for the Hornet Swarm practice labs, ${today}.`,
   '',
-  'Iron Adamant runs local copies of two open-source testing-practice apps in Docker on its own Mac:',
-  'Practice Software Testing (Toolshop, sprint 5 with deliberate bugs) and Restful Booker Platform.',
+  'Iron Adamant runs local copies of three testing-practice apps in Docker on its own Mac:',
+  'Practice Software Testing (Toolshop, sprint 5 with deliberate bugs), Restful Booker Platform,',
+  'and ParaBank, a demo bank.',
   'Their ports are bound to 127.0.0.1 and reached by the runners as host.docker.internal.',
   'Iron Adamant authorises sign-in checks, functional journeys, and chaos runs against these copies,',
   `from ${today} to ${until}. No other host is covered. Only made-up details are used.`,
@@ -147,7 +179,7 @@ authorisation.document = { path: statementFile, sha256: createHash('sha256').upd
 writeFileSync(join(home, 'authorisations', 'lab-owner.yaml'), stringify(authorisation));
 
 // 4. Projects and journeys.
-for (const id of ['toolshop-lab', 'booker-lab']) {
+for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab']) {
   const projectDir = join(home, 'projects', id);
   mkdirSync(join(projectDir, 'journeys'), { recursive: true });
   const source = join(root, 'examples/projects', id);
@@ -219,12 +251,54 @@ if (process.env.HORNET_BOOKER_ADMIN_PASSWORD) {
   bookerLogins = true;
 }
 
+// ParaBank customers sign up through the bank's own form. Usernames stay under its 20-character limit.
+let bankSignedUp = 0;
+let bankKept = 0;
+for (const [label, person] of Object.entries(PARABANK_CUSTOMERS)) {
+  const username = `${person.first_name}${person.last_name}`.toLowerCase();
+  const password = strongPassword();
+  const bank = await bankSession();
+  await bank('register.htm');
+  const page = await bank('register.htm', {
+    'customer.firstName': person.first_name,
+    'customer.lastName': person.last_name,
+    'customer.address.street': '1 Test Street',
+    'customer.address.city': 'Testville',
+    'customer.address.state': 'NSW',
+    'customer.address.zipCode': '2000',
+    'customer.phoneNumber': '0412345678',
+    'customer.ssn': '123-45-6789',
+    'customer.username': username,
+    'customer.password': password,
+    repeatedPassword: password,
+  });
+  if (page.includes('created successfully')) {
+    setSecret('parabank-lab', label, 'username', username, home);
+    setSecret('parabank-lab', label, 'password', password, home);
+    bankSignedUp += 1;
+  } else if (page.includes('already exists')) {
+    if (!listFields('parabank-lab', label, home).includes('password')) {
+      say(`${label} exists in ParaBank but has no stored login. Run again with --reset.`);
+      process.exit(6);
+    }
+    bankKept += 1;
+  } else {
+    say(`Could not sign up ${label} at ParaBank.`);
+    process.exit(6);
+  }
+}
+
 // 6. Swarm boards.
 const boards = {
   'toolshop-lab': [
     ...Object.entries(TOOLSHOP_CUSTOMERS).map(([label, person]) => ({ label, personality: person.personality, rules: SHARED_RULES })),
     { label: 'qa-user-6', personality: 'The shop admin, who keeps the catalogue and orders in order.', rules: `${SHARED_RULES} Change only records you created in this run.` },
   ],
+  'parabank-lab': Object.entries(PARABANK_CUSTOMERS).map(([label, person]) => ({
+    label,
+    personality: person.personality,
+    rules: `${SHARED_RULES} Move only small amounts between your own accounts and made-up payees.`,
+  })),
   'booker-lab': [
     { label: 'qa-user-1', personality: 'The front-desk manager, who adds rooms and checks they can be booked.', rules: `${SHARED_RULES} Change only rooms you created in this run.` },
     { label: 'qa-user-2', personality: 'The owner, who reads the report, the branding, and the inbox every morning.', rules: SHARED_RULES },
@@ -238,14 +312,17 @@ for (const [id, agents] of Object.entries(boards)) {
 
 say(
   [
-    `Labs ready. Toolshop: ${SHOP}  Booker: ${BOOKER}  (this Mac only)`,
+    `Labs ready. Toolshop: ${SHOP}  Booker: ${BOOKER}  ParaBank: ${BANK}/  (this Mac only)`,
     `toolshop-lab: ${signedUp} customers signed up${kept ? `, ${kept} kept from before` : ''}, plus the shop admin.`,
     bookerLogins ? 'booker-lab: 3 labels share the booker admin login.' : 'booker-lab: guest journeys only. Its admin login is not stored yet (see the script header).',
+    `parabank-lab: ${bankSignedUp} customers signed up${bankKept ? `, ${bankKept} kept from before` : ''}.`,
     `Authorisation: lab-owner, ${today} to ${until}, this Mac only.`,
     '',
     'Next:',
     '  pnpm hornet-swarm env up --project toolshop-lab',
     '  pnpm hornet-swarm suite --project toolshop-lab',
+    '  pnpm hornet-swarm env up --project parabank-lab',
+    '  pnpm hornet-swarm suite --project parabank-lab',
     '  pnpm hornet-swarm env up --project booker-lab',
     '  pnpm hornet-swarm suite --project booker-lab',
     '',

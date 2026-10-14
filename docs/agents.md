@@ -68,9 +68,9 @@ steps:
 
 - `self.username` and `self.password` mean the label running the journey. One journey can serve every label.
 - Each journey runs in a fresh browser, so it signs in itself.
-- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label` or `value`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`.
+- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label`, `value`, or `index`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`.
 - Assertions: `url_contains`, `text_visible`, `selector_visible`, `selector_absent`, `http_status`, `access_denied`, and `field_value` (with a `selector`, for what a form field holds). `url_contains`, `text_visible`, `selector_visible`, and `field_value` wait up to 10 seconds.
-- Templates: `{{run.id}}` (a fresh made-up email per run, such as `nova.{{run.id}}@example.com`), `{{run.label}}`, `{{self.vars.city}}` (the running label's own value from the project), and `{{date.+30}}`.
+- Templates: `{{run.id}}` (a fresh made-up email per run, such as `nova.{{run.id}}@example.com`), `{{run.tag}}` (its short last part, for a username length limit), `{{run.label}}`, `{{self.vars.city}}` (the running label's own value from the project), and `{{date.+30}}`.
 - Assert what a working site does. A planted or real bug then shows up as a failed step with the page's own words.
 - A selector is CSS, or `role=button[name='Sign in']` for an accessible name.
 - `validate_journey` checks a journey without running it. A journey that navigates off the allowed site, fills a passive third party, or contains a literal password is refused. A navigate URL is checked after its `{{vars}}` are filled in, and `//host/` counts as a site.
@@ -90,7 +90,7 @@ The Internet and Sauce Demo are public sites built for test-automation practice.
 
 ## Local labs
 
-`node scripts/setup-lab.mjs` starts Toolshop (`toolshop-lab`) and Restful Booker (`booker-lab`) in Docker on this Mac. An `owner` authorisation covers them, so chaos is allowed and nothing touches a live service. Use made-up details only: `example.com` addresses, Testville, and test bank numbers.
+`node scripts/setup-lab.mjs` starts Toolshop (`toolshop-lab`), Restful Booker (`booker-lab`), and ParaBank (`parabank-lab`) in Docker on this Mac. An `owner` authorisation covers them, so chaos is allowed and nothing touches a live service. Use made-up details only: `example.com` addresses, Testville, and test bank numbers.
 
 - Toolshop is the edition with deliberate bugs. A failed journey there is usually a real finding, not a broken test. Check the screenshot, then say which bug it is.
 - Under chaos, compare with a normal run of the same journeys. Journeys that stopped at the same step with the same page words share one `Failed:` line, which is one finding, not several. Chaos never drops the page load itself; `drop:spared the page load` in the analysis records it.

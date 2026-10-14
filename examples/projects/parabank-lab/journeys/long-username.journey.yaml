@@ -1,0 +1,26 @@
+version: 1
+id: long-username
+name: A long username gets a truthful answer
+description: >
+  Signs up with a new 21-character username. The site may accept it or say it is too long, but
+  must not claim that a name nobody has used already exists.
+users: [qa-user-1]
+requires_phase1: false
+tags: [signup]
+steps:
+  - navigate: { url: "register.htm" }
+  - fill: { selector: "[id='customer.firstName']", value: "Nova" }
+  - fill: { selector: "[id='customer.lastName']", value: "Ledger" }
+  - fill: { selector: "[id='customer.address.street']", value: "1 Test Street" }
+  - fill: { selector: "[id='customer.address.city']", value: "Testville" }
+  - fill: { selector: "[id='customer.address.state']", value: "NSW" }
+  - fill: { selector: "[id='customer.address.zipCode']", value: "2000" }
+  - fill: { selector: "[id='customer.phoneNumber']", value: "0412345678" }
+  - fill: { selector: "[id='customer.ssn']", value: "123-45-6789" }
+  - fill: { selector: "[id='customer.username']", value: "longname{{run.tag}}abcdefg" }
+  - fill: { selector: "[id='customer.password']", credential: "self.password" }
+  - fill: { selector: "#repeatedPassword", credential: "self.password" }
+  - click: { selector: "input[value='Register']" }
+  - wait: { for: navigation }
+  - screenshot: { name: "long-username-answer" }
+  - assert: { type: selector_absent, value: "text=This username already exists." }

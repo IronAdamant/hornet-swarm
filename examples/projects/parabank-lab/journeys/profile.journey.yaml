@@ -1,0 +1,21 @@
+version: 1
+id: profile
+name: A customer's contact details update and stay updated
+users: [qa-user-4]
+tags: [account]
+steps:
+  - navigate: { url: "index.htm" }
+  - fill: { selector: "input[name='username']", credential: "self.username" }
+  - fill: { selector: "input[name='password']", credential: "self.password" }
+  - click: { selector: "input[value='Log In']" }
+  - wait: { for: navigation }
+  - assert: { type: text_visible, value: "Accounts Overview" }
+  - navigate: { url: "updateprofile.htm" }
+  - assert: { type: field_value, selector: "[id='customer.firstName']", value: "{{self.vars.first_name}}" }
+  - assert: { type: field_value, selector: "[id='customer.lastName']", value: "{{self.vars.last_name}}" }
+  - fill: { selector: "[id='customer.phoneNumber']", value: "0499999999" }
+  - click: { selector: "input[value='Update Profile']" }
+  - assert: { type: text_visible, value: "Profile Updated" }
+  - navigate: { url: "updateprofile.htm" }
+  - assert: { type: field_value, selector: "[id='customer.phoneNumber']", value: "0499999999" }
+  - screenshot: { name: "profile-after-update" }

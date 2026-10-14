@@ -5,6 +5,8 @@
 #     shop  http://127.0.0.1:4300    api  http://127.0.0.1:8091
 #   Restful Booker Platform (a bed-and-breakfast site with an admin panel)
 #     site  http://127.0.0.1:3300
+#   ParaBank (Parasoft's demo online bank)
+#     bank  http://127.0.0.1:8095/parabank
 name: hornet-lab
 
 # The booker's services share the site container's network, because the published site image
@@ -106,6 +108,13 @@ services:
     <<: *rbp
     image: mwinteringham/restfulbookerplatform_message
     environment: *rbp-env
+
+  parabank:
+    image: parasoft/parabank
+    ports:
+      - "127.0.0.1:8095:8080"
+    restart: unless-stopped
+    mem_limit: 768m
 
 volumes:
   toolshop-code:

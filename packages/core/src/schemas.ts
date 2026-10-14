@@ -213,7 +213,7 @@ const fillStep = z
       .strict(),
   })
   .strict();
-/** Chooses an option in a <select> by its value or by the text a person sees. */
+/** Chooses an option in a <select> by its value, the text a person sees, or its position (0 is the first). */
 const selectStep = z
   .object({
     select: z
@@ -221,6 +221,7 @@ const selectStep = z
         selector: z.string(),
         value: z.string().optional(),
         label: z.string().optional(),
+        index: z.number().int().nonnegative().optional(),
       })
       .strict(),
   })

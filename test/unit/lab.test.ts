@@ -24,7 +24,7 @@ describe('the local labs', () => {
     expect(auth.basis).toBe('owner');
     expect(auth.scope.domains.sort()).toEqual(['host.docker.internal', 'localhost']);
     expect(auth.activities).not.toContain('access_control_checks');
-    for (const id of ['toolshop-lab', 'booker-lab']) {
+    for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab']) {
       const config = project(id);
       expect(config.authorisation_id).toBe('lab-owner');
       for (const origin of [config.targets.base_url, ...config.targets.allowed_origins]) expect(new URL(origin).hostname).toMatch(/^(127\.0\.0\.1|host\.docker\.internal)$/);
@@ -40,13 +40,16 @@ describe('the local labs', () => {
   });
 
   it('keep passwords out of journeys and the setup script', () => {
-    for (const id of ['toolshop-lab', 'booker-lab']) {
+    for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab']) {
       const config = project(id);
       const dir = join(root, 'examples/projects', id, 'journeys');
       for (const file of readdirSync(dir)) {
         const steps = (readYaml(join(dir, file)) as { steps: Record<string, { selector?: string; value?: string; credential?: string }>[] }).steps;
         for (const fill of steps.flatMap((step) => (step.fill ? [step.fill] : []))) {
-          if (fill.selector === config.auth.selectors.password) expect(fill.credential, `${id}/${file}`).toMatch(/^self\.|^qa-user-\d+\./);
+          if (fill.selector !== config.auth.selectors.password) continue;
+          // A literal is only allowed as a deliberately wrong password.
+          if (fill.value !== undefined) expect(fill.value, `${id}/${file}`).toMatch(/not-the-password/);
+          else expect(fill.credential, `${id}/${file}`).toMatch(/^self\.|^qa-user-\d+\./);
         }
       }
     }
@@ -66,13 +69,17 @@ describe('journey templates and steps', () => {
     const inThirty = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
     expect(renderTemplate('{{date.+30}}', context)).toBe(inThirty);
     expect(renderTemplate('{{date.soon}}', context)).toBe('{{date.soon}}');
+    // A short part of the run id, for sites with a username length limit.
+    expect(renderTemplate('nova{{run.tag}}', { run: { id: 'run_20261014-144636_67a533', label: 'qa-user-1' } })).toBe('nova67a533');
   });
 
   it('checks select and field_value steps, and never lets field_value read the password', () => {
     const config = project('toolshop-lab');
     const check = (steps: unknown[]) => validateJourneyDocument({ version: 1, id: 'x', name: 'x', users: ['qa-user-1'], steps }, config).errors;
     expect(check([{ select: { selector: '#c', label: 'Australia' } }])).toEqual([]);
-    expect(check([{ select: { selector: '#c' } }])[0]).toContain('select needs exactly one');
+    expect(check([{ select: { selector: '#c', index: 1 } }])).toEqual([]);
+    expect(check([{ select: { selector: '#c', index: 1, label: 'Australia' } }])[0]).toContain('exactly one');
+    expect(check([{ select: { selector: '#c' } }])[0]).toContain('select needs exactly one of value, label, or index');
     expect(check([{ assert: { type: 'field_value', selector: '#city', value: 'Testville' } }])).toEqual([]);
     expect(check([{ assert: { type: 'field_value', value: 'x' } }])[0]).toContain('needs a selector');
     expect(check([{ assert: { type: 'field_value', selector: config.auth.selectors.password, value: 'x' } }])[0]).toContain('may not read the password');
@@ -220,6 +227,8 @@ describe('the runner on a real page', () => {
           { navigate: { url: '/' } },
           { select: { selector: '#country', label: 'New Zealand' } },
           { assert: { type: 'field_value', selector: '#country', value: 'NZ' } },
+          { select: { selector: '#country', index: 1 } },
+          { assert: { type: 'field_value', selector: '#country', value: 'AU' } },
           { assert: { type: 'field_value', selector: '#city', value: '{{self.vars.city}}' } },
         ],
         'select',

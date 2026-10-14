@@ -1,0 +1,20 @@
+version: 1
+id: loan
+name: A loan request gets a decision on screen
+users: [qa-user-3]
+tags: [money, loans]
+steps:
+  - navigate: { url: "index.htm" }
+  - fill: { selector: "input[name='username']", credential: "self.username" }
+  - fill: { selector: "input[name='password']", credential: "self.password" }
+  - click: { selector: "input[value='Log In']" }
+  - wait: { for: navigation }
+  - assert: { type: text_visible, value: "Accounts Overview" }
+  - navigate: { url: "requestloan.htm" }
+  - wait: { for: selector, selector: "#fromAccountId option >> nth=0", state: attached }
+  - fill: { selector: "#amount", value: "1000" }
+  - fill: { selector: "#downPayment", value: "100" }
+  - click: { selector: "input[value='Apply Now']" }
+  - assert: { type: text_visible, value: "Loan Request Processed" }
+  - assert: { type: text_visible, value: "Status:" }
+  - screenshot: { name: "loan-decision" }

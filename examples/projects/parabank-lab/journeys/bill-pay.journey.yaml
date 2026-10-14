@@ -1,0 +1,29 @@
+version: 1
+id: bill-pay
+name: Bill pay refuses mismatched account numbers and accepts matching ones
+users: [qa-user-2]
+tags: [money]
+steps:
+  - navigate: { url: "index.htm" }
+  - fill: { selector: "input[name='username']", credential: "self.username" }
+  - fill: { selector: "input[name='password']", credential: "self.password" }
+  - click: { selector: "input[value='Log In']" }
+  - wait: { for: navigation }
+  - assert: { type: text_visible, value: "Accounts Overview" }
+  - navigate: { url: "billpay.htm" }
+  - fill: { selector: "[name='payee.name']", value: "Testville Water" }
+  - fill: { selector: "[name='payee.address.street']", value: "3 River Lane" }
+  - fill: { selector: "[name='payee.address.city']", value: "Testville" }
+  - fill: { selector: "[name='payee.address.state']", value: "NSW" }
+  - fill: { selector: "[name='payee.address.zipCode']", value: "2000" }
+  - fill: { selector: "[name='payee.phoneNumber']", value: "0298765432" }
+  - fill: { selector: "[name='payee.accountNumber']", value: "66666" }
+  - fill: { selector: "[name='verifyAccount']", value: "66667" }
+  - fill: { selector: "[name='amount']", value: "5" }
+  - click: { selector: "input[value='Send Payment']" }
+  - assert: { type: text_visible, value: "The account numbers do not match." }
+  - fill: { selector: "[name='verifyAccount']", value: "66666" }
+  - click: { selector: "input[value='Send Payment']" }
+  - assert: { type: text_visible, value: "Bill Payment Complete" }
+  - assert: { type: text_visible, value: "Bill Payment to Testville Water in the amount of $5.00" }
+  - screenshot: { name: "bill-paid" }

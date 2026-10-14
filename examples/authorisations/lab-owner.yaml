@@ -23,4 +23,4 @@ valid_until: "2027-01-12"
 document:
   path: lab-owner-statement.txt
   sha256: "set-by-setup-lab"
-notes: Toolshop (sprint 5 with deliberate bugs) and Restful Booker Platform, run from Docker Hub images.
+notes: Toolshop (sprint 5 with deliberate bugs), Restful Booker Platform, and ParaBank, run from Docker Hub images.

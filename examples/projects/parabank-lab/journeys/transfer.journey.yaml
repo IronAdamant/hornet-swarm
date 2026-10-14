@@ -1,0 +1,25 @@
+version: 1
+id: transfer
+name: A customer opens a second account and moves money into it
+users: [qa-user-2]
+tags: [money]
+steps:
+  - navigate: { url: "index.htm" }
+  - fill: { selector: "input[name='username']", credential: "self.username" }
+  - fill: { selector: "input[name='password']", credential: "self.password" }
+  - click: { selector: "input[value='Log In']" }
+  - wait: { for: navigation }
+  - assert: { type: text_visible, value: "Accounts Overview" }
+  - navigate: { url: "openaccount.htm" }
+  - wait: { for: selector, selector: "#fromAccountId option >> nth=0", state: attached }
+  - select: { selector: "#type", label: "CHECKING" }
+  - click: { selector: "input[value='Open New Account']" }
+  - assert: { type: text_visible, value: "Account Opened!" }
+  - navigate: { url: "transfer.htm" }
+  - wait: { for: selector, selector: "#toAccountId option >> nth=1", state: attached }
+  - fill: { selector: "#amount", value: "1" }
+  - select: { selector: "#toAccountId", index: 1 }
+  - click: { selector: "input[value='Transfer']" }
+  - assert: { type: text_visible, value: "Transfer Complete!" }
+  - assert: { type: text_visible, value: "$1.00 has been transferred" }
+  - screenshot: { name: "transfer-complete" }

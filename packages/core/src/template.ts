@@ -19,6 +19,8 @@ export function renderTemplate(input: string, context: TemplateContext): string 
       return context.users?.[context.run.label]?.vars?.[path[2] ?? ''] ?? match;
     }
     if (path[0] === 'run' && path.length === 2 && (path[1] === 'id' || path[1] === 'label')) return context.run?.[path[1]] ?? match;
+    // {{run.tag}} is the run id's last part, such as 7f1685, for sites that limit how long a username may be.
+    if (path[0] === 'run' && path[1] === 'tag' && path.length === 2 && context.run) return context.run.id.split('_').pop() ?? context.run.id;
     if (path[0] === 'users' && path[2] === 'vars' && path.length === 4) {
       return context.users?.[path[1] ?? '']?.vars?.[path[3] ?? ''] ?? match;
     }

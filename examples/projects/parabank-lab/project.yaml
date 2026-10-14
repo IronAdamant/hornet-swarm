@@ -1,0 +1,44 @@
+# Installed to ~/.hornet-swarm/projects/parabank-lab/ by: node scripts/setup-lab.mjs
+# ParaBank, Parasoft's demo online bank, running on this Mac. Four made-up customers, each opened
+# with $515.50. The journeys check that money adds up: after every transfer, payment, and loan the
+# balances and the total must match what moved.
+id: parabank-lab
+name: ParaBank lab (local)
+authorisation_id: lab-owner
+environment: test
+targets:
+  base_url: http://127.0.0.1:8095/parabank/
+  allowed_origins:
+    - http://127.0.0.1:8095
+    - http://host.docker.internal:8095
+  allowed_third_party: []
+auth:
+  signin_url: index.htm
+  selectors:
+    username: "input[name='username']"
+    password: "input[name='password']"
+    submit: "input[value='Log In']"
+  success:
+    - { type: text_visible, value: "Accounts Overview" }
+    - { type: selector_visible, value: "a:has-text('Log Out')" }
+  auth_endpoints: ["**/login.htm", "**/register.htm"]
+runners:
+  count: 4
+  memory: 1g
+  cpus: 1
+limits:
+  max_parallel_runners: 3
+  max_requests_per_second_per_runner: 10
+  request_burst_per_runner: 40
+  max_requests_per_second_total: 30
+  min_step_delay_ms: 100
+  max_run_duration_min: 30
+  max_signin_attempts_per_user_per_hour: 30
+phase2:
+  gate: per_user
+journeys_dir: ./journeys
+users:
+  - { label: qa-user-1, role: customer, tenant: parabank, vars: { first_name: Nova, last_name: Ledger } }
+  - { label: qa-user-2, role: customer, tenant: parabank, vars: { first_name: Omar, last_name: Penny } }
+  - { label: qa-user-3, role: customer, tenant: parabank, vars: { first_name: Ruth, last_name: Sterling } }
+  - { label: qa-user-4, role: customer, tenant: parabank, vars: { first_name: Kai, last_name: Mint } }

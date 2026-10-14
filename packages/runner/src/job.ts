@@ -458,7 +458,12 @@ async function runStep(
   }
   if ('select' in step) {
     selectors.push(step.select.selector);
-    const option = step.select.value !== undefined ? { value: renderTemplate(step.select.value, template) } : { label: renderTemplate(step.select.label ?? '', template) };
+    const option =
+      step.select.index !== undefined
+        ? { index: step.select.index }
+        : step.select.value !== undefined
+          ? { value: renderTemplate(step.select.value, template) }
+          : { label: renderTemplate(step.select.label ?? '', template) };
     // Focus, choose, then leave the field, as a person does. Some forms (Angular's among them)
     // only record the choice once the field has been touched.
     const target = locate(page, step.select.selector);
