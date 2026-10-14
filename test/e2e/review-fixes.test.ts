@@ -54,7 +54,7 @@ describe('review fixes on the offline fixture', () => {
       expect(journey.status).toBe(3);
       expect(journey.stdout).toContain('activity_not_authorised:functional_e2e:flag-check');
       writeFileSync(authPath, original.replace('[signin_smoke, functional_e2e, access_control_checks, chaos]', '[signin_smoke, functional_e2e]'));
-      const isolation = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(root, 'examples/journeys/consistencyhub/02-tenant-isolation.journey.yaml')]);
+      const isolation = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(root, 'examples/journeys/example-app/02-tenant-isolation.journey.yaml')]);
       expect(isolation.status).toBe(3);
       expect(isolation.stdout).toContain('activity_not_authorised:access_control_checks:tenant-isolation');
     } finally {

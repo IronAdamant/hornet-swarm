@@ -5,8 +5,8 @@ import { analysisSchema } from '../../packages/core/dist/index.js';
 import { hornet, clearSignins, home, readRun, resetFixture, secret } from './helper.js';
 
 const examples = [
-  'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml',
-  'examples/journeys/consistencyhub/02-tenant-isolation.journey.yaml',
+  'examples/journeys/example-app/01-signin-dashboard.journey.yaml',
+  'examples/journeys/example-app/02-tenant-isolation.journey.yaml',
 ];
 
 beforeAll(async () => {

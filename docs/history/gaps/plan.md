@@ -4,7 +4,7 @@ Do not execute this plan until the owner says to proceed.
 
 This plan covers two code gaps. A texted or emailed code waits for a human operator. The kill path is checked when the job response still returns. Captcha stays the current workaround. Lid sleep, the keychain, the duration cap, and a cloud Bot are outside this plan. The owner already keeps those.
 
-`docs/plan.md` sections 1–12 are already in `2493d12`. This file does not reopen them.
+`../plan.md` sections 1–12 are already in `2493d12`. This file does not reopen them.
 
 ## Do not
 

@@ -43,7 +43,7 @@ describe('public practice authorisations', () => {
   });
 
   it('still requires an authoriser and a document for owner and contract records', () => {
-    const owner = readYaml(join(root, 'examples/authorisations/consistencyhub-owner.yaml')) as Record<string, unknown>;
+    const owner = readYaml(join(root, 'examples/authorisations/example-app-owner.yaml')) as Record<string, unknown>;
     expect(authorisationSchema.safeParse({ ...owner, authoriser: undefined }).success).toBe(false);
     expect(authorisationSchema.safeParse({ ...owner, document: undefined }).success).toBe(false);
   });
@@ -69,7 +69,7 @@ describe('public practice authorisations', () => {
     expect(practiceLimits(louder, record)).toEqual({ ok: false, reason: 'public_practice_limit:max_requests_per_second_total<=10' });
     expect(practiceLimits({ ...config, runners: { ...config.runners, count: 7 } }, record).ok).toBe(false);
     expect(practiceLimits({ ...config, environment: 'staging' }, record).ok).toBe(false);
-    const owner = authorisation('consistencyhub-owner');
+    const owner = authorisation('example-app-owner');
     expect(practiceLimits(louder, owner).ok).toBe(true);
   });
 });

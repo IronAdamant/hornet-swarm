@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const globalConfigSchema = z
   .object({
     runtime: z.enum(['auto', 'orbstack', 'colima']).default('auto'),
-    default_project: z.string().default('consistencyhub'),
+    default_project: z.string().default('example-app'),
     results_retention_days: z.number().int().positive().default(30),
     ocr_screenshot_check: z.boolean().default(true),
     log_level: z.enum(['error', 'warn', 'info', 'debug']).default('info'),

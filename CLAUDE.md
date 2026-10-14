@@ -1,6 +1,6 @@
 # Hornet Swarm
 
-A local harness that checks websites through isolated Chromium containers, one per test account, driven by the `hornet-swarm` CLI or by AI agents over MCP. Read `README.md` for setup and `SECURITY.md` for the rules on secrets.
+A local harness that checks websites through isolated Chromium containers, one per test account, driven by the `hornet-swarm` CLI or by AI agents over MCP. Read `README.md` for an overview, `docs/reference.md` for setup and every command, and `SECURITY.md` for the rules on secrets.
 
 ## Working on the code
 

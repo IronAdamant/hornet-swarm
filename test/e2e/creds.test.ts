@@ -63,7 +63,7 @@ describe('credential requests', () => {
     const status = hornet(['credential-status', '--id', pending.id, '--json']);
     const body = JSON.parse(status.stdout) as { status?: string; waiting?: boolean };
     expect(body.status).toBe('ready');
-    const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', 'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml']);
+    const run = hornet(['suite', '--project', 'fixture', '--json', '--journey', 'examples/journeys/example-app/01-signin-dashboard.journey.yaml']);
     expect(run.status, run.stdout).toBe(0);
     expect(readRun().result.users).toBeTruthy();
     const phase = (readRun().result.users as { phase1: { status: string } }[])[0]?.phase1.status;

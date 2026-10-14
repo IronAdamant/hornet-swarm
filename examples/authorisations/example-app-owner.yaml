@@ -1,15 +1,15 @@
-# ~/.hornet-swarm/authorisations/consistencyhub-owner.yaml
-id: consistencyhub-owner
+# ~/.hornet-swarm/authorisations/example-app-owner.yaml
+id: example-app-owner
 basis: owner                  # owner | contract
-client: Iron Adamant (self-owned)
+client: Example Pty Ltd (self-owned)
 authoriser:
-  name: Aron Amos
+  name: Sam Owner
   role: Owner / Developer
-  email: aron.amos@ironadamant.com
-granted_to: Aron Amos (Iron Adamant)
+  email: owner@example.com
+granted_to: Sam Owner (Example Pty Ltd)
 scope:
   domains:
-    - staging.consistencyhub.app
+    - staging.example.com
     - localhost
   environments: [staging, dev, test]
 activities: [signin_smoke, functional_e2e, access_control_checks]
@@ -19,8 +19,8 @@ exclusions:
 valid_from: "2026-10-10"
 valid_until: "2027-10-10"
 document:
-  path: "~/.hornet-swarm/authorisations/docs/consistencyhub-self-auth.pdf"
+  path: "~/.hornet-swarm/authorisations/docs/example-app-self-auth.pdf"
   # Runs refuse this record until this is the document's real hash. After checking the document,
-  # `hornet-swarm auth check consistencyhub-owner` prints the hash to record here.
+  # `hornet-swarm auth check example-app-owner` prints the hash to record here.
   sha256: "0000000000000000000000000000000000000000000000000000000000000000"
 notes: Self-owned application; authorisation recorded for audit completeness.

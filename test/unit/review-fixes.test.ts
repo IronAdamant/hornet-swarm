@@ -115,7 +115,7 @@ describe('authorisation activities are enforced', () => {
     const pairs: Array<[string, string, string]> = [
       ['the-internet', 'the-internet-practice', 'examples/projects/the-internet/journeys'],
       ['saucedemo', 'saucedemo-practice', 'examples/projects/saucedemo/journeys'],
-      ['consistencyhub', 'consistencyhub-owner', 'examples/journeys/consistencyhub'],
+      ['example-app', 'example-app-owner', 'examples/journeys/example-app'],
     ];
     for (const [, authId, dir] of pairs) {
       const journeys = readdirSync(join(root, dir)).map((name) => journeySchemaParse(join(root, dir, name)));
@@ -125,7 +125,7 @@ describe('authorisation activities are enforced', () => {
 });
 
 function journeySchemaParse(path: string): Journey {
-  const checked = validateJourneyDocument(readYaml(path), example(path.includes('saucedemo') ? 'saucedemo' : path.includes('the-internet') ? 'the-internet' : 'consistencyhub'));
+  const checked = validateJourneyDocument(readYaml(path), example(path.includes('saucedemo') ? 'saucedemo' : path.includes('the-internet') ? 'the-internet' : 'example-app'));
   if (!checked.journey) throw new Error(`${path}: ${checked.errors.join('; ')}`);
   return checked.journey;
 }

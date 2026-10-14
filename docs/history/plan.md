@@ -13,7 +13,7 @@ This does not make the Mac stay awake, keep the keychain unlocked, or start a sw
 ## Do not
 
 - Edit `/Users/aron/Documents/coding_projects/QA Swarm Tester spec` except to read `SPEC.md`.
-- Open `staging.consistencyhub.app` or any other real site. Test only the offline fixture.
+- Open `staging.example.com` or any other real site. Test only the offline fixture.
 - Push, or change the GitHub repo `IronAdamant/hornet-swarm` from private to public.
 - Change git config. If you commit, use `git -c user.name="Aron Amos" -c user.email="aron.amos@ironadamant.com"` before the subcommand. Do not commit this plan file.
 - Delete the Keychain item `aegis-age-key`, or any Docker volume whose name starts with `aegis-profile-` or `hornet-swarm-profile-`.

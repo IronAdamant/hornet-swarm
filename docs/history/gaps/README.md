@@ -4,7 +4,7 @@ All four notes below are closed. Each note's status line says what changed. The 
 
 The build plan was [plan.md](plan.md). Its two sections, the human code entry and the kill check, are in the source. A texted or emailed code waits for a human operator. The kill path is checked when a job response still returns. Captcha stays the current stop. Lid sleep, the keychain, and a cloud Bot stay with the owner.
 
-The notes below are the investigation. The code work in `docs/plan.md` sections 1–12 landed in `2493d12`. That plan file still describes those sections as open.
+The notes below are the investigation. The code work in `../plan.md` sections 1–12 landed in `2493d12`. That plan file still describes those sections as open.
 
 The owner keeps the Mac powered on, handles the lock screen and the closed lid, and keeps Docker up. These notes say how the suite behaves under those conditions and the amendment worth making later.
 

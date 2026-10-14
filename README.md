@@ -1,198 +1,78 @@
 # Hornet Swarm
 
-Hornet Swarm is a local tool for checking websites you own, or websites someone has authorised you in writing to test. It runs a small browser inside one container per test account. You talk to it from the `hornet-swarm` command, or from an AI agent through the MCP server.
+Hornet Swarm tests a website the way its customers use it, with many accounts at once, and writes the report a site owner can act on. Each test account gets its own real Chromium browser in its own container. You drive it from the `hornet-swarm` command, or let AI agents (Claude, Grok) run it through its MCP server, one agent per account.
 
-It is not a load tester, and it does not try to break into sites. If a page asks for a human check or a second code, Hornet Swarm stops and tells you.
+It is for sites you own, or sites someone has authorised you in writing to test. It is not a load tester, and it does not try to break into sites. If a page asks for a human check or a second code, it stops and tells you.
 
-## What you need
+## What it does
 
-- macOS on Apple Silicon
-- Node.js 22
-- pnpm 9
-- Docker Desktop (or another engine that speaks the Docker API, such as OrbStack)
-- `sops` and `age` (`brew install sops age`)
-- `tesseract` so screenshots can be checked for leaked passwords (`brew install tesseract`)
+- **Signs every account in, then runs journeys.** A journey is a short YAML script: search, add to cart, check out, update a profile, book a room. Each account runs it in a fresh browser, so a fault that hits one kind of customer shows up as that customer.
+- **Quotes the page when something fails.** A failed step names what the customer would have seen ("page said: Sorry, this user has been locked out.", "it reads Serch", "closest text on the page: Reltded products") and saves a screenshot and the page's words.
+- **Tells the site's faults from its own.** A crashed browser, a deleted account, a rate limit, and a stalled API each get their own verdict, so a report never blames the site for the harness.
+- **Measures reliability over time.** `stats` gives pass rates, median and slowest timings, retries, and failing streaks per journey. Failed journeys keep running in later suites until they pass three times in a row.
+- **Tests recovery with chaos.** Optional delays, lost requests, refreshes, back presses, and double clicks, repeatable by seed, show where a site leaves a customer stuck with no message.
+- **Lets AI agents run the swarm.** Agents see account labels such as `qa-user-3`, never passwords. Each agent plays one account, with its own personality and rules, and leaves notes for the others.
 
-## Set up
+## Built to be safe on someone else's site
 
-1. Install the workspace and build it:
+- **Nothing runs without written permission.** Every project names an authorisation file: the domains, dates, activities, and signed document. A run refuses any other host, an expired record, or a changed document.
+- **Logins stay out of reach.** Passwords live in an encrypted store (sops and age, with the key in the macOS Keychain). Agents get labels only. Saved runs are scanned and masked, and a leak check covers screenshots too.
+- **Polite by default.** Requests are paced per browser and in total, sign-in attempts are capped, and a public practice site gets lower limits and no chaos.
+- **One switch stops everything.** Any agent can engage the kill switch. Only the owner can release it.
+
+## Sample reports
+
+Every report below came from real runs. The labs run on one Mac, and the live site is a public demo built for testing practice. All accounts are made up. Findings use one severity scale, [docs/severity.md](docs/severity.md).
+
+| Report | What it shows |
+|---|---|
+| [Toolshop lab](docs/sample-report-toolshop-lab.md) | An online shop with planted bugs: an order paid but never confirmed, cash on delivery that cannot be confirmed, swapped profile names, and more, each with the page's own words |
+| [ParaBank lab](docs/sample-report-parabank-lab.md) | An online bank: a profile update that breaks sign-in for passwords with a symbol, and checks that every balance adds up after transfers and bill payments |
+| [Live Toolshop](docs/live-report-toolshop.md) | The same shop on the public internet: an order fault that happens only some of the time, an API stall, Cloudflare's bot check, and a site that wipes its accounts about once an hour |
+| [Chaos: Toolshop](docs/chaos-report-toolshop-lab.md), [Chaos: ParaBank](docs/chaos-report-parabank-lab.md) | How each site recovers when requests are lost or slow |
+| [Security: ParaBank](docs/security-report-parabank-lab.md), [Security: live Toolshop](docs/security-report-toolshop-live.md) | Security passes run by a separate swarm, on their own severity scale |
+
+## Quick start
+
+You need macOS on Apple Silicon, Node.js 22, pnpm 9, Docker Desktop or OrbStack, and `brew install sops age tesseract`.
 
 ```bash
 pnpm install
 pnpm build
 pnpm image
-```
-
-2. Check the machine:
-
-```bash
 pnpm hornet-swarm doctor
 ```
 
-Doctor also says whether system sleep can freeze a long run. Closing a MacBook lid sleeps it whatever that setting says, unless it is in clamshell mode.
-
-The age private key is created in the macOS Keychain the first time Hornet Swarm stores a password. The Keychain item is named `hornet-swarm-age-key`. An existing item named `aegis-age-key` still unlocks the store. The private key is not written into the project. It is read once per process and kept in memory until that process exits, so a screen lock after the first read does not stop the next account. A new key is created only when the Keychain says no item exists. A locked keychain or a damaged item stops with an error and leaves the Keychain alone. A new key is handed to `security` on its standard input, never as a command argument, so `ps` never shows it. Only the `security` tool can read the item without asking. An item created by an earlier version lets any app read it. To tighten it without losing the key, open the item in Keychain Access, choose Access Control, select "Confirm before allowing access", and remove every app from the list except `security`. Do not delete the item: the stores encrypted with it cannot be read without it. On Linux CI, set `SOPS_AGE_KEY` for that job only.
-
-3. Add an authorisation file that names the domains you are allowed to test, then point a project at your local fixture or your own site. An owner or contract authorisation names its signed document by path and sha256. A run stops when the file is missing or has changed. `hornet-swarm auth check <id>` says whether an authorisation is in force and prints its document's real hash. A relative document path is read from `~/.hornet-swarm/authorisations/`, and `~/` means your home folder.
-
-   `activities` decides what a run may do. The sign-in check needs `signin_smoke` or `functional_e2e`. A journey needs `functional_e2e`. An access check needs `access_control_checks`. An access check is a journey with an `access_denied` assertion, an `http_status` assertion that expects 401 or 403, or the tag `access-control`. Chaos needs `chaos`. `exclusions` are written for people and agents. Hornet Swarm cannot check them itself, so `get_swarm` shows them to every sub-agent.
-
-   The checked-in examples are templates. Do not run them against a live site from this repo's tests. The offline fixture is `test/fixture-app`:
+Then try it on the offline fixture that ships with the repo:
 
 ```bash
 pnpm --filter @hornet-swarm/fixture-app start
 node test/e2e/prepare-fixture.mjs
 pnpm hornet-swarm env up --project fixture --count 1
-```
-
-4. Run the sample checks:
-
-```bash
 pnpm hornet-swarm suite --project fixture \
-  --journey examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml \
-  --journey examples/journeys/consistencyhub/02-tenant-isolation.journey.yaml
+  --journey examples/journeys/example-app/01-signin-dashboard.journey.yaml \
+  --journey examples/journeys/example-app/02-tenant-isolation.journey.yaml
 ```
 
-Reports land in `~/.hornet-swarm/runs/<run id>/`. `summary.md` is the short version for a person. `analysis.json` is the detailed version for an agent. Its `suspected_cause` and `repro_steps` name the first real problem, step by step. Its `confidence` says how directly that evidence names the cause: high for a known stop such as a kill or a captcha, fairly high for one failed assertion, lower for a crash or several unrelated failures, and lowest for a check that passed only on a retry.
-
-Runs older than `results_retention_days` in `~/.hornet-swarm/config.yaml` (30 by default) are removed when the next run starts.
-
-## Practice sites
-
-Two public sites exist for test-automation practice, and the repo ships projects for both:
-
-- **The Internet** (`the-internet.herokuapp.com`): one published login, a secure area, a delayed page, and status codes. Two labels share the login.
-- **Sauce Demo** (`www.saucedemo.com`): six published accounts that each misbehave on purpose, one label each. `standard_user` works, `problem_user` and `error_user` break checkout, `performance_glitch_user` is slow, `visual_user` looks different, and `locked_out_user` is refused.
+Or run it hard against a local lab, with made-up customers it creates itself:
 
 ```bash
-pnpm build
-node scripts/setup-practice.mjs the-internet     # or saucedemo
-pnpm hornet-swarm env up --project the-internet
-pnpm hornet-swarm suite --project the-internet
-pnpm hornet-swarm stats --project the-internet
-```
-
-The script installs a `public_practice` authorisation, the project, its journeys, and a swarm board with a personality and rules for each label, and it stores the published logins in the encrypted store. It reads each site's password from that site's own login page at install time, so no password is kept in this repo. If the page has changed, it asks for the password, or reads `HORNET_PRACTICE_PASSWORD`. It saves a dated copy of the page where each site says it is for practice as the authorisation's document. A `public_practice` authorisation needs that statement, refuses chaos and access-control probing, and caps a run at 10 requests a second in total, 5 per runner, and 6 runners working at once. Other people use these sites too.
-
-A third practice site is the hosted Toolshop, `node scripts/setup-practice.mjs toolshop-live`: the same app as the local `toolshop-lab`, on the public internet, so a comparison shows what live conditions change. Other testers share it, so the script signs up three made-up customers of its own instead of using the published accounts, and the project keeps to two browsers at two requests a second and at most one order per run. `docs/live-report-toolshop.md` is the comparison.
-
-The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoint stalls when several files load at once over one connection, about one page load in three. `curl --http2` reproduces it with no Hornet Swarm involved. Its project sets `runners.http2: false` so the journeys run over HTTP/1.1. Set it to `true` to measure the stall.
-
-## Local labs
-
-Three testing-practice apps run in Docker on this Mac, for hard practice that touches no live service. Every port is bound to `127.0.0.1`.
-
-- **Toolshop** (`toolshop-lab`, http://127.0.0.1:4300): the sprint 5 edition of Practice Software Testing, which ships with deliberate bugs. Five made-up customers with `example.com` addresses and random passwords, plus the seeded shop admin, whose journeys add a brand made for the run, find it, and delete it again.
-- **Restful Booker** (`booker-lab`, http://127.0.0.1:3300): a bed-and-breakfast site with an admin panel. qa-user-3 is a guest and runs the guest journeys with `suite --user qa-user-3`. Its published admin password is a common word that its own pages also show, so redacting it would blank ordinary text. Its admin login is stored only when you set `HORNET_BOOKER_ADMIN_PASSWORD`.
-- **ParaBank** (`parabank-lab`, http://127.0.0.1:8095/parabank/): Parasoft's demo online bank. Five made-up customers, each starting with $515.50. Their passwords are letters and digits, because ParaBank's Update Profile page cuts a password short at a `#`; qa-user-5 keeps a symbol so a journey shows that fault. `docs/sample-report-parabank-lab.md` is the write-up. The journeys check that money adds up: after opening an account, a transfer, and a bill payment, every balance and the total must match what moved. A new customer is signed up on each run, so the expected balances never drift.
-
-```bash
-pnpm build
-node scripts/setup-lab.mjs                       # --reset wipes both labs back to their seed data
-pnpm hornet-swarm env up --project toolshop-lab        # --count n keeps n runners; without it, the project's runners.count
+node scripts/setup-lab.mjs
+pnpm hornet-swarm env up --project toolshop-lab
 pnpm hornet-swarm suite --project toolshop-lab
-pnpm hornet-swarm suite --project toolshop-lab --chaos default --seed lab-1
-pnpm hornet-swarm stats --project toolshop-lab           # chaos runs are left out; add --chaos to see them alone
+pnpm hornet-swarm stats --project toolshop-lab
 ```
 
-The script builds the shop's front end once, starts `labs/docker-compose.yml`, and writes an `owner` authorisation (`lab-owner`) that covers this Mac only, for 90 days. It allows sign-in checks, functional journeys, chaos, and access-control checks. The access-control journey reads ParaBank's Admin Page and does not press Initialize, Clean, or JMS. It signs up the made-up customers through the shop's own API and stores every login in the encrypted store. The shop admin's password is read from Toolshop's README. No password is kept in this repo or printed.
+Reports land in `~/.hornet-swarm/runs/<run id>/`: `summary.md` for a person, `analysis.json` for an agent.
 
-The Toolshop journeys assert what a working shop does, so each planted bug becomes a failed step with the page's own words: the search button, the product page heading, an order that never gets its invoice, cash on delivery that cannot be confirmed, and a profile with the names swapped.
+## Documentation
 
-## Everyday commands
-
-- `hornet-swarm env up --count 10` starts the default fleet.
-- `hornet-swarm env reset` recreates the containers. `hornet-swarm env reset --hard` also rebuilds the runner and proxy images and the project network.
-- `hornet-swarm env status` shows health.
-- `hornet-swarm kill` stops a live run. `hornet-swarm kill --release` lets new runs start.
-- `hornet-swarm creds serve` opens the private login page on `127.0.0.1`.
-- `hornet-swarm creds add <project> <label>` asks for a username and password without showing the password.
-- `hornet-swarm export-evidence <run id> --project <id> --out proof.zip` packs the proof for one run.
-- `hornet-swarm accept-baseline <run id> --project <id>` saves the current screenshots, and the words on each screenshotted page, as the comparison point. Each label has its own baseline, because some accounts are meant to look different.
-- `hornet-swarm auth check <id>` checks an authorisation and its signed document.
-- `hornet-swarm stats --project <id>` shows how reliable the site has been over recent runs: pass rate, p50 and p95 timings, retries, and failing streaks, per journey and for sign-in. `--last <n>` picks how many runs. `--json` prints the same for an agent.
-- `hornet-swarm cleanup --days <n>` removes old runs now.
-
-Ctrl-C, closing the terminal, and `kill <pid>` release the login a CLI run holds. Only `kill -9` leaves it until its 30 minute lease runs out.
-
-A macOS Shortcut can run `hornet-swarm kill` if you want a keyboard stop. Hornet Swarm does not register a global hotkey itself.
-
-## Agents
-
-Open `http://127.0.0.1:7781/setup` to keep the website and up to ten logins. Each card is its own label: card 3 is always `qa-user-3`. A card with a stored login keeps it when its username and password are left blank, so a personality or rule can be changed without typing every password again. Saving changes only the website, the login selectors, the first `url_contains` success check, the labels, and the runner counts in `project.yaml`. Comments and other settings stay. The allowed origins are kept while the website stays on the same origin. Start that page with `hornet-swarm creds serve` if it is not already open. Fill the website first, then the cards in order: username, password, a personality, and rules for that sub-agent. A personality is who the sub-agent plays. Rules are what it must and must not do. Press Ready and confirm with Touch ID. The passwords stay in the encrypted store. The page only answers on `127.0.0.1`, and the form carries a token, so another site open in your browser cannot submit it.
-
-After Ready, `hornet-swarm swarm --json` and the MCP tool `get_swarm` show the website, the labels, each label's personality and rules, and its latest notes. They do not show passwords. Each label is one sub-agent and one browser. The browser inside the container is full Chromium on a virtual screen, the same browser a person would use, rather than headless Chromium.
-
-Start the MCP server with `hornet-swarm-mcp` (the built file is `packages/mcp-server/dist/main.js`). Agents see labels such as `qa-user-1`. They never receive passwords. When a login is missing, the agent calls `request_credentials` and you type it on the local page or with `hornet-swarm creds add`.
-
-### Agent ids
-
-Each MCP connection has its own agent id. When a parent runs several sub-agents over one connection, it calls `register_agent` once per sub-agent and passes that id as `agent_id` on every call. One agent id holds one test login at a time. An id from another connection is refused.
-
-### Notes
-
-`add_agent_note` keeps a note for a label, such as something the sub-agent learned about the site. Notes are redacted before they are saved, the last 50 are kept per label, and `get_swarm` shows the latest ten. `get_agent_notes` reads them all. A label another agent holds right now cannot be written to.
-
-### Journeys an agent writes
-
-`run_journey` takes `journey_id` for a saved journey, or `journey_yaml` for one the agent wrote. A written journey gets the same checks as any other: allowed sites only, passive third parties cannot be filled or navigated, no literal password, and credentials only by handle such as `qa-user-1.password`. A navigate URL is checked after its `{{vars}}` are filled in. While a journey runs, the browser refuses to move its page to a passive origin, whether a step, a link, or a script tries. The journey stops there as `allowlist`. A passive origin can still load into a page, such as a font. A written journey is saved under `~/.hornet-swarm/projects/<id>/agent-journeys/` and cannot replace a project journey with the same id. This is still a scripted journey. There is no free-roaming browser. Agents name journeys and projects by id. A file path is refused.
-
-### What agents cannot do
-
-`limits.max_parallel_runners` caps how many logins can be held in a project at once. Each held login is one working runner. A run that finds every slot in use waits for one, up to its deadline. `acquire_test_user` answers `parallel_limit` with a `busy_until` time.
-
-Any agent can engage the kill switch with `reset_environment` and `kill: true`. Only you can release it, with `hornet-swarm kill --release`. A reset is refused while another agent holds a login, and a hard reset (an image rebuild) is CLI-only.
-
-### Reliability
-
-`get_reliability` returns the same figures as `hornet-swarm stats`.
-
-### Claude Code
-
-`.mcp.json` registers the MCP server as `hornet-swarm` when Claude Code starts in this repo. `.claude/agents/hornet-swarm-tester.md` is a sub-agent for one label, so a Claude parent can spawn one per label. The playbook for any parent, Grok or Claude, is `docs/agents.md`.
-
-### One journey for many accounts
-
-In a journey, `credential: "self.password"` and `fill: { totp: self }` mean the label running it. A journey that lists several users can then sign each of them in with their own login.
-
-## How checks wait
-
-A page is checked the way a person would see it.
-
-- `wait: { for: navigation }` waits for the page to navigate after the last action, including a single-page app that changes the URL with `history.pushState`. A login that renders in place without changing the URL ends the wait once the network has been quiet for half a second.
-- `url_contains` and `text_visible` retry for up to 10 seconds, like `selector_visible`. `access_denied` retries for up to 5 seconds. `selector_absent` waits for the network to go quiet (up to 3 seconds) first, so content that renders late is still seen.
-- `http_status` and `access_denied` read the status of the last page load, whether a `navigate` step or a click caused it.
-- A failed step quotes the page in brackets: its message or toast (`page said: "Sorry, this user has been locked out."`), whether the control was disabled or what it reads (`it reads "Serch"`), the closest words to an expected text (`closest text on the page: "Reltded products"`), and other error lines (`page also shows: "Errror 304 - Missing Payment Gateway"`). It also saves `failed-step-<n>.png` and `failed-step-<n>.txt`.
-- Each `.txt` beside a screenshot holds the page's visible words, then `Form fields:` with what each field holds and `Disabled buttons:`. Dropdown options are left out of the visible words, so a choice such as "Error 101: Subject not found" is not mistaken for a message; the field line shows the option that was chosen. A page's text alone leaves out field values. Password fields are never read. The parent packet lists these files in `page_text_paths`.
-- `gate_passed` only means every account signed in. A summary for a failed run says so.
-- The MCP server refuses to start when the source is newer than the build, and once the code is rebuilt under it, every tool asks for a restart and runs nothing.
-- `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
-- `select: { selector, label }` (or `value`, or `index` where 0 is the first option, for lists such as account numbers that change per customer) chooses from a dropdown. It focuses the field, chooses, and leaves it, as a person does, because some forms only record a choice from a field that was touched.
-- `assert: { type: field_value, selector, value }` checks what a form field holds, such as a profile's first name. It may not read the password field. A failure names what the field held.
-- Templates work in selectors as well as values, such as `tr:has-text('Lab Brand {{run.tag}}')` for a row this run created.
-- Templates: `{{run.id}}` for a fresh made-up email on every run, `{{run.tag}}` for its short last part (for sites that limit username length), `{{run.label}}`, `{{self.vars.first_name}}` for the running label's own values, and `{{date.+30}}` for the date 30 days from today.
-
-Chaos (`--chaos <profile> --seed <seed>`) adds delays, dropped requests, refreshes, back presses, and double clicks to journeys. The seed is joined with each label and journey, so each one meets a different pattern that the same seed repeats. A refresh or back is skipped while a form is half filled in, because a person who reloads mid-form types it again. It is also skipped on a page that a sent form produced, because reloading it sends the form again, which a browser does only after asking. A double click lands on the button the step presses, so it tests a double submission. A dropped request is never the page load itself, because no site can recover from the browser's own error page; the drop moves to the next request the page makes. Every skip is logged. In a chaos summary, journeys that stopped at the same step with the same page words share one line. Compare a chaos run with a normal one: a check that passes normally but fails under chaos shows where the site does not recover. On Toolshop, the first chaos runs found that a sign-in request lost once leaves the customer on the login page with no error.
-
-Requests are paced, not dropped. Each runner may send `limits.request_burst_per_runner` requests at once (20 by default), then its share of the total per second. A busy page loads slower. It does not load broken. The share is `max_requests_per_second_total` divided by the number of runners that can work at once (the smaller of `max_parallel_runners` and the number of labels), and never more than `max_requests_per_second_per_runner`. The egress proxy sees an HTTPS connection only as a tunnel, so it cannot count the requests inside one. It paces new connections, and the runners keep the request total. Service workers are blocked, so a page's worker cannot send requests that skip this pacing. A run is `rate_limited` only when the site itself answers 429 or 503 to more than one request in ten.
-
-A captcha stops the journey only when a person could see it: a visible widget or challenge frame, or the words "verify you are human". Invisible reCAPTCHA v3, the reCAPTCHA badge, and a Turnstile script that never shows a widget are ignored. A second-code prompt needs a one-time-code field, a field named for a code, or wording that a code was sent. A postcode, promo code, or other short field is not a second code. An authenticator code is made with at least 15 seconds of its 30-second window left, waiting for the next window if needed, so a site that accepts only the current code does not see it expire between being made and being typed. A texted or emailed code waits for you on the local code page for up to `auth.operator_code_wait_sec` seconds (600 by default), and never past the run deadline.
-
-A runner that is missing or crashes becomes an error for that account only. The other accounts keep their results. A run where every account hit such an error is `error`, not `failed`, because the harness broke, not the site.
-
-A journey that failed, errored, or was flaky for any label in a `suite` run is copied to `~/.hornet-swarm/regressions/<project>/` and joins later `suite` runs. It is fixed after three `suite` runs in a row where it passed for every label. Then the copy is removed and the ledger stays. While the project still has that journey, its current version runs, so fixing a journey's own mistake also fixes its regression; the saved copy runs only if the project's journey is gone. A single `journey` or `run_journey` call neither adds a regression nor counts toward fixing one.
-
-A journey with `requires_phase1: false` runs even when that label's sign-in check did not pass. Other journeys are skipped then. A label with no stored login whose journeys all have `requires_phase1: false` is a guest, such as a visitor who books without an account: it is not signed in, the summary names it as a guest, and it does not hold back the sign-in gate. Each journey runs in a fresh browser either way, so a journey that needs a session signs in itself.
-
-## Runner output folders
-
-Each runner writes screenshots, traces, and network logs under `~/.hornet-swarm/runners/<project>/<label>`. That folder is mode `0700`. The owner is the user who starts Hornet Swarm, and the group is that user's group.
-
-Docker Desktop on this Mac shows the folder to the container as root, and the runner user (uid 10001) can still write there. The files come back owned by the user who started Hornet Swarm, so the controller can read them. Mode `0700` is enough for that. A group shared with the container would let more accounts in, and it is not required.
-
-If that folder already exists and other accounts can open it, startup stops and names the folder. Hornet Swarm does not change its mode.
-
-After each job the files are moved into the run folder, so nothing unredacted stays in the runner folder. Links written by a runner are not followed. Each runner sees only its own control token, read-only. The egress proxy allows only the exact host and port pairs of the project's origins, plus the credential page port on this Mac.
+- [docs/reference.md](docs/reference.md): the full manual. Setup, the practice sites and labs, every command, agents, journeys, and how checks wait.
+- [docs/client-engagement.md](docs/client-engagement.md): taking a testing job from first contact to the report you hand back.
+- [docs/agents.md](docs/agents.md): the playbook for an AI parent running one sub-agent per account.
+- [docs/severity.md](docs/severity.md): how findings are graded.
+- [SECURITY.md](SECURITY.md): the rules on secrets.
+- [docs/history/](docs/history/README.md): build notes, kept as the record.
 
 ## Tests
 
@@ -201,24 +81,12 @@ pnpm test
 pnpm test:e2e
 ```
 
-`pnpm test` is the unit suite. `pnpm test:e2e` is the end-to-end suite. Both use the offline fixture only. Do not point them at a live site.
+`pnpm test` is the unit suite. `pnpm test:e2e` is the end-to-end suite. Both use the offline fixture in `test/fixture-app` only. Do not point them at a live site.
 
-End-to-end tests need Docker or OrbStack, sops, age, and tesseract on this Mac. GitHub Actions runs build, lint, and unit tests on Linux for every push and pull request (`.github/workflows/ci.yml`). That Linux job does not run `pnpm test:e2e`. GitHub-hosted macOS runners do not provide Docker or OrbStack, so the end-to-end command stays manual:
+End-to-end tests need Docker or OrbStack, sops, age, and tesseract. GitHub Actions runs build, lint, unit tests, and a coverage gate on the redactor and policy code on Linux for every push and pull request (`.github/workflows/ci.yml`). That Linux job does not run `pnpm test:e2e`. GitHub-hosted macOS runners do not provide Docker or OrbStack, so the end-to-end command stays manual.
 
-```bash
-pnpm test:e2e
-```
+On 14 October 2026, 197 unit tests and 52 end-to-end tests passed on this Mac.
 
-The Linux job also runs `pnpm test:coverage`. That command fails the check when redactor or policy coverage drops below the gate in `vitest.config.ts`.
+## Licence
 
-The fixture includes pages shaped like a real site: a single-page app sign-in, a page with 65 resources and invisible captcha scripts, and a site that answers 429. The fixture password contains a space, an apostrophe, parentheses, `!`, and `~`, which an HTML form encodes differently from `encodeURIComponent`.
-
-On 14 October 2026 this Mac ran both commands against the offline fixture only.
-
-`pnpm test` exited 0. 25 files passed and 197 tests passed.
-
-`pnpm test:e2e` passed. 18 files passed and 52 tests passed.
-
-The same day, the Toolshop lab ran five suites without chaos and one with it. Every planted bug the journeys check failed on every run, at the same step, with the page's own words. Contact, favourites, and sign-up passed every time. `docs/sample-report-toolshop-lab.md` is the write-up, in the form a client report would take.
-
-The same day, live runs on the two practice sites gave the results each site is built to give. The Internet: both accounts signed in and all four journeys passed. Sauce Demo: `standard_user`, `performance_glitch_user` (8.4 s sign-ins), and `visual_user` passed checkout; `problem_user` failed at step 15 with the page saying "Error: Last Name is required"; `error_user` failed at step 17 because the order never completed; and `locked_out_user` was refused with "Sorry, this user has been locked out." A scan of every saved file, including traces, found no stored login in any encoding.
+See [LICENSE](LICENSE) and [NOTICE](NOTICE). Built by Aron Amos (Iron Adamant).

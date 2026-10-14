@@ -11,7 +11,7 @@ A Grok Build session or a Grok Bot parent reads `get_swarm`, gives each sub-agen
 ## Do not
 
 - Edit `/Users/aron/Documents/coding_projects/QA Swarm Tester spec` except to read `SPEC.md`.
-- Open `staging.consistencyhub.app` or any other real site. Test only the offline fixture.
+- Open `staging.example.com` or any other real site. Test only the offline fixture.
 - Push, or change the GitHub repo `IronAdamant/hornet-swarm` from private to public.
 - Change git config. If you commit, use `git -c user.name="Aron Amos" -c user.email="aron.amos@ironadamant.com"` before the subcommand. Do not commit this goal file.
 - Delete the Keychain item `aegis-age-key`, or any Docker volume whose name starts with `aegis-profile-` or `hornet-swarm-profile-`.
@@ -101,7 +101,7 @@ Done with the existing fixture journeys for captcha, otp, and totp, plus a chaos
 
 `productionGate` builds its host list only from `base_url` and `allowed_origins`. It never reads `allowed_third_party`. `chaosPermitted(auth, project)` does not read `confirmProduction`, `allowed_origins`, or `allowed_third_party`. It checks the chaos activity, `project.environment`, and `isProductionLooking` on `base_url` only.
 
-Match `staging`, `test`, `qa`, `dev`, and `localhost` on labels split by dots and hyphens. `dev.example.com` and `my-dev.example.com` stay non-production. `device.example.com` and `contest.example.com` are production-looking. Treat RFC1918 only when the host is a dotted IPv4 address in those ranges, not when a DNS name starts with those characters. Run `productionGate` and `chaosPermitted` over the base host, allowed origins, and non-passive third parties. Update `test/unit/policy.test.ts`. Do not run the consistencyhub example against the network. Its CDN and auth hosts sit outside the owner domains, and `productionGate` currently never sees them.
+Match `staging`, `test`, `qa`, `dev`, and `localhost` on labels split by dots and hyphens. `dev.example.com` and `my-dev.example.com` stay non-production. `device.example.com` and `contest.example.com` are production-looking. Treat RFC1918 only when the host is a dotted IPv4 address in those ranges, not when a DNS name starts with those characters. Run `productionGate` and `chaosPermitted` over the base host, allowed origins, and non-passive third parties. Update `test/unit/policy.test.ts`. Do not run the example-app example against the network. Its CDN and auth hosts sit outside the owner domains, and `productionGate` currently never sees them.
 
 `validateJourneyDocument` records `literal value matches a stored secret` only when `step.fill.value` is truthy and a known secret of length at least 4 is a substring. `Redactor.register` returns immediately on an empty value and drops every derived form shorter than 4 characters. Keep the original secret even when it is shorter than 4. Still drop derived forms shorter than 4. Reject a journey fill that contains any known secret of length at least 1.
 

@@ -26,8 +26,8 @@ import { decideAcquire, releaseLease } from '../../packages/core/src/lease.ts';
 import { renderTemplate } from '../../packages/core/src/template.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const project = projectSchema.parse(parse(readFileSync(join(root, 'examples/projects/consistencyhub/project.yaml'), 'utf8')));
-const auth = authorisationSchema.parse(parse(readFileSync(join(root, 'examples/authorisations/consistencyhub-owner.yaml'), 'utf8')));
+const project = projectSchema.parse(parse(readFileSync(join(root, 'examples/projects/example-app/project.yaml'), 'utf8')));
+const auth = authorisationSchema.parse(parse(readFileSync(join(root, 'examples/authorisations/example-app-owner.yaml'), 'utf8')));
 
 function withProject(patch: Partial<Project> & { targets?: Partial<Project['targets']> }): Project {
   return projectSchema.parse({
@@ -43,7 +43,7 @@ function withAuth(patch: Partial<Authorisation>): Authorisation {
 
 describe('policy engine', () => {
   it('classifies hosts and allowlists', () => {
-    expect(isProductionLooking('staging.consistencyhub.app')).toBe(false);
+    expect(isProductionLooking('staging.example.com')).toBe(false);
     expect(isProductionLooking('localhost')).toBe(false);
     expect(isProductionLooking('127.0.0.1')).toBe(false);
     expect(isProductionLooking('host.docker.internal')).toBe(false);
@@ -57,16 +57,16 @@ describe('policy engine', () => {
     expect(isProductionLooking('device.example.com')).toBe(true);
     expect(isProductionLooking('contest.example.com')).toBe(true);
     expect(isProductionLooking('10.prod.example')).toBe(true);
-    expect(isProductionLooking('app.consistencyhub.app')).toBe(true);
+    expect(isProductionLooking('app.example.com')).toBe(true);
     expect(originAllowed(project, '/login').ok).toBe(true);
-    expect(originAllowed(project, 'https://cdn.consistencyhub.app/app.js').ok).toBe(true);
+    expect(originAllowed(project, 'https://cdn.example.com/app.js').ok).toBe(true);
     expect(originAllowed(project, 'https://evil.example/steal').ok).toBe(false);
     expect(originAllowed(project, 'http://[') .ok).toBe(false);
-    expect(interactiveOriginAllowed(project, 'https://cdn.consistencyhub.app/app.js')).toEqual({
+    expect(interactiveOriginAllowed(project, 'https://cdn.example.com/app.js')).toEqual({
       ok: false,
       reason: 'passive_origin',
     });
-    expect(interactiveOriginAllowed(project, 'https://auth.consistencyhub.app/session').ok).toBe(true);
+    expect(interactiveOriginAllowed(project, 'https://auth.example.com/session').ok).toBe(true);
   });
 
   it('requires an active authorisation before a domain is allowed', () => {
@@ -76,15 +76,15 @@ describe('policy engine', () => {
     expect(authorisationStatus(withAuth({ valid_from: 'not-a-date' }), now).reason).toBe('authorisation_dates_invalid');
     expect(authorisationStatus(withAuth({ valid_from: '2027-01-01' }), now).reason).toBe('authorisation_not_yet_valid');
     expect(authorisationStatus(withAuth({ valid_until: '2026-01-01' }), now).reason).toBe('authorisation_expired');
-    expect(domainCovered(auth, 'staging.consistencyhub.app')).toBe(true);
-    expect(domainCovered(auth, 'qa.staging.consistencyhub.app')).toBe(true);
+    expect(domainCovered(auth, 'staging.example.com')).toBe(true);
+    expect(domainCovered(auth, 'qa.staging.example.com')).toBe(true);
     expect(domainCovered(auth, '127.0.0.1')).toBe(true);
     expect(domainCovered(auth, '::1')).toBe(true);
     expect(domainCovered(auth, '[::1]')).toBe(true);
     expect(domainCovered(auth, 'example.com')).toBe(false);
-    expect(projectDomainsAuthorised(project, auth, now).reason).toContain('auth.consistencyhub.app');
+    expect(projectDomainsAuthorised(project, auth, now).reason).toContain('auth.example.com');
     const covered = withAuth({
-      scope: { ...auth.scope, domains: [...auth.scope.domains, 'auth.consistencyhub.app'] },
+      scope: { ...auth.scope, domains: [...auth.scope.domains, 'auth.example.com'] },
     });
     expect(projectDomainsAuthorised(project, covered, now).ok).toBe(true);
     expect(projectDomainsAuthorised(project, withAuth({ id: 'other' }), now).reason).toBe('authorisation_mismatch');
@@ -103,15 +103,15 @@ describe('policy engine', () => {
   it('refuses production-looking hosts unless the record and the flag both allow them', () => {
     const prod = withProject({
       environment: 'production',
-      targets: { base_url: 'https://app.consistencyhub.app', allowed_origins: ['https://app.consistencyhub.app'], allowed_third_party: [] },
+      targets: { base_url: 'https://app.example.com', allowed_origins: ['https://app.example.com'], allowed_third_party: [] },
     });
-    const prodAuth = withAuth({ scope: { domains: ['app.consistencyhub.app'], environments: ['production'] } });
+    const prodAuth = withAuth({ scope: { domains: ['app.example.com'], environments: ['production'] } });
     expect(productionGate(project, auth, false).reason).toBe('production_not_authorised');
     const stagingOnly = withProject({
       targets: {
-        base_url: 'https://staging.consistencyhub.app',
-        allowed_origins: ['https://staging.consistencyhub.app'],
-        allowed_third_party: [{ origin: 'https://cdn.consistencyhub.app', passive: true }],
+        base_url: 'https://staging.example.com',
+        allowed_origins: ['https://staging.example.com'],
+        allowed_third_party: [{ origin: 'https://cdn.example.com', passive: true }],
       },
     });
     expect(productionGate(stagingOnly, auth, false).ok).toBe(true);
@@ -137,15 +137,15 @@ describe('policy engine', () => {
     expect(chaosPermitted(chaosAuth, project).reason).toBe('chaos_not_authorised');
     const stagingOnly = withProject({
       targets: {
-        base_url: 'https://staging.consistencyhub.app',
-        allowed_origins: ['https://staging.consistencyhub.app'],
+        base_url: 'https://staging.example.com',
+        allowed_origins: ['https://staging.example.com'],
         allowed_third_party: [],
       },
     });
     expect(chaosPermitted(chaosAuth, stagingOnly).ok).toBe(true);
     const prod = withProject({
       environment: 'staging',
-      targets: { base_url: 'https://app.consistencyhub.app', allowed_origins: ['https://app.consistencyhub.app'], allowed_third_party: [] },
+      targets: { base_url: 'https://app.example.com', allowed_origins: ['https://app.example.com'], allowed_third_party: [] },
     });
     expect(chaosPermitted(chaosAuth, prod).reason).toBe('chaos_not_authorised');
     expect(matchGlob('**/login', 'https://fixture.local/login')).toBe(true);
@@ -153,7 +153,7 @@ describe('policy engine', () => {
   });
 
   it('rejects journeys that leave the allowlist or embed a secret', () => {
-    const journey = parse(readFileSync(join(root, 'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml'), 'utf8'));
+    const journey = parse(readFileSync(join(root, 'examples/journeys/example-app/01-signin-dashboard.journey.yaml'), 'utf8'));
     expect(validateJourneyDocument(journey, project).valid).toBe(true);
     const offsite = structuredClone(journey) as { steps: Array<Record<string, unknown>> };
     offsite.steps.push({ navigate: { url: 'https://evil.example/phish' } });

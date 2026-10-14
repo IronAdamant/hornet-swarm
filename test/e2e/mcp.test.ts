@@ -8,8 +8,8 @@ beforeAll(() => {
   clearSignins();
   const dir = join(home, 'projects/fixture/journeys');
   mkdirSync(dir, { recursive: true });
-  cpSync(join(root, 'examples/journeys/consistencyhub/01-signin-dashboard.journey.yaml'), join(dir, '01-signin-dashboard.journey.yaml'));
-  cpSync(join(root, 'examples/journeys/consistencyhub/02-tenant-isolation.journey.yaml'), join(dir, '02-tenant-isolation.journey.yaml'));
+  cpSync(join(root, 'examples/journeys/example-app/01-signin-dashboard.journey.yaml'), join(dir, '01-signin-dashboard.journey.yaml'));
+  cpSync(join(root, 'examples/journeys/example-app/02-tenant-isolation.journey.yaml'), join(dir, '02-tenant-isolation.journey.yaml'));
   cpSync(join(root, 'test/e2e/journeys/flag.journey.yaml'), join(dir, 'flag.journey.yaml'));
   cpSync(join(root, 'test/e2e/journeys/both-users.journey.yaml'), join(dir, 'both-users.journey.yaml'));
   mkdirSync(join(home, 'authorisations'), { recursive: true });
