@@ -249,7 +249,14 @@ function lockIsDead(lock: string): boolean {
       return false;
     }
   }
-  const pid = Number(readFileSync(pidFile, 'utf8').trim());
+  let text: string;
+  try {
+    text = readFileSync(pidFile, 'utf8');
+  } catch {
+    // The holder released the lock between the check above and this read. Claim it again.
+    return false;
+  }
+  const pid = Number(text.trim());
   if (!Number.isInteger(pid) || pid <= 0) return true;
   try {
     process.kill(pid, 0);
