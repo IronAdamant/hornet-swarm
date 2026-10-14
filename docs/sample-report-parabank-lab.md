@@ -7,9 +7,9 @@ A practice deliverable, written the way a client report would be, from runs agai
 | | |
 |---|---|
 | Site | ParaBank, http://127.0.0.1:8095/parabank/ (lab copy, this Mac only) |
-| Authorisation | `lab-owner` (owner basis): sign-in checks, functional journeys, and chaos. Cross-account checks and security testing were out of scope. |
+| Authorisation | `lab-owner` (owner basis): sign-in checks, functional journeys, and chaos. Cross-account checks were not run. Security findings are reported separately by Grok's swarm. |
 | Accounts | Five made-up customers, each opened with $515.50 |
-| Runs | Claude's first runs, then a re-test by Grok's swarm through the MCP server, one agent per account; normal runs and chaos runs (profile `default`, seed `bank-1`) |
+| Runs | Claude's first runs, then two re-tests by Grok's swarm through the MCP server, one agent per account; normal runs and chaos runs (profile `default`, seed `bank-1`) |
 | Journeys | money adds up, transfer, bill pay, loan, profile, wrong password, long username, profile keeps the password |
 
 ## Summary
@@ -30,8 +30,8 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 |---|---|---|---|---|
 | P-01 | Updating contact details breaks sign-in for a password with a symbol | High | Update Contact Info | Every run |
 | P-02 | A new username over 20 characters is refused as "already exists" | Medium | Register | Every run |
-| P-03 | A lost request shows only "An internal error has occurred" | Low | Transfer, bill pay, loan | Under chaos |
-| P-04 | Find Transactions lists accounts newest first and defaults to the wrong one | Low | Find Transactions | Seen once |
+| P-03 | A lost request shows only "An internal error has occurred" | Low | Money adds up, transfer, bill pay, loan | Every chaos run |
+| P-04 | The account order on Find Transactions is not stable | Low | Find Transactions | Seen once in two runs |
 
 ### P-01 Updating contact details breaks sign-in for a password with a symbol
 
@@ -39,7 +39,7 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 - **Expected:** the customer signs straight back in. Contact details have nothing to do with the password.
 - **Actual:** "The username and password could not be verified." The customer is locked out.
 - **Cause (found by Grok's swarm):** the Update Profile page sends the password in a web address without encoding it. A `#` ends the value there, so the bank saves only the part before it.
-- **Evidence:** journey `profile-keeps-password` (qa-user-5), run `run_20261014-163351_c2734b`, step 25. Grok's runs `run_20261014-151418_a9f7e2` (profile update) then `run_20261014-151437_ad352a` (sign-in refused) show the same for an existing customer. A customer whose password has only letters and digits is not affected.
+- **Evidence:** journey `profile-keeps-password` (qa-user-5), step 25, on every run: `run_20261014-163351_c2734b`, and Grok's `run_20261014-165938_fd3ea3`, `run_20261014-170017_580e8d`, `run_20261014-170115_d27842`, and chaos run `run_20261014-170308_52cc01`. Step 18 says "Profile Updated" and the update request answers 200, but the password it carries is 16 characters long: the part before the `#`. Grok's runs `run_20261014-151418_a9f7e2` (profile update) then `run_20261014-151437_ad352a` (sign-in refused) show the same for an existing customer. qa-user-4, whose password has only letters and digits, updated the phone three times and still signed in.
 - **Impact:** customers who update their address or phone are locked out without warning.
 
 ### P-02 A new username over 20 characters is refused as "already exists"
@@ -47,35 +47,44 @@ Two faults stand out. Updating contact details breaks sign-in for a customer who
 - **Steps:** sign up with a new 21-character username that nobody has used.
 - **Expected:** the account is created, or the page says the name is too long.
 - **Actual:** "This username already exists." A 20-character name is accepted; 21 or more is refused the same way.
-- **Evidence:** journey `long-username`, every run, step 15 (`run_20261014-163351_c2734b`). The cutoff was confirmed by signing up names of 15, 16, 20, 21, 22, and 23 characters.
+- **Evidence:** journey `long-username`, step 15, on every run, normal and chaos (`run_20261014-163351_c2734b`; Grok's `run_20261014-165729_298172`, `run_20261014-165747_ee0526`, `run_20261014-165804_6a90f0`, `run_20261014-170308_52cc01`). The field held a new name such as `longname298172abcdefg`.
+- **The 20-character cutoff** was checked by hand on this Mac, outside the harness, by sending sign-ups of 15, 16, 20, 21, 22, and 23 characters straight to the lab's form: 20 and under were created, 21 and over were refused. No saved run records that check; a journey for a 20-character name would.
 - **Impact:** a customer tries other names believing theirs is taken.
 
 ### P-03 A lost request shows only "An internal error has occurred"
 
-- **Seen in:** chaos runs `run_20261014-144734_2f5d66` and `run_20261014-152902_94f98d`. When a request was lost, transfer, bill pay, and loan pages showed "Error!" and "An internal error has occurred and has been logged."
+- **Seen in:** chaos runs `run_20261014-144734_2f5d66`, `run_20261014-152902_94f98d`, and `run_20261014-170308_52cc01`. When a request was lost, money adds up (step 46), transfer (step 16), bill pay (step 20), and loan (step 11) showed "Error!" and "An internal error has occurred and has been logged." Each of those passes without chaos. Profile and wrong password passed under chaos.
 - **Good:** the customer is told something went wrong, and no money moved.
 - **Could be better:** the message does not say whether to try again or whether money moved.
 
-### P-04 Find Transactions lists accounts newest first
+### P-04 The account order on Find Transactions is not stable
 
-- **Seen in:** run `run_20261014-144344_088009`. The Find Transactions page listed the new savings account before the main account, while every other page lists the main account first, so a search for a bill payment looked in the wrong account and found nothing.
-- **Impact:** a customer may think a payment is missing. Seen once; not yet checked by its own journey.
+- **Run `run_20261014-144344_088009`:** the page's dropdown, in the network log, listed the new savings account `15342` before the main account `15231`, so it started on the savings account. A search for a bill payment from the main account found nothing.
+- **Grok's run `run_20261014-170749_58cb0b`:** the page listed the older account `13566` before the new `18117`, and started on the older one.
+- **So:** the order is not newest first every time; it changes between customers. Every other page lists the main account first. The journey `find-transactions-order` records which account the page starts on, so more runs will show how often it starts on the wrong one.
+- **Impact:** a customer may search the wrong account and think a payment is missing. Low until it is seen more.
 
 ## What passed
 
 - Money adds up: after opening a savings account with $100, a $25 transfer, and a $30 bill payment, the balances read $360.50 and $125.00 and the total reads $485.50, every run.
 - Transfer: "$1.00 has been transferred from account #... to account #...".
-- Bill pay: mismatched account numbers are refused ("The account numbers do not match."); matching ones go through.
+- Bill pay: mismatched account numbers are refused ("The account numbers do not match.", in the bill pay page's response at step 17); matching ones go through ("Bill Payment to Testville Water in the amount of $5.00 ... was successful.").
 - Loan: a $1,000 loan with $100 down gets a decision on screen ("Approved").
 - Contact details: a new phone number is saved and still shown after reloading the page.
 - Wrong password: refused with "The username and password could not be verified.", and no account page opens.
 
 ## What was not checked
 
-- Cross-account access and any other security testing. Out of scope for this authorisation; covered separately.
-- The Admin Page and the bank's web services.
+- Cross-account access. Not run.
+- Security. Grok's swarm reports its own security findings separately, including on the Admin Page, which it viewed without using.
+- The bank's web services, and the Admin Page's Initialize, Clean, and JMS controls, which were not pressed.
 - Find Transactions by date or transaction id.
 
 ## How this was produced
 
-`node scripts/setup-lab.mjs`, then `pnpm hornet-swarm env up --project parabank-lab` and `pnpm hornet-swarm suite --project parabank-lab`, normally and with `--chaos default --seed bank-1`. Grok's swarm re-ran every journey through the MCP server and found the cause of P-01. The made-up customers' passwords are letters and digits, except qa-user-5's, which keeps a symbol so the `profile-keeps-password` journey shows P-01 until it is fixed.
+`node scripts/setup-lab.mjs`, then `pnpm hornet-swarm env up --project parabank-lab` and `pnpm hornet-swarm suite --project parabank-lab`, normally and with `--chaos default --seed bank-1`. Grok's swarm re-ran every journey through the MCP server twice, found the cause of P-01, and checked this report against the page text. The made-up customers' passwords are letters and digits, except qa-user-5's, which keeps a symbol so the `profile-keeps-password` journey shows P-01 until it is fixed.
+
+## Review
+
+Grok's second re-test checked every finding against its own runs. P-01, P-02, and P-03 held, and their evidence now cites those runs. Two corrections were made. The 20-character cutoff is now described as a check done by hand, because no saved run records it. P-04 was first written as "newest first"; Grok's run showed the opposite order, so it now says the order is not stable. Grok's reading that the first run had no dropdown came from the page text, which leaves dropdown options out by design; the network log of that run has them.
+

@@ -1,0 +1,26 @@
+version: 1
+id: find-transactions-order
+name: Find Transactions shows which account starts selected
+description: >
+  Opens a savings account, then opens Find Transactions. The page text records
+  the account the dropdown starts on. It does not search, and it does not change
+  another journey.
+users: [qa-user-1]
+tags: [money]
+steps:
+  - navigate: { url: "index.htm" }
+  - fill: { selector: "input[name='username']", credential: "self.username" }
+  - fill: { selector: "input[name='password']", credential: "self.password" }
+  - click: { selector: "input[value='Log In']" }
+  - wait: { for: navigation }
+  - assert: { type: text_visible, value: "Accounts Overview" }
+  - navigate: { url: "openaccount.htm" }
+  - wait: { for: selector, selector: "#fromAccountId option >> nth=0", state: attached }
+  - select: { selector: "#type", label: "SAVINGS" }
+  - click: { selector: "input[value='Open New Account']" }
+  - assert: { type: text_visible, value: "Account Opened!" }
+  - screenshot: { name: "account-opened" }
+  - navigate: { url: "findtrans.htm" }
+  - wait: { for: selector, selector: "#accountId option >> nth=0", state: attached }
+  - screenshot: { name: "find-transactions" }
+  - assert: { type: text_visible, value: "Select an account" }
