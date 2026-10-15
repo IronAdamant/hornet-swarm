@@ -7,14 +7,30 @@ if [ -z "$chrome" ]; then
   exit 1
 fi
 prev=
+current=
 for arg in "$@"; do
   if [ "$prev" = "--user-data-dir" ]; then
+    current=$arg
     chmod 0777 "$arg" 2>/dev/null || true
   fi
   case "$arg" in
-    --user-data-dir=*) chmod 0777 "${arg#--user-data-dir=}" 2>/dev/null || true ;;
+    --user-data-dir=*)
+      current=${arg#--user-data-dir=}
+      chmod 0777 "$current" 2>/dev/null || true
+      ;;
   esac
   prev=$arg
+done
+# Profiles left by earlier launches. Chrome wrote their files as the browser user, so Playwright,
+# running as the runner user, could not delete them when the browser closed. They filled /tmp, a
+# small memory disk, until Chrome could no longer start. A runner runs one browser at a time, so
+# every profile but this launch's is finished with. The browser user empties each one, and the
+# runner user, who created it, removes the empty folder.
+for old in /tmp/playwright_chromiumdev_profile-*; do
+  [ -d "$old" ] || continue
+  [ "$old" = "$current" ] && continue
+  setpriv --reuid=10002 --regid=10002 --clear-groups --inh-caps=-all --ambient-caps=-all -- rm -rf "$old" 2>/dev/null || true
+  rm -rf "$old" 2>/dev/null || true
 done
 mkdir -p /tmp/chrome-home /tmp/cache /tmp/config
 chmod 0777 /tmp/chrome-home /tmp/cache /tmp/config

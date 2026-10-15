@@ -1,4 +1,4 @@
-import { analysisSchema, type Analysis, type RunResult, type StepResult } from '@hornet-swarm/core';
+import { accessibilitySeverity, analysisSchema, sortViolations, type AccessibilityResult, type Analysis, type RunResult, type StepResult } from '@hornet-swarm/core';
 
 export type RichStep = StepResult & {
   console_logs?: string[];
@@ -132,6 +132,57 @@ export function writeErrorsOnPassingSteps(users: RichUser[]): string[] {
   return [...new Set(notes)].slice(0, 5);
 }
 
+const STANDARD_NAMES: Record<string, string> = { wcag2a: 'WCAG 2.0 A', wcag2aa: 'WCAG 2.0 AA', wcag21aa: 'WCAG 2.1 AA', wcag22aa: 'WCAG 2.2 AA' };
+
+/**
+ * One line per checked page. Several accounts and journeys often check the same page, so a page's
+ * problems are merged by rule, and each rule counts the most places any one check found.
+ */
+export function accessibilityFindings(users: RichUser[]): string[] {
+  const pages = new Map<string, { result: AccessibilityResult; rules: Map<string, AccessibilityResult['violations'][number]>; review: number }>();
+  for (const user of users) {
+    for (const journey of user.journeys) {
+      for (const step of journey.steps) {
+        const result = step.accessibility;
+        if (!result) continue;
+        let path = result.url;
+        try {
+          // A single-page app routes after the #, as in /#/checkout.
+          const parsed = new URL(result.url);
+          path = `${parsed.pathname}${parsed.hash}`;
+        } catch {
+          // Keep the address as recorded.
+        }
+        const key = `${result.name} (${path})`;
+        const page = pages.get(key) ?? { result, rules: new Map(), review: 0 };
+        for (const violation of result.violations) {
+          const seen = page.rules.get(violation.rule);
+          if (!seen || violation.count > seen.count) page.rules.set(violation.rule, violation);
+        }
+        page.review = Math.max(page.review, result.needs_review);
+        pages.set(key, page);
+      }
+    }
+  }
+  return [...pages.entries()].map(([key, page]) => {
+    const standard = STANDARD_NAMES[page.result.standard] ?? page.result.standard;
+    const review = page.review > 0 ? ` ${page.review} ${page.review === 1 ? 'check needs' : 'checks need'} a person to look.` : '';
+    const violations = sortViolations([...page.rules.values()]);
+    if (violations.length === 0) return `Accessibility · ${key}: no problems found against ${standard}.${review}`;
+    const worst = violations[0] as AccessibilityResult['violations'][number];
+    const listed = violations
+      .slice(0, 4)
+      .map((violation) => `${violation.help} (${violation.impact}, ${violation.count} ${violation.count === 1 ? 'place' : 'places'}, such as \`${violation.example}\`)`)
+      .join('; ');
+    const more = violations.length > 4 ? `; and ${violations.length - 4} more in the page's accessibility file` : '';
+    return `Accessibility · ${key}: ${violations.length} ${violations.length === 1 ? 'problem' : 'problems'} against ${standard}, the worst ${worst.impact} (${accessibilitySeverity(worst.impact)} to start). ${listed}${more}.${review}`;
+  });
+}
+
+function hasAccessibilityProblems(users: RichUser[]): boolean {
+  return users.some((user) => user.journeys.some((journey) => journey.steps.some((step) => (step.accessibility?.violations.length ?? 0) > 0)));
+}
+
 /** Every failed journey, once. The same failure on several accounts is one line naming them all. */
 export function failureList(users: RichUser[]): string[] {
   const groups = new Map<string, { labels: string[]; line: string }>();
@@ -220,9 +271,12 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   } else if (status !== 'passed') {
     paragraph = 'A check did not pass. This is high. Look at the first thing that failed.';
   } else {
-    paragraph = users.length > 0 && users.every((user) => user.phase1.blocked_reason === 'guest')
-      ? 'The checks passed, run as guests with no sign-in. Nothing needs fixing. This is low.'
-      : 'Sign-in worked and the checks that followed passed. Nothing needs fixing. This is low.';
+    const asGuests = users.length > 0 && users.every((user) => user.phase1.blocked_reason === 'guest');
+    paragraph = hasAccessibilityProblems(users)
+      ? `${asGuests ? 'The checks passed, run as guests with no sign-in' : 'Sign-in worked and the checks that followed passed'}, but the accessibility check found problems. Each checked page is listed below, worst problem first.`
+      : asGuests
+        ? 'The checks passed, run as guests with no sign-in. Nothing needs fixing. This is low.'
+        : 'Sign-in worked and the checks that followed passed. Nothing needs fixing. This is low.';
   }
   const guests = users.filter((user) => user.phase1.blocked_reason === 'guest');
   const members = users.filter((user) => user.phase1.blocked_reason !== 'guest');
@@ -244,9 +298,10 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   if (rateLimited) findings.push('The site pushed back with HTTP 429 or 503.');
   for (const failure of chaos ? chaosFailureGroups(users) : failures) findings.push(`Failed: ${failure}`);
   for (const note of writeErrorsOnPassingSteps(users)) findings.push(`Note: ${note}`);
+  for (const line of accessibilityFindings(users)) findings.push(line);
   const first = diagnose(users, status);
   if (status !== 'passed' && failures.length === 0) findings.push(`First problem: ${first.suspected}`);
-  if (status === 'passed' && !flaky) findings.push('Nothing needs a change.');
+  if (status === 'passed' && !flaky && !hasAccessibilityProblems(users)) findings.push('Nothing needs a change.');
   // Under chaos, compare with a normal run: a check that passes normally but failed here is a
   // place where the site did not recover from a lost request, a delay, a refresh, or a double click.
   const chaosNote = chaos
@@ -420,6 +475,7 @@ export function buildAnalysis(input: {
           ...(step.console_error_count !== undefined ? { console_error_count: step.console_error_count } : {}),
           ...(step.network_errors ? { network_errors: step.network_errors } : {}),
           ...(step.http_status ? { http_status: step.http_status } : {}),
+          ...(step.accessibility ? { accessibility: step.accessibility } : {}),
           timings: { started_at: step.started_at, finished_at: step.finished_at, duration_ms: step.duration_ms },
           selectors: step.selectors ?? (step.selector ? [step.selector] : []),
           assertions: step.assertions ?? (step.assertion ? [step.assertion] : []),
@@ -478,6 +534,10 @@ export function analysisMarkdown(analysis: Analysis): string {
             ? `  Diff: visual ${step.diff.visual}, timing ${step.diff.timing}, text ${step.diff.text}, console ${step.diff.console}, network ${step.diff.network}`
             : '  Diff: none',
         );
+        if (step.accessibility) {
+          const found = step.accessibility.violations.map((violation) => `${violation.rule} ${violation.impact} x${violation.count}`).join(', ');
+          lines.push(`  Accessibility: ${step.accessibility.standard} at ${step.accessibility.url}: ${found || 'no problems'}; ${step.accessibility.needs_review} to review`);
+        }
       }
     }
   }

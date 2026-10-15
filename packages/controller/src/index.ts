@@ -10,6 +10,7 @@ export { acceptBaseline, applyReturnedJob, authEndpointPatterns, baselineDir, cl
 export { credentialStatus, MAX_CODES_PER_GATE, requestCredentials, startCredentialPage, storeOwnerLogin } from './credentials.js';
 export { addAgentNote, authorisationExclusions, readAgentNotes, readSwarm, saveSwarmBoard, swarmSnapshot } from './swarm.js';
 export { engageKill, releaseKill } from './kill.js';
+export { inspectionName, inspectPage } from './inspect.js';
 export { HornetError } from './errors.js';
 export { writeAudit } from './audit.js';
 export type { EnvStatus, ResetResult } from './env.js';

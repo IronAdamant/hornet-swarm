@@ -497,13 +497,7 @@ async function runPhase1(
     return { killed: false, report: { ok: false, status: 'blocked', blocked_reason: 'totp_missing', steps: [], chaosApplied: [] } };
   }
   recordSignin(home, project.id, label);
-  const steps: Journey['steps'] = [
-    { navigate: { url: project.auth.signin_url } },
-    { fill: { selector: project.auth.selectors.username, credential: `${label}.username` } },
-    { fill: { selector: project.auth.selectors.password, credential: `${label}.password` } },
-  ];
-  if (project.auth.totp.enabled) steps.push({ fill: { selector: project.auth.selectors.totp, totp: label } });
-  steps.push({ click: { selector: project.auth.selectors.submit } }, { wait: { for: 'navigation' } }, ...project.auth.success.map((assertion) => ({ assert: assertion })));
+  const steps = signInSteps(project, label);
   const journey: Journey = {
     version: 1,
     id: 'phase1',
@@ -517,6 +511,18 @@ async function runPhase1(
     steps,
   };
   return contained(() => execute(project, label, journey, runId, home, deadline, undefined, codes));
+}
+
+/** The project's own sign-in, as journey steps: the sign-in check runs these, and so does an inspection. */
+export function signInSteps(project: Project, label: string): Journey['steps'] {
+  const steps: Journey['steps'] = [
+    { navigate: { url: project.auth.signin_url } },
+    { fill: { selector: project.auth.selectors.username, credential: `${label}.username` } },
+    { fill: { selector: project.auth.selectors.password, credential: `${label}.password` } },
+  ];
+  if (project.auth.totp.enabled) steps.push({ fill: { selector: project.auth.selectors.totp, totp: label } });
+  steps.push({ click: { selector: project.auth.selectors.submit } }, { wait: { for: 'navigation' } }, ...project.auth.success.map((assertion) => ({ assert: assertion })));
+  return steps;
 }
 
 async function runJourney(
@@ -1348,6 +1354,7 @@ function stripStep(step: RichStep): StepResult {
     ...(step.console_error_count !== undefined ? { console_error_count: step.console_error_count } : {}),
     ...(step.network_errors ? { network_errors: step.network_errors } : {}),
     ...(step.http_status ? { http_status: step.http_status } : {}),
+    ...(step.accessibility ? { accessibility: step.accessibility } : {}),
   };
 }
 

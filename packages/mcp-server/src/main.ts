@@ -12,6 +12,7 @@ import {
   addAgentNote,
   HornetError,
   credentialStatus,
+  inspectPage,
   engageKill,
   envReset,
   leasesHeldByOthers,
@@ -185,6 +186,42 @@ server.registerTool(
           agentId: agent.agentId,
         });
       },
+      agent.agentId,
+    );
+  },
+);
+
+server.registerTool(
+  'inspect_page',
+  {
+    description:
+      'Open one allowed page as a label and get a map of it for writing a journey: headings, links, buttons, and form fields, each with a selector a journey step accepts, plus the visible words and a screenshot path. `checked: true` means the selector matched exactly one element. It signs in first when the label has a stored login (pass sign_in: false to look as a guest), opens the page, and reads it. It clicks and submits nothing on the page. Draft the journey from the map, then call validate_journey and run_journey, and fix it from the failure clues.',
+    inputSchema: z.object({
+      project: z.string(),
+      label: z.string(),
+      url: z.string().min(1).max(2_000),
+      sign_in: z.boolean().optional(),
+      name: z.string().optional(),
+      agent_id: z.string().min(1).optional(),
+    }),
+  },
+  async ({ project, label, url, sign_in, name, agent_id }) => {
+    const agent = useAgent(agent_id);
+    if (!agent.ok) return pack(project, { ok: false, error: agent.error }, agent_id);
+    if (!PROJECT_ID.test(project)) return pack(undefined, { ok: false, error: 'Unknown project.' }, agent.agentId);
+    if (!LABEL.test(label)) return pack(project, { ok: false, error: 'label must look like qa-user-1' }, agent.agentId);
+    return guard(
+      project,
+      () =>
+        inspectPage({
+          project,
+          label,
+          url,
+          ...(sign_in !== undefined ? { signIn: sign_in } : {}),
+          ...(name ? { name } : {}),
+          agentId: agent.agentId,
+          via: 'mcp',
+        }),
       agent.agentId,
     );
   },

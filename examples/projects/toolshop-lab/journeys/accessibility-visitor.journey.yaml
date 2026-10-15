@@ -1,0 +1,23 @@
+version: 1
+id: accessibility-visitor
+name: Pages a visitor sees meet WCAG 2.1 AA
+description: Checks the catalogue, a product, sign-in, sign-up, and contact pages with axe-core. Needs no sign-in.
+users: [qa-user-2]
+requires_phase1: false
+tags: [accessibility]
+steps:
+  - navigate: { url: "/#/" }
+  - wait: { for: selector, selector: "a.card >> nth=0" }
+  - accessibility: { name: catalogue }
+  - navigate: { url: "/#/product/1" }
+  - wait: { for: selector, selector: "[data-test='add-to-cart']" }
+  - accessibility: { name: product-page }
+  - navigate: { url: "/#/auth/login" }
+  - wait: { for: selector, selector: "[data-test='email']" }
+  - accessibility: { name: sign-in }
+  - navigate: { url: "/#/auth/register" }
+  - wait: { for: selector, selector: "[data-test='first-name']" }
+  - accessibility: { name: sign-up }
+  - navigate: { url: "/#/contact" }
+  - wait: { for: selector, selector: "[data-test='first-name']" }
+  - accessibility: { name: contact }

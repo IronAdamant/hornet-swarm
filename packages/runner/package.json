@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@hornet-swarm/core": "workspace:*",
+    "axe-core": "4.10.2",
     "playwright": "1.64.0",
     "zod": "3.25.76"
   }

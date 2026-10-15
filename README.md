@@ -10,8 +10,10 @@ It is for sites you own, or sites someone has authorised you in writing to test.
 - **Quotes the page when something fails.** A failed step names what the customer would have seen ("page said: Sorry, this user has been locked out.", "it reads Serch", "closest text on the page: Reltded products") and saves a screenshot and the page's words.
 - **Tells the site's faults from its own.** A crashed browser, a deleted account, a rate limit, and a stalled API each get their own verdict, so a report never blames the site for the harness.
 - **Measures reliability over time.** `stats` gives pass rates, median and slowest timings, retries, and failing streaks per journey. Failed journeys keep running in later suites until they pass three times in a row.
+- **Checks accessibility inside the journeys.** An `accessibility` step checks the page against WCAG 2.1 AA with axe-core, including pages behind the login that most scanners never reach. Each problem is named in plain words, with how many places it occurs and an example.
 - **Tests recovery with chaos.** Optional delays, lost requests, refreshes, back presses, and double clicks, repeatable by seed, show where a site leaves a customer stuck with no message.
 - **Lets AI agents run the swarm.** Agents see account labels such as `qa-user-3`, never passwords. Each agent plays one account, with its own personality and rules, and leaves notes for the others.
+- **Drafts journeys from a look at the page.** `inspect_page` (or `hornet-swarm inspect`) opens one page as an account and returns its headings, links, buttons, and fields, each with a selector a journey can use. It clicks nothing. An agent drafts the journey from the map, runs it, and fixes it from the failure clues.
 
 ## Built to be safe on someone else's site
 
@@ -29,6 +31,7 @@ Every report below came from real runs. The labs run on one Mac, and the live si
 | [Toolshop lab](docs/sample-report-toolshop-lab.md) | An online shop with planted bugs: an order paid but never confirmed, cash on delivery that cannot be confirmed, swapped profile names, and more, each with the page's own words |
 | [ParaBank lab](docs/sample-report-parabank-lab.md) | An online bank: a profile update that breaks sign-in for passwords with a symbol, and checks that every balance adds up after transfers and bill payments |
 | [Live Toolshop](docs/live-report-toolshop.md) | The same shop on the public internet: an order fault that happens only some of the time, an API stall, Cloudflare's bot check, and a site that wipes its accounts about once an hour |
+| [Accessibility: Toolshop](docs/accessibility-report-toolshop-lab.md) | Nine pages, visitor and signed-in, against WCAG 2.1 AA: unnamed quantity controls, unlabelled search, missing image descriptions, and faint text |
 | [Chaos: Toolshop](docs/chaos-report-toolshop-lab.md), [Chaos: ParaBank](docs/chaos-report-parabank-lab.md) | How each site recovers when requests are lost or slow |
 | [Security: ParaBank](docs/security-report-parabank-lab.md), [Security: live Toolshop](docs/security-report-toolshop-live.md) | Security passes run by a separate swarm, on their own severity scale |
 
@@ -85,7 +88,7 @@ pnpm test:e2e
 
 End-to-end tests need Docker or OrbStack, sops, age, and tesseract. GitHub Actions runs build, lint, unit tests, and a coverage gate on the redactor and policy code on Linux for every push and pull request (`.github/workflows/ci.yml`). That Linux job does not run `pnpm test:e2e`. GitHub-hosted macOS runners do not provide Docker or OrbStack, so the end-to-end command stays manual.
 
-On 14 October 2026, 197 unit tests and 52 end-to-end tests passed on this Mac.
+On 15 October 2026, 207 unit tests and 58 end-to-end tests passed on this Mac.
 
 ## Licence
 

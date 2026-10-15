@@ -76,12 +76,23 @@ users:
       ['request_credentials', { label: 'qa-user-1', reason: 'r' }],
       ['add_agent_note', { label: 'qa-user-1', note: 'n' }],
       ['get_reliability', {}],
+      ['inspect_page', { label: 'qa-user-1', url: '/login' }],
     ];
     for (const [tool, args] of tools) {
       const body = await call(first, tool, { project: '../outside', ...args });
       expect(body.ok, tool).toBe(false);
       expect(body.error, tool).toBe('Unknown project.');
     }
+  }, 30_000);
+
+  it('refuses an inspection for a label that is not a test account, or one with no stored login', async () => {
+    const badLabel = await call(first, 'inspect_page', { project: 'paths', label: 'admin', url: '/login' });
+    expect(badLabel.error).toBe('label must look like qa-user-1');
+    const noLogin = await call(first, 'inspect_page', { project: 'paths', label: 'qa-user-1', url: '/login', sign_in: true });
+    expect(noLogin.ok).toBe(false);
+    expect(noLogin.error).toContain('qa-user-1 has no stored login. Pass sign_in: false');
+    const unknown = await call(first, 'inspect_page', { project: 'paths', label: 'qa-user-9', url: '/login', sign_in: false });
+    expect(unknown.error).toBe('Unknown label qa-user-9.');
   }, 30_000);
 
   it('holds a second agent back while the project already has max_parallel_runners logins in use', async () => {

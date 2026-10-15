@@ -110,6 +110,7 @@ The Toolshop journeys assert what a working shop does, so each planted bug becom
 - `hornet-swarm auth check <id>` checks an authorisation and its signed document.
 - `hornet-swarm stats --project <id>` shows how reliable the site has been over recent runs: pass rate, p50 and p95 timings, retries, and failing streaks, per journey and for sign-in. `--last <n>` picks how many runs. `--json` prints the same for an agent.
 - `hornet-swarm cleanup --days <n>` removes old runs now.
+- `hornet-swarm inspect --project <id> --user <label> --url <path>` maps one page for writing a journey: headings, fields, buttons, and links, each with a selector. `--guest` skips signing in. `--json` prints the whole map, with the page's visible words and a screenshot path.
 
 Ctrl-C, closing the terminal, and `kill <pid>` release the login a CLI run holds. Only `kill -9` leaves it until its 30 minute lease runs out.
 
@@ -130,6 +131,14 @@ Each MCP connection has its own agent id. When a parent runs several sub-agents 
 ### Notes
 
 `add_agent_note` keeps a note for a label, such as something the sub-agent learned about the site. Notes are redacted before they are saved, the last 50 are kept per label, and `get_swarm` shows the latest ten. `get_agent_notes` reads them all. A label another agent holds right now cannot be written to.
+
+### Inspecting a page
+
+`inspect_page` opens one page as a label and returns a map of it: headings, links, buttons, and form fields, each with a selector a journey step accepts, the page's visible words, and a screenshot. `checked: true` means the selector matched exactly one element. A role selector such as `role=button[name="Sign in"]` is unchecked, because only the browser can resolve it. A selector prefers a test id (`data-test`, `data-testid`, `data-cy`, `data-qa`), then a stable id, then a `name` attribute, then the role and accessible name. Generated ids, such as `mat-input-12`, are never offered.
+
+It runs as an ordinary single journey: the authorisation, the allowed sites, the pacing, and the hourly sign-in limit all apply. The journey signs in with the project's own sign-in when the label has a stored login (`sign_in: false` looks as a guest), opens the page, and reads it. It clicks and submits nothing on the page and never reads what a field holds. The journey is kept under `~/.hornet-swarm/projects/<id>/inspections/`, apart from the project's journeys, so a suite never runs it. For a single-page app that routes after a `#`, ask for `/#/checkout`, not `/checkout`.
+
+The loop: inspect a page, draft the journey from the map, `validate_journey`, `run_journey`, and fix it from the failure clues. On Toolshop, the first map of the home page listed the menu's Home link as leading to `/#/contact`, and the journey drafted from it found that fault on its first run.
 
 ### Journeys an agent writes
 
@@ -167,6 +176,8 @@ A page is checked the way a person would see it.
 - `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
 - `select: { selector, label }` (or `value`, or `index` where 0 is the first option, for lists such as account numbers that change per customer) chooses from a dropdown. It focuses the field, chooses, and leaves it, as a person does, because some forms only record a choice from a field that was touched.
 - `assert: { type: field_value, selector, value }` checks what a form field holds, such as a profile's first name. It may not read the password field. A failure names what the field held.
+- `accessibility: { name }` checks the page as it stands against WCAG 2.1 AA with axe-core, which ships inside the runner image and fetches nothing. `standard` picks `wcag2a`, `wcag2aa`, `wcag21aa` (the default), or `wcag22aa`. `exclude` lists selectors to leave out, such as a third-party chat widget the client does not control. The step records problems and passes. With `fail_on: serious` (or `critical`, `moderate`, `minor`) it fails when a problem is at least that serious, so put it last in a journey that should keep going. Each page's findings go to `accessibility-<name>.json` beside the screenshots, with the markup of up to 20 elements per problem, masked like every other file. The summary lists each checked page once, worst problem first, merging the same page across accounts. A run whose journeys passed but whose pages have accessibility problems says so, instead of "nothing needs fixing". Grading follows `docs/severity.md`.
+- `inspect: { name }` saves a map of the page to `inspect-<name>.json` and a screenshot. `inspect_page` uses it, and a journey can too.
 - Templates work in selectors as well as values, such as `tr:has-text('Lab Brand {{run.tag}}')` for a row this run created.
 - Templates: `{{run.id}}` for a fresh made-up email on every run, `{{run.tag}}` for its short last part (for sites that limit username length), `{{run.label}}`, `{{self.vars.first_name}}` for the running label's own values, and `{{date.+30}}` for the date 30 days from today.
 

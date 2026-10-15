@@ -1,9 +1,26 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium, type BrowserContext, type Locator, type Page, type Request } from 'playwright';
 import { browserLaunchOptions } from './launch.js';
-import { Redactor, renderTemplate, resolveSelf, runnerOverload, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
+import {
+  DEFAULT_ACCESSIBILITY_STANDARD,
+  PAGE_MAP_LIMITS,
+  Redactor,
+  accessibilityTags,
+  atLeast,
+  renderTemplate,
+  resolveSelf,
+  runnerOverload,
+  sortViolations,
+  type AccessibilityImpact,
+  type AccessibilityResult,
+  type PageMap,
+  type Step,
+  type StepResult,
+  type TemplateContext,
+} from '@hornet-swarm/core';
 
 export type ChaosAction = { step: number; kind: string; detail: string };
 
@@ -294,6 +311,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
       const selectors: string[] = [];
       const assertions: string[] = [];
       const screenshots: string[] = [];
+      const found: StepFindings = {};
       try {
         const chaosEffect = await applyChaos(
           job.chaosActions.filter((action) => action.step === index),
@@ -307,8 +325,8 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         );
         const navBefore = nav.count;
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
-        if (!('wait' in step) && !('assert' in step) && !('screenshot' in step)) nav.mark = nav.count;
-        const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted, chaosEffect.doubleClick);
+        if (!('wait' in step) && !('assert' in step) && !('screenshot' in step) && !('accessibility' in step) && !('inspect' in step)) nav.mark = nav.count;
+        const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted, chaosEffect.doubleClick, found);
         // Typed-in values stay on the page until it navigates away. Chaos must not refresh them away.
         if ('fill' in step || 'select' in step) formInProgress = true;
         if ('navigate' in step || nav.count !== navBefore) formInProgress = false;
@@ -332,7 +350,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           const code = secrets.get('operator_code') ?? '';
           await fillVisibleCode(page, code);
         }
-        steps.push(finishStep(index, kind, 'pass', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, undefined, outcome.httpStatus));
+        steps.push(finishStep(index, kind, 'pass', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, undefined, outcome.httpStatus, undefined, found.accessibility));
       } catch (error) {
         if (error instanceof AbortJob) {
           status = 'blocked';
@@ -367,6 +385,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
             reason,
             undefined,
             message,
+            found.accessibility,
           ),
         );
         if (reason) break;
@@ -429,6 +448,7 @@ async function runStep(
   nav: NavState,
   isAborted: () => boolean,
   doubleClick = false,
+  found: StepFindings = {},
 ): Promise<{ statusCode: number; httpStatus?: number }> {
   if ('navigate' in step) {
     const url = absolute(renderTemplate(step.navigate.url, template), job.baseUrl);
@@ -572,7 +592,247 @@ async function runStep(
     writeFileSync(join(job.outDir, `${step.screenshot.name}.txt`), redactor.redact(await pageSnapshotText(page)), 'utf8');
     return { statusCode: 0 };
   }
+  if ('accessibility' in step) {
+    const check = step.accessibility;
+    const standard = check.standard ?? DEFAULT_ACCESSIBILITY_STANDARD;
+    const exclude = (check.exclude ?? []).map((selector) => renderTemplate(selector, template));
+    assertions.push(`accessibility ${check.name} (${standard})`);
+    const raw = await checkAccessibility(page, accessibilityTags(standard), exclude);
+    // The full findings, with each element's markup, go beside the screenshots. The markup can
+    // hold what a customer typed, so it is masked like every other saved file.
+    writeFileSync(join(job.outDir, `accessibility-${check.name}.json`), redactor.redact(JSON.stringify({ name: check.name, standard, ...raw }, null, 2)), 'utf8');
+    const result: AccessibilityResult = {
+      name: check.name,
+      url: redactor.redact(raw.url),
+      standard,
+      violations: sortViolations(
+        raw.violations.map((violation) => ({
+          rule: violation.id,
+          impact: violation.impact,
+          help: violation.help,
+          count: violation.count,
+          example: redactor.redact(violation.nodes[0]?.target ?? ''),
+        })),
+      ),
+      needs_review: raw.incomplete,
+    };
+    found.accessibility = result;
+    const failOn = check.fail_on;
+    const serious = failOn ? result.violations.filter((violation) => atLeast(violation.impact, failOn)) : [];
+    if (serious.length > 0) {
+      throw new Error(`accessibility: ${serious.length} ${serious.length === 1 ? 'problem' : 'problems'} at or above ${failOn} (${serious.map((violation) => `${violation.rule}: ${violation.help}`).slice(0, 3).join('; ')})`);
+    }
+    return { statusCode: 0 };
+  }
+  if ('inspect' in step) {
+    const name = step.inspect.name;
+    assertions.push(`inspect ${name}`);
+    await page.waitForLoadState('networkidle', { timeout: 3_000 }).catch(() => undefined);
+    await maskSecrets(page, secrets);
+    const path = join(job.outDir, `inspect-${name}.png`);
+    await page.screenshot({ path, fullPage: true, mask: [page.locator('input[type="password"], [data-hornet-swarm-secret]')] });
+    screenshots.push(path);
+    const map = await inspectPage(page);
+    writeFileSync(join(job.outDir, `inspect-${name}.json`), redactor.redact(JSON.stringify(map, null, 2)), 'utf8');
+    return { statusCode: 0 };
+  }
   return { statusCode: 0 };
+}
+
+/**
+ * A map of the page for drafting a journey. It reads only what a person can see, never a field's
+ * value, so nothing a customer typed is saved. Each selector prefers a test id, then a stable id,
+ * then a name attribute, then the element's role and accessible name.
+ */
+export async function inspectPage(page: Page): Promise<PageMap> {
+  const words = await visibleWords(page);
+  const map = await page.evaluate((limits) => {
+    const visible = (element: Element): boolean => {
+      const box = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const clean = (text: string | null | undefined): string => (text ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const unique = (selector: string): boolean => {
+      try {
+        return document.querySelectorAll(selector).length === 1;
+      } catch {
+        return false;
+      }
+    };
+    const quote = (value: string): string => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const nameOf = (element: Element): string => {
+      const labelled = element.getAttribute('aria-labelledby');
+      if (labelled) {
+        const text = labelled.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+        if (clean(text)) return clean(text);
+      }
+      const aria = element.getAttribute('aria-label');
+      if (clean(aria)) return clean(aria);
+      if (element.id) {
+        const forLabel = document.querySelector(`label[for="${quote(element.id)}"]`);
+        if (forLabel && clean(forLabel.textContent)) return clean(forLabel.textContent);
+      }
+      const wrapping = element.closest('label');
+      if (wrapping && clean(wrapping.textContent)) return clean(wrapping.textContent);
+      const input = element as HTMLInputElement;
+      if (['submit', 'button', 'reset'].includes(input.type) && clean(input.value)) return clean(input.value);
+      const described = clean(element.getAttribute('placeholder')) || clean(element.getAttribute('title')) || clean(element.getAttribute('alt'));
+      if (described) return described;
+      // A field's own text is its options or its value, never its name.
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(element.tagName)) return '';
+      return clean((element as HTMLElement).innerText);
+    };
+    // Generated ids, such as "mat-input-12" or a hash, change between builds, so they are not offered.
+    const stableId = (id: string): boolean => Boolean(id) && !/\d{2,}|^[a-f0-9-]{8,}$|^(ember|react|mui|radix|headlessui|ng-)/i.test(id);
+    const suggest = (element: Element, role: string, name: string): { selector: string; checked: boolean } => {
+      for (const attribute of ['data-test', 'data-testid', 'data-test-id', 'data-cy', 'data-qa']) {
+        const value = element.getAttribute(attribute);
+        if (value) {
+          const selector = `[${attribute}="${quote(value)}"]`;
+          if (unique(selector)) return { selector, checked: true };
+        }
+      }
+      if (stableId(element.id)) {
+        const selector = `#${CSS.escape(element.id)}`;
+        if (unique(selector)) return { selector, checked: true };
+      }
+      const tag = element.tagName.toLowerCase();
+      const named = element.getAttribute('name');
+      if (named) {
+        const selector = `${tag}[name="${quote(named)}"]`;
+        if (unique(selector)) return { selector, checked: true };
+      }
+      if (name) return { selector: `role=${role}[name="${quote(name)}"]`, checked: false };
+      return { selector: tag, checked: unique(tag) };
+    };
+    const all = (selector: string): Element[] => [...document.querySelectorAll(selector)].filter(visible);
+
+    const headings = all('h1, h2, h3').map((element) => clean(element.textContent)).filter(Boolean).slice(0, limits.headings);
+
+    const linkElements = all('a[href]');
+    const seenLinks = new Set<string>();
+    const links: PageMap['links'] = [];
+    for (const element of linkElements) {
+      const anchor = element as HTMLAnchorElement;
+      let href = anchor.getAttribute('href') ?? '';
+      try {
+        const target = new URL(anchor.href);
+        href = target.origin === location.origin ? `${target.pathname}${target.search}${target.hash}` : target.href;
+      } catch {
+        // Keep it as written.
+      }
+      const text = nameOf(element);
+      const key = `${text}|${href}`;
+      if (seenLinks.has(key) || href.startsWith('javascript:')) continue;
+      seenLinks.add(key);
+      links.push({ text, href, ...suggest(element, 'link', text) });
+    }
+
+    const buttonElements = all('button, input[type="submit"], input[type="button"], input[type="reset"], [role="button"]');
+    const buttons = buttonElements.map((element) => {
+      const text = nameOf(element);
+      return { text, ...suggest(element, 'button', text), disabled: (element as HTMLButtonElement).disabled === true || element.getAttribute('aria-disabled') === 'true' };
+    });
+
+    const fieldElements = all('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]), select, textarea');
+    const roleOf = (element: Element): string => {
+      const type = (element as HTMLInputElement).type;
+      if (element.tagName === 'SELECT') return 'combobox';
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      return 'textbox';
+    };
+    const fields = fieldElements.map((element) => {
+      // With no label a person can see, the field's own name says what it is for.
+      const accessible = nameOf(element);
+      const label =
+        accessible ||
+        clean(element.getAttribute('name')) ||
+        clean(element.getAttribute('data-test') ?? element.getAttribute('data-testid')) ||
+        clean(element.id);
+      const kind = element.tagName === 'SELECT' ? 'select' : element.tagName === 'TEXTAREA' ? 'textarea' : (element as HTMLInputElement).type || 'text';
+      const options =
+        element.tagName === 'SELECT'
+          ? [...(element as HTMLSelectElement).options].map((option) => clean(option.textContent)).filter(Boolean).slice(0, limits.options)
+          : undefined;
+      return {
+        kind,
+        label,
+        // A role selector needs the accessible name, so a fallback name is never used for one.
+        ...suggest(element, roleOf(element), accessible),
+        required: (element as HTMLInputElement).required === true || element.getAttribute('aria-required') === 'true',
+        ...(options ? { options } : {}),
+      };
+    });
+
+    return {
+      url: location.href,
+      title: document.title,
+      headings,
+      links: links.slice(0, limits.links),
+      buttons: buttons.slice(0, limits.buttons),
+      fields: fields.slice(0, limits.fields),
+      left_out: {
+        links: Math.max(0, links.length - limits.links),
+        buttons: Math.max(0, buttons.length - limits.buttons),
+        fields: Math.max(0, fields.length - limits.fields),
+      },
+    };
+  }, PAGE_MAP_LIMITS);
+  return { ...map, text: words.slice(0, PAGE_MAP_LIMITS.text) };
+}
+
+/** What a step found besides pass or fail, carried into its result. */
+type StepFindings = { accessibility?: AccessibilityResult };
+
+type AxeFinding = {
+  id: string;
+  impact: AccessibilityImpact;
+  help: string;
+  helpUrl: string;
+  /** Every element with the problem. `nodes` keeps the first 20. */
+  count: number;
+  nodes: { target: string; html: string; summary: string }[];
+};
+
+let axeSource: string | undefined;
+
+/** axe-core from the runner's own files. The page never loads it from the network. */
+function axeScript(): string {
+  axeSource ??= readFileSync(fileURLToPath(import.meta.resolve('axe-core/axe.min.js')), 'utf8');
+  return axeSource;
+}
+
+export async function checkAccessibility(page: Page, tags: string[], exclude: string[]): Promise<{ url: string; violations: AxeFinding[]; incomplete: number }> {
+  await page.waitForLoadState('networkidle', { timeout: 3_000 }).catch(() => undefined);
+  await page.evaluate(axeScript());
+  return page.evaluate(
+    async ({ tags, exclude }) => {
+      type AxeNode = { target: unknown[]; html: string; failureSummary?: string };
+      type AxeRule = { id: string; impact?: string | null; help: string; helpUrl: string; nodes: AxeNode[] };
+      const axe = (globalThis as unknown as { axe: { run: (context: unknown, options: unknown) => Promise<{ violations: AxeRule[]; incomplete: AxeRule[] }> } }).axe;
+      const context = exclude.length > 0 ? { exclude: exclude.map((selector) => [selector]) } : document;
+      const results = await axe.run(context, { runOnly: { type: 'tag', values: tags }, resultTypes: ['violations', 'incomplete'] });
+      return {
+        url: location.href,
+        incomplete: results.incomplete.length,
+        violations: results.violations.map((rule) => ({
+          id: rule.id,
+          impact: (rule.impact ?? 'minor') as AccessibilityImpact,
+          help: rule.help,
+          helpUrl: rule.helpUrl,
+          count: rule.nodes.length,
+          nodes: rule.nodes.slice(0, 20).map((node) => ({
+            target: node.target.map(String).join(' '),
+            html: node.html.slice(0, 300),
+            summary: (node.failureSummary ?? '').slice(0, 500),
+          })),
+        })),
+      };
+    },
+    { tags, exclude },
+  );
 }
 
 function finishStep(
@@ -589,6 +849,7 @@ function finishStep(
   blocked?: JobReport['blocked_reason'],
   httpStatus?: number,
   error?: string,
+  accessibility?: AccessibilityResult,
 ): JobReport['steps'][number] {
   const finished = Date.now();
   return {
@@ -606,6 +867,7 @@ function finishStep(
     console_error_count: consoleLogs.length,
     ...(network.length > 0 ? { network_errors: network.map((entry) => ({ ...entry, url: redactor.redact(entry.url) })) } : {}),
     ...(httpStatus ? { http_status: httpStatus } : {}),
+    ...(accessibility ? { accessibility } : {}),
     console_logs: consoleLogs.map((line) => redactor.redact(line)),
     selectors: selectors.map((selector) => redactor.redact(selector)),
     assertions: assertions.map((assertion) => redactor.redact(assertion)),

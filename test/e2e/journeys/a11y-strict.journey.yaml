@@ -1,0 +1,11 @@
+version: 1
+id: a11y-strict
+name: Accessibility must have no critical problems
+users: [qa-user-1]
+requires_phase1: false
+tags: [accessibility]
+vars: {}
+retries: 0
+steps:
+  - navigate: { url: "/a11y" }
+  - accessibility: { name: planted-strict, fail_on: critical, exclude: ["#silent"] }

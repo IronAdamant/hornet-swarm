@@ -37,6 +37,7 @@ The shared scale in `docs/severity.md`:
 | F-08 | The cart shows a line total of $00.00 | Medium | Cart | Every cart run |
 | F-05 | The search button says "Serch" | Low | Home page | Every run |
 | F-06 | The product page heading says "Reltded products" | Low | Product page | Every run |
+| F-09 | The menu's Home link opens the Contact page | Low | Top menu, every page | Every run |
 | F-07 | Other text, label, and display faults | Low | Several pages | Every run |
 
 ### F-01 An order is paid but never confirmed
@@ -90,6 +91,15 @@ Only the sign-in case has been reproduced by hand. The others come from chaos ru
 
 - The search button reads "Serch". The step error quotes it: `it reads "Serch"`.
 - The product page heading reads "Reltded products". The step error quotes it: `closest text on the page: "Reltded products"`.
+
+### F-09 The menu's Home link opens the Contact page
+
+- **Steps:** open the catalogue, filter to hammers, press Home in the top menu.
+- **Expected:** the catalogue, with its sort control.
+- **Actual:** the contact form. The link's address is `/#/contact`.
+- **Evidence:** run `run_20261015-180940_a45183` (journey `browse`), step 7 failed with `nothing on the page matches [data-test='sort']`, and `failed-step-7.txt` shows the contact form's fields. The filter steps before it passed.
+- **How it was found:** no journey covered the menu. An `inspect_page` map of the home page listed the link as `"Home" -> /#/contact`, and the journey drafted from that map caught it on its first run.
+- **Impact:** a customer who wants the catalogue lands on a form instead. The logo and Categories still lead back, so nobody is stuck.
 
 ### F-07 Other text, label, and display faults
 

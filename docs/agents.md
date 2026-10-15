@@ -70,11 +70,12 @@ steps:
 - A label with no stored login whose journeys all have `requires_phase1: false` runs as a guest. The summary names it as a guest, not a failed sign-in.
 - `self.username` and `self.password` mean the label running the journey. One journey can serve every label.
 - Each journey runs in a fresh browser, so it signs in itself.
-- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label`, `value`, or `index`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`.
+- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label`, `value`, or `index`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`, `accessibility` (checks the page against WCAG 2.1 AA and records problems; `fail_on: serious` makes it fail), and `inspect` (saves a map of the page).
 - Assertions: `url_contains`, `text_visible`, `selector_visible`, `selector_absent`, `http_status`, `access_denied`, and `field_value` (with a `selector`, for what a form field holds). `url_contains`, `text_visible`, `selector_visible`, and `field_value` wait up to 10 seconds.
 - Templates: `{{run.id}}` (a fresh made-up email per run, such as `nova.{{run.id}}@example.com`), `{{run.tag}}` (its short last part, for a username length limit), `{{run.label}}`, `{{self.vars.city}}` (the running label's own value from the project), and `{{date.+30}}`.
 - Assert what a working site does. A planted or real bug then shows up as a failed step with the page's own words.
 - A selector is CSS, or `role=button[name='Sign in']` for an accessible name.
+- To write a journey for a page you have not seen, call `inspect_page` first. It returns the page's headings, links, buttons, and fields, each with a selector to use, and the visible words. Prefer selectors marked `checked: true`. Draft from the map, validate, run, and fix from the failure clues. It clicks nothing, so inspect each page the journey will reach. For a site that routes after a `#`, ask for `/#/page`.
 - `validate_journey` checks a journey without running it. A journey that navigates off the allowed site, fills a passive third party, or contains a literal password is refused. A navigate URL is checked after its `{{vars}}` are filled in, and `//host/` counts as a site.
 - Name journeys by id, such as `signin-dashboard`. A file path is refused.
 - A journey with an `access_denied` assertion, an expected 401 or 403, or the tag `access-control` is an access check. It runs only when the authorisation lists `access_control_checks`. A public practice site never lists that activity. `lab-owner` lists it for the local labs. ParaBank's `admin-page-readonly` journey uses the tag and must not press Initialize, Clean, or JMS.

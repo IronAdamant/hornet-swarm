@@ -2,7 +2,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { HornetError, acceptBaseline, assertAuthorisationUsable, documentPath, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, measureResources, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
+import { HornetError, acceptBaseline, assertAuthorisationUsable, documentPath, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, inspectPage, measureResources, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
 import { Command } from 'commander';
 
 const program = new Command();
@@ -153,6 +153,41 @@ program
   .option('--json', 'print machine-readable JSON')
   .action(async (file: string, opts: SuiteFlags) => {
     await runCommand(opts, { journeyFiles: [file], includeRegressions: false, ...(opts.user ? { users: opts.user } : {}) });
+  });
+
+program
+  .command('inspect')
+  .description('Map one page for writing a journey: headings, links, buttons, and fields, each with a selector')
+  .requiredOption('--project <id>', 'project id')
+  .requiredOption('--user <label>', 'the label to look as')
+  .requiredOption('--url <path>', 'a path such as /checkout, or a full address the project allows')
+  .option('--guest', 'do not sign in first')
+  .option('--name <name>', 'name for the saved map')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (opts: { project: string; user: string; url: string; guest?: boolean; name?: string; json?: boolean }) => {
+    try {
+      const outcome = await inspectPage({
+        project: opts.project,
+        label: opts.user,
+        url: opts.url,
+        ...(opts.guest ? { signIn: false } : {}),
+        ...(opts.name ? { name: opts.name } : {}),
+        agentId: `cli-${process.pid}`,
+      });
+      if (opts.json) writeJson(outcome);
+      else if (outcome.ok && outcome.page) {
+        const page = outcome.page;
+        process.stdout.write(`${page.title} (${page.url})\n`);
+        for (const heading of page.headings) process.stdout.write(`  # ${heading}\n`);
+        for (const field of page.fields) process.stdout.write(`  field ${field.kind} "${field.label}": ${field.selector}${field.checked ? '' : ' (unchecked)'}\n`);
+        for (const button of page.buttons) process.stdout.write(`  button "${button.text}": ${button.selector}${button.disabled ? ' (disabled)' : ''}\n`);
+        for (const link of page.links) process.stdout.write(`  link "${link.text}" -> ${link.href}\n`);
+        if (outcome.screenshot) process.stdout.write(`Screenshot: ${outcome.screenshot}\n`);
+      } else process.stdout.write(`The page was not read: ${outcome.error}\n${outcome.summary}\n`);
+      if (!outcome.ok) process.exitCode = 1;
+    } catch (error) {
+      fail(opts.json, messageOf(error), error instanceof HornetError ? error.exitCode : 4);
+    }
   });
 
 program

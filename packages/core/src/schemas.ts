@@ -260,6 +260,36 @@ const screenshotStep = z
   })
   .strict();
 
+/**
+ * Checks the page as it stands against a WCAG standard with axe-core, which runs inside the
+ * runner and fetches nothing. Problems are recorded and reported. The step fails only when
+ * `fail_on` is set and a problem is at least that serious.
+ */
+const accessibilityStep = z
+  .object({
+    accessibility: z
+      .object({
+        name: z.string().regex(/^[a-z0-9-]+$/, 'use lower-case letters, digits, and hyphens'),
+        standard: z.enum(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).optional(),
+        fail_on: z.enum(['critical', 'serious', 'moderate', 'minor']).optional(),
+        /** Parts of the page to leave out, such as a third-party widget the client does not control. */
+        exclude: z.array(z.string()).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
+ * Reads the page and saves a map of it: headings, links, buttons, and form fields, each with a
+ * selector a journey can use, and the visible words. It clicks and types nothing. An agent drafts
+ * a journey from the map.
+ */
+const inspectStep = z
+  .object({
+    inspect: z.object({ name: z.string().regex(/^[a-z0-9-]+$/, 'use lower-case letters, digits, and hyphens') }).strict(),
+  })
+  .strict();
+
 export const stepSchema = z.union([
   navigateStep,
   clickStep,
@@ -269,6 +299,8 @@ export const stepSchema = z.union([
   assertStep,
   uploadStep,
   screenshotStep,
+  accessibilityStep,
+  inspectStep,
 ]);
 
 export type Step = z.infer<typeof stepSchema>;
@@ -327,6 +359,24 @@ export const stepResultSchema = z
       )
       .optional(),
     http_status: z.number().int().optional(),
+    accessibility: z
+      .object({
+        name: z.string(),
+        url: z.string(),
+        standard: z.string(),
+        violations: z.array(
+          z.object({
+            rule: z.string(),
+            impact: z.enum(['critical', 'serious', 'moderate', 'minor']),
+            help: z.string(),
+            count: z.number().int().nonnegative(),
+            example: z.string(),
+          }),
+        ),
+        /** Checks axe could not decide alone, such as contrast over an image. A person should look. */
+        needs_review: z.number().int().nonnegative(),
+      })
+      .optional(),
   })
   .strict();
 

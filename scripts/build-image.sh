@@ -5,7 +5,7 @@ pnpm --filter @hornet-swarm/core build
 mkdir -p images/runner/build
 pnpm exec esbuild packages/runner/src/main.ts \
   --bundle --platform=node --format=esm \
-  --external:playwright --external:playwright-core \
+  --external:playwright --external:playwright-core --external:axe-core \
   --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" \
   --outfile=images/runner/build/main.js
 docker build -f images/runner/Dockerfile -t hornet-swarm-runner:local .

@@ -36,6 +36,8 @@ Rehearse each new kind of site on the local labs first (`node scripts/setup-lab.
 
 - `suite` for the journeys. Run it several times across the agreed window, not once, so `stats` can give pass rates, p50 and p95 timings, retries, and failing streaks.
 - `suite --chaos default --seed <name>`, only if resilience testing is in `activities`. Run the same journeys without chaos too, and compare.
+- An `accessibility` step on each key page, if the client wants accessibility in scope. It needs no extra activity, because it only reads the page. Agree the standard first: WCAG 2.1 AA unless they name another. Say in the report that automated checks catch only some problems, and offer a keyboard and screen-reader pass for a full audit. `docs/accessibility-report-toolshop-lab.md` is the form.
+- For pages no journey covers yet, `pnpm hornet-swarm inspect --project <id> --user <label> --url <path>` maps the page, and the journey is drafted from the map.
 - Watch the first run. If the site answers 429 or 503, or anything looks wrong on their side, stop with `pnpm hornet-swarm kill --project <id>` and tell your contact.
 - Check every failure's screenshot before you call it a bug. Toolshop's planted bugs are good practice for this.
 

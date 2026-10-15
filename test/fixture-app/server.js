@@ -153,6 +153,18 @@ export function createFixture() {
     else res.type('html').send(page('Flag', '<p id="ready">ready</p>'));
   });
 
+  // Planted accessibility faults: an image with no description, a field with no label, a button
+  // with no name, and text too faint to read.
+  app.get('/a11y', (_req, res) => {
+    res.type('html').send(page('Accessibility', `
+      <main>
+        <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="40">
+        <input id="nameless">
+        <button id="silent"></button>
+        <p class="faint" style="color:#222;background:#111">Faint words</p>
+      </main>`));
+  });
+
   app.get('/flaky', (_req, res) => {
     if (state.flakyLeft > 0) {
       state.flakyLeft -= 1;
