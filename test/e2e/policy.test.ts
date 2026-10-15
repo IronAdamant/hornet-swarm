@@ -145,11 +145,14 @@ steps:
     const captcha = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'captcha.journey.yaml')]);
     expect(captcha.status).toBe(2);
     expect(JSON.stringify(readRun().result)).toContain('captcha');
-    const limits = readFileSync(projectFile, 'utf8');
-    writeFileSync(projectFile, limits.replace('max_run_duration_min: 30', 'max_run_duration_min: 0.2'));
+    // The run cap stays at 30 minutes. A 12 second cap expired while a runner was still queued and
+    // the result was duration instead of a second code. The owner is only asked for 2 seconds, so
+    // the suite returns as soon as the page is seen.
+    const original = readFileSync(projectFile, 'utf8');
+    writeFileSync(projectFile, withOperatorWait(original, 2));
     try {
       const otp = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
-      expect(otp.status).toBe(2);
+      expect(otp.status, otp.stdout + otp.stderr).toBe(2);
       expect(JSON.stringify(readRun().result)).toContain('2fa');
       const smsBefore = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { smsPosts: number };
       const sms = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'sms.journey.yaml')]);
@@ -157,14 +160,10 @@ steps:
       expect(JSON.stringify(readRun().result)).toContain('2fa');
       const smsAfter = (await fetch('http://127.0.0.1:4173/__admin/stats').then((response) => response.json())) as { smsPosts: number };
       expect(smsAfter.smsPosts).toBe(smsBefore.smsPosts);
-    } finally {
-      writeFileSync(projectFile, limits);
-    }
 
-    const original = readFileSync(projectFile, 'utf8');
-    setSecret('fixture', 'qa-user-1', 'totp_secret', 'JBSWY3DPEHPK3PXP', home);
-    writeFileSync(projectFile, original.replace('enabled: false', 'enabled: true').replace('signin_url: /login', 'signin_url: /login?totp=1'));
-    try {
+      setSecret('fixture', 'qa-user-1', 'totp_secret', 'JBSWY3DPEHPK3PXP', home);
+      const totpProject = original.replace('enabled: false', 'enabled: true').replace('signin_url: /login', 'signin_url: /login?totp=1');
+      writeFileSync(projectFile, withOperatorWait(totpProject, 2));
       await resetFixture({ user1: { totp: 'JBSWY3DPEHPK3PXP' } });
       const totp = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'totp.journey.yaml')]);
       expect(totp.status, totp.stdout + totp.stderr).toBe(0);
@@ -176,7 +175,6 @@ steps:
       const now = Date.now();
       const codes = [totpCode('JBSWY3DPEHPK3PXP', now), totpCode('JBSWY3DPEHPK3PXP', now - 30_000), totpCode('JBSWY3DPEHPK3PXP', now + 30_000)];
       if (codes.some((code) => har.includes(code))) throw new Error('The one-time code was still present');
-      writeFileSync(projectFile, readFileSync(projectFile, 'utf8').replace('max_run_duration_min: 30', 'max_run_duration_min: 0.2'));
       const prompted = hornet(['suite', '--project', 'fixture', '--json', '--journey', join(journeys, 'otp.journey.yaml')]);
       expect(prompted.status).toBe(2);
       expect(JSON.stringify(readRun().result)).toContain('2fa');
@@ -203,6 +201,12 @@ steps:
     }
   });
 });
+
+/** The default owner wait is 10 minutes. These checks only need the page to be classed as a second code. */
+function withOperatorWait(yaml: string, seconds: number): string {
+  if (/operator_code_wait_sec:/.test(yaml)) return yaml.replace(/operator_code_wait_sec:\s*\d+/, `operator_code_wait_sec: ${seconds}`);
+  return yaml.replace(/^auth:\n/m, `auth:\n  operator_code_wait_sec: ${seconds}\n`);
+}
 
 function writeMiniProject(id: string, base: string, domains: string[], environments: string[], environment = 'test'): void {
   mkdirSync(join(home, 'authorisations'), { recursive: true });

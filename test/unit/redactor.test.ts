@@ -118,19 +118,40 @@ describe('redactor', () => {
     const raw = `{"fullName":"Nia Peel","cardNum":${number},"expYear":"2080"}`;
     expect(redactor.contains(raw)).toBe(true);
     const cleaned = redactor.redact(raw);
-    expect(cleaned).toBe('{"fullName":"Nia Peel","cardNum":[REDACTED:field],"expYear":"2080"}');
+    expect(cleaned).toBe('{"fullName":"Nia Peel","cardNum":"[REDACTED:field]","expYear":"2080"}');
+    expect(JSON.parse(cleaned).cardNum).toBe('[REDACTED:field]');
     expect(cleaned).not.toContain(number);
     expect(redactor.contains(cleaned)).toBe(false);
+    expect(redactor.redact(cleaned)).toBe(cleaned);
     const quoted = `{"cardNumber":"${number}"}`;
     expect(redactor.redact(quoted)).toBe('{"cardNumber":"[REDACTED:field]"}');
     const escaped = `{\\"cardNum\\":${number}}`;
-    expect(redactor.redact(escaped)).toBe('{\\"cardNum\\":[REDACTED:field]}');
+    expect(redactor.redact(escaped)).toBe('{\\"cardNum\\":\\"[REDACTED:field]\\"}');
+    const broken = '{"cardNum":[REDACTED:field],"expYear":"2080"}';
+    expect(redactor.contains(broken)).toBe(false);
+    expect(redactor.redact(broken)).toBe('{"cardNum":"[REDACTED:field]","expYear":"2080"}');
+    expect(redactor.redact('{\\"cardNum\\":[REDACTED:field]}')).toBe('{\\"cardNum\\":\\"[REDACTED:field]\\"}');
     expect(redactor.redact('{"expYear":2080,"price":1.99}')).toContain('2080');
     expect(redactor.contains('************0002')).toBe(false);
     const field = `- Card Number: ${number}`;
     expect(redactor.contains(field)).toBe(true);
     expect(redactor.redact(field)).toBe('- Card Number: [REDACTED:field]');
     expect(redactor.redact('Card ending in 1111')).toContain('1111');
+    const trace = [
+      '{"method":"fill","params":{"selector":"internal:role=spinbutton[name=\\"Card Number\\"s]","value":"4000000000000002"}}',
+      '{"message":"  fill(\\"4000000000000002\\")"}',
+      '{"__playwright_value_":"4000000000000002","type":"number"}',
+      '{"__playwright_value_":"2080","type":"number"}',
+    ].join('\n');
+    expect(redactor.contains(trace)).toBe(true);
+    const traced = redactor.redact(trace);
+    expect(traced).not.toContain(number);
+    expect(redactor.contains(traced)).toBe(false);
+    expect(traced).toContain('"value":"[REDACTED:field]"');
+    expect(traced).toContain('fill(\\"[REDACTED:field]\\")');
+    expect(traced).toContain('"__playwright_value_":"[REDACTED:field]"');
+    expect(traced).toContain('"__playwright_value_":"2080"');
+    expect(traced).toContain('Card Number');
   });
 
   it('masks a password query that a hash cut down to a prefix', () => {

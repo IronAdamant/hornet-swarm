@@ -213,16 +213,31 @@ function maskSessionMaterial(input: string): string {
 }
 
 function sessionMaterialIsRaw(input: string): boolean {
-  return credentialJsonIsRaw(input) || cardNumberIsRaw(input) || jwtIsRaw(input) || challengeTokenIsRaw(input) || challengeCookieIsRaw(input);
+  return credentialJsonIsRaw(input) || cardNumberIsRaw(input) || traceCardIsRaw(input) || jwtIsRaw(input) || challengeTokenIsRaw(input) || challengeCookieIsRaw(input);
 }
 
 function maskCardNumbers(input: string): string {
-  return maskCardFieldLines(maskCardSpelling(maskCardSpelling(input, false), true));
+  return maskTraceCardValues(quoteBrokenCardJson(maskCardFieldLines(maskCardSpelling(maskCardSpelling(input, false), true))));
 }
 
 /** The page-text dump writes `Card Number:` and then the digits. That line is not a JSON field. */
 function maskCardFieldLines(input: string): string {
   return input.replace(/(Card Number:\s*)(\d{12,19})\b/gi, '$1[REDACTED:field]');
+}
+
+/** A bare JSON number has no quotes of its own, so the token has to bring them or the object will not parse. */
+function quotedCardToken(escaped: boolean): string {
+  return escaped ? '\\"[REDACTED:field]\\"' : '"[REDACTED:field]"';
+}
+
+/**
+ * The first card mask wrote `cardNum:[REDACTED:field]` with no quotes. The digits are already gone,
+ * so a secret scan leaves the file alone. Packing a run quotes that token.
+ */
+export function quoteBrokenCardJson(input: string): string {
+  const plain = new RegExp(`("(?:${CARD_JSON_KEY})"\\s*:\\s*)\\[REDACTED:field\\]`, 'gi');
+  const escaped = new RegExp(`(\\\\"(?:${CARD_JSON_KEY})\\\\"\\s*:\\s*)\\[REDACTED:field\\]`, 'gi');
+  return input.replace(plain, `$1${quotedCardToken(false)}`).replace(escaped, `$1${quotedCardToken(true)}`);
 }
 
 function maskCardSpelling(input: string, escaped: boolean): string {
@@ -232,7 +247,7 @@ function maskCardSpelling(input: string, escaped: boolean): string {
   const bare = escaped
     ? new RegExp(`(\\\\"(?:${CARD_JSON_KEY})\\\\"\\s*:\\s*)(\\d{12,19})\\b`, 'gi')
     : new RegExp(`("(?:${CARD_JSON_KEY})"\\s*:\\s*)(\\d{12,19})\\b`, 'gi');
-  return input.replace(quoted, '$1[REDACTED:field]$3').replace(bare, '$1[REDACTED:field]');
+  return input.replace(quoted, '$1[REDACTED:field]$3').replace(bare, `$1${quotedCardToken(escaped)}`);
 }
 
 function cardNumberIsRaw(input: string): boolean {
@@ -240,6 +255,22 @@ function cardNumberIsRaw(input: string): boolean {
   const escaped = new RegExp(`\\\\"(?:${CARD_JSON_KEY})\\\\"\\s*:\\s*(?:\\\\")?(\\d{12,19})`, 'gi');
   const field = /Card Number:\s*\d{12,19}\b/i;
   return raw.test(input) || escaped.test(input) || field.test(input);
+}
+
+/** Playwright writes the typed card into the fill call, its log line, and the snapshot of the input. */
+function maskTraceCardValues(input: string): string {
+  return input
+    .replace(/(__playwright_value_"\s*:\s*")(\d{12,19})(")/g, '$1[REDACTED:field]$3')
+    .replace(/(fill\(\\")(\d{12,19})(\\"\))/g, '$1[REDACTED:field]$3')
+    .replace(/(fill\(")(\d{12,19})("\))/g, '$1[REDACTED:field]$3')
+    .replace(/("value"\s*:\s*")(\d{12,19})(")/g, '$1[REDACTED:field]$3');
+}
+
+function traceCardIsRaw(input: string): boolean {
+  return /__playwright_value_"\s*:\s*"\d{12,19}"/.test(input)
+    || /fill\(\\"\d{12,19}\\"\)/.test(input)
+    || /fill\("\d{12,19}"\)/.test(input)
+    || /"value"\s*:\s*"\d{12,19}"/.test(input);
 }
 
 function maskCredentialJson(input: string): string {

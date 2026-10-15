@@ -7,7 +7,7 @@ import { mkdirSync } from 'node:fs';
 import JSZip from 'jszip';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import { matchGlob, Redactor, SESSION_HEADER_NAMES } from '@hornet-swarm/core';
+import { matchGlob, quoteBrokenCardJson, Redactor, SESSION_HEADER_NAMES } from '@hornet-swarm/core';
 
 const PLACEHOLDER_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -119,8 +119,13 @@ function redactText(file: string, redactor: Redactor): void {
   const raw = readFileSync(file);
   const text = raw.toString('utf8');
   const latin = raw.toString('latin1');
-  if (!redactor.contains(text) && !redactor.contains(latin)) return;
-  writeFileSync(file, redactor.redact(text));
+  if (redactor.contains(text) || redactor.contains(latin)) {
+    writeFileSync(file, redactor.redact(text));
+    return;
+  }
+  // A card token saved with no quotes is not a secret any more. Quoting it keeps the HAR parseable.
+  const repaired = quoteBrokenCardJson(text);
+  if (repaired !== text) writeFileSync(file, repaired);
 }
 
 function redactPng(file: string, redactor: Redactor): void {
@@ -173,8 +178,9 @@ async function redactLoadedZip(zip: JSZip, redactor: Redactor): Promise<boolean>
     }
     const text = strictUtf8(bytes);
     if (text !== undefined) {
-      if (!redactor.contains(text)) continue;
-      zip.file(name, redactor.redact(text));
+      const next = redactor.contains(text) ? redactor.redact(text) : quoteBrokenCardJson(text);
+      if (next === text) continue;
+      zip.file(name, next);
       changed = true;
       continue;
     }
