@@ -1,0 +1,51 @@
+# Installed to ~/.hornet-swarm/projects/juice-shop-lab/ by: node scripts/setup-lab.mjs
+# OWASP Juice Shop v20.3.0 on this Mac only. Customer journeys. The scoreboard, the challenge
+# pages, and the customer feedback form (it asks for a captcha) are out of scope.
+id: juice-shop-lab
+name: Juice Shop lab (local)
+authorisation_id: lab-owner
+environment: test
+targets:
+  base_url: http://127.0.0.1:3010
+  allowed_origins:
+    - http://127.0.0.1:3010
+    - http://host.docker.internal:3010
+  allowed_third_party: []
+auth:
+  signin_url: "/#/login"
+  # The welcome banner covers the login button until it is closed. The cookie notice sits over
+  # the bottom of the page. A fresh browser shows both, so the sign-in check closes them first.
+  prepare:
+    - "button[aria-label='Close Welcome Banner']"
+    # The cookie notice is a link that the page exposes as a button.
+    - "role=button[name='dismiss cookie message']"
+  selectors:
+    username: "#email"
+    password: "#password"
+    submit: "#loginButton"
+  success:
+    # A failed login stays on /#/login. A customer who got in lands on the product search.
+    - { type: url_contains, value: "/#/search" }
+  auth_endpoints: ["**/rest/user/login", "**/api/Users/", "**/api/Users"]
+runners:
+  count: 5
+  memory: 1g
+  cpus: 1
+limits:
+  # Two browsers at a time. Five at once left other labs on this Mac waiting on the login page.
+  max_parallel_runners: 2
+  max_requests_per_second_per_runner: 10
+  request_burst_per_runner: 80
+  max_requests_per_second_total: 40
+  min_step_delay_ms: 100
+  max_run_duration_min: 30
+  max_signin_attempts_per_user_per_hour: 30
+phase2:
+  gate: per_user
+journeys_dir: ./journeys
+users:
+  - { label: qa-user-1, role: customer, tenant: juice-shop, vars: { first_name: Nia, last_name: Peel } }
+  - { label: qa-user-2, role: customer, tenant: juice-shop, vars: { first_name: Cole, last_name: Bramble } }
+  - { label: qa-user-3, role: customer, tenant: juice-shop, vars: { first_name: Fern, last_name: Harlow } }
+  - { label: qa-user-4, role: customer, tenant: juice-shop, vars: { first_name: Jules, last_name: Hart } }
+  - { label: qa-user-5, role: customer, tenant: juice-shop, vars: { first_name: Sam, last_name: Wicker } }

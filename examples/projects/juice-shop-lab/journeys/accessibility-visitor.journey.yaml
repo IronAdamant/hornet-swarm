@@ -1,0 +1,22 @@
+version: 1
+id: accessibility-visitor
+name: Pages a visitor sees meet WCAG 2.1 AA
+description: Checks the shop front, a product dialog, sign-in, and sign-up. The customer feedback form asks for a captcha, so it is left out. The welcome banner and cookie notice are closed before the page checks, because they cover a first visit.
+users: [qa-user-2]
+requires_phase1: false
+tags: [accessibility]
+steps:
+  - navigate: { url: "/#/search" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - wait: { for: selector, selector: "app-product >> nth=0" }
+  - accessibility: { name: catalogue }
+  - click: { selector: "app-product:has-text('Apple Juice \\(1000ml\\) 1.99') [aria-label='Click for more information about the product']" }
+  - wait: { for: selector, selector: "role=button[name='Close Dialog']" }
+  - accessibility: { name: product }
+  - navigate: { url: "/#/login" }
+  - wait: { for: selector, selector: "#email" }
+  - accessibility: { name: sign-in }
+  - navigate: { url: "/#/register" }
+  - wait: { for: selector, selector: "#emailControl" }
+  - accessibility: { name: sign-up }

@@ -1,0 +1,25 @@
+version: 1
+id: profile
+name: The customer sets a username on the profile
+description: The profile is a normal account page at /profile. The username is a made-up name for this run.
+users: [qa-user-5]
+tags: [account, profile]
+steps:
+  - navigate: { url: "/#/login" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - fill: { selector: "#email", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#loginButton" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/#/search" }
+  - navigate: { url: "/profile" }
+  - wait: { for: selector, selector: "#username" }
+  - assert: { type: text_visible, value: "User Profile" }
+  - assert: { type: text_visible, value: "Set Username" }
+  - fill: { selector: "#username", value: "sam{{run.tag}}" }
+  - click: { selector: "#submit" }
+  - wait: { for: navigation }
+  - assert: { type: text_visible, value: "User Profile" }
+  - assert: { type: field_value, selector: "#username", value: "sam{{run.tag}}" }
+  - screenshot: { name: "username-set" }

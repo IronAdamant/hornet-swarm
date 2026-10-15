@@ -74,7 +74,8 @@ steps:
 - Assertions: `url_contains`, `text_visible`, `selector_visible`, `selector_absent`, `http_status`, `access_denied`, and `field_value` (with a `selector`, for what a form field holds). `url_contains`, `text_visible`, `selector_visible`, and `field_value` wait up to 10 seconds.
 - Templates: `{{run.id}}` (a fresh made-up email per run, such as `nova.{{run.id}}@example.com`), `{{run.tag}}` (its short last part, for a username length limit), `{{run.label}}`, `{{self.vars.city}}` (the running label's own value from the project), and `{{date.+30}}`.
 - Assert what a working site does. A planted or real bug then shows up as a failed step with the page's own words.
-- A selector is CSS, or `role=button[name='Sign in']` for an accessible name.
+- A selector is CSS, or `role=button[name='Sign in']` for an accessible name. The name is in single quotes. A role selector with double quotes is not read as a role.
+- `auth.prepare` is a list of clicks after the sign-in page opens and before the login is typed. Juice Shop's sign-in uses it to close the welcome banner and the cookie notice, because the banner covers the login button. Each journey still closes those itself, in a fresh browser.
 - To write a journey for a page you have not seen, call `inspect_page` first. It returns the page's headings, links, buttons, and fields, each with a selector to use, and the visible words. Prefer selectors marked `checked: true`. Draft from the map, validate, run, and fix from the failure clues. It clicks nothing, so inspect each page the journey will reach. For a site that routes after a `#`, ask for `/#/page`.
 - `validate_journey` checks a journey without running it. A journey that navigates off the allowed site, fills a passive third party, or contains a literal password is refused. A navigate URL is checked after its `{{vars}}` are filled in, and `//host/` counts as a site.
 - Name journeys by id, such as `signin-dashboard`. A file path is refused.
@@ -93,7 +94,7 @@ The Internet and Sauce Demo are public sites built for test-automation practice.
 
 ## Local labs
 
-`node scripts/setup-lab.mjs` starts Toolshop (`toolshop-lab`), Restful Booker (`booker-lab`), and ParaBank (`parabank-lab`) in Docker on this Mac. An `owner` authorisation covers them, so chaos is allowed and nothing touches a live service. Use made-up details only: `example.com` addresses, Testville, and test bank numbers.
+`node scripts/setup-lab.mjs` starts Toolshop (`toolshop-lab`), Restful Booker (`booker-lab`), ParaBank (`parabank-lab`), and OWASP Juice Shop (`juice-shop-lab`) in Docker on this Mac. An `owner` authorisation covers them, so chaos is allowed and nothing touches a live service. Use made-up details only: `example.com` addresses, Testville, and test bank numbers. Juice Shop's scoreboard and challenge pages are out of scope, and its customer feedback form asks for a captcha, so that page is left out.
 
 - Toolshop is the edition with deliberate bugs. A failed journey there is usually a real finding, not a broken test. Check the screenshot, then say which bug it is.
 - Agents run chaos themselves: pass `chaos: { profile: "default", seed: "bank-2" }` to `run_suite` or `run_journey`. Profiles: `default`, `latency`, `drop`, `offline`, `double-click`, `history`, `slow-api`. The authorisation must list `chaos`; a public practice site never allows it. The same seed repeats the same pattern.

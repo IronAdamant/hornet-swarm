@@ -1,0 +1,16 @@
+version: 1
+id: search
+name: Search finds a product
+description: Opens the search the shop's own box produces. The box only submits when Enter is pressed, and a journey has no key step.
+users: [qa-user-2]
+requires_phase1: false
+tags: [shopping, search]
+steps:
+  - navigate: { url: "/#/search?q=Apple" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - wait: { for: selector, selector: "app-product >> nth=0" }
+  - assert: { type: text_visible, value: "Search Results" }
+  - assert: { type: text_visible, value: "Apple Juice (1000ml)" }
+  - assert: { type: text_visible, value: "1.99" }
+  - screenshot: { name: "search-apple" }

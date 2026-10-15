@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { activitiesPermitted, authorisationSchema, chaosSequence, isAccessControlJourney, projectSchema, renderTemplate, validateJourneyDocument, type Project } from '../../packages/core/src/index.ts';
-import { reliabilityReport } from '../../packages/controller/src/suite.ts';
+import { reliabilityReport, signInSteps } from '../../packages/controller/src/suite.ts';
 import { utimesSync } from 'node:fs';
 import { failureList, summaryMarkdown } from '../../packages/report/src/render.ts';
 import { closestText, executeJob, type JobRequest } from '../../packages/runner/src/job.ts';
@@ -32,9 +32,15 @@ describe('the local labs', () => {
     if (!journey) throw new Error('admin-page-readonly did not parse');
     expect(isAccessControlJourney(journey)).toBe(true);
     expect(activitiesPermitted(auth, { signIn: false, journeys: [journey] }).ok).toBe(true);
+    const juiceSignIn = signInSteps(project('juice-shop-lab'), 'qa-user-1');
+    expect(juiceSignIn[0]).toEqual({ navigate: { url: '/#/login' } });
+    expect(juiceSignIn[1]).toEqual({ click: { selector: "button[aria-label='Close Welcome Banner']" } });
+    expect(juiceSignIn[2]).toEqual({ click: { selector: "role=button[name='dismiss cookie message']" } });
+    expect('fill' in (juiceSignIn[3] ?? {})).toBe(true);
+    expect(signInSteps(project('toolshop-lab'), 'qa-user-1')[1]).toEqual({ fill: { selector: "[data-test='email']", credential: 'qa-user-1.username' } });
     const clicks = journey.steps.flatMap((step) => ('click' in step ? [step.click.selector] : []));
     expect(clicks).toEqual(["a:has-text('Admin Page')"]);
-    for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab']) {
+    for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab', 'juice-shop-lab']) {
       const config = project(id);
       expect(config.authorisation_id).toBe('lab-owner');
       for (const origin of [config.targets.base_url, ...config.targets.allowed_origins]) expect(new URL(origin).hostname).toMatch(/^(127\.0\.0\.1|host\.docker\.internal)$/);
@@ -50,7 +56,7 @@ describe('the local labs', () => {
   });
 
   it('keep passwords out of journeys and the setup script', () => {
-    for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab']) {
+    for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab', 'juice-shop-lab']) {
       const config = project(id);
       const dir = join(root, 'examples/projects', id, 'journeys');
       for (const file of readdirSync(dir)) {

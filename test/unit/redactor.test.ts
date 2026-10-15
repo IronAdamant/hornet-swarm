@@ -112,6 +112,27 @@ describe('redactor', () => {
     expect(totp.redact('jbswy3dpehpk3pxp')).toBe('[REDACTED:qa-user-1.totp_secret]');
   });
 
+  it('masks a card number in a checkout body, including a bare number', () => {
+    const redactor = new Redactor();
+    const number = '4000000000000002';
+    const raw = `{"fullName":"Nia Peel","cardNum":${number},"expYear":"2080"}`;
+    expect(redactor.contains(raw)).toBe(true);
+    const cleaned = redactor.redact(raw);
+    expect(cleaned).toBe('{"fullName":"Nia Peel","cardNum":[REDACTED:field],"expYear":"2080"}');
+    expect(cleaned).not.toContain(number);
+    expect(redactor.contains(cleaned)).toBe(false);
+    const quoted = `{"cardNumber":"${number}"}`;
+    expect(redactor.redact(quoted)).toBe('{"cardNumber":"[REDACTED:field]"}');
+    const escaped = `{\\"cardNum\\":${number}}`;
+    expect(redactor.redact(escaped)).toBe('{\\"cardNum\\":[REDACTED:field]}');
+    expect(redactor.redact('{"expYear":2080,"price":1.99}')).toContain('2080');
+    expect(redactor.contains('************0002')).toBe(false);
+    const field = `- Card Number: ${number}`;
+    expect(redactor.contains(field)).toBe(true);
+    expect(redactor.redact(field)).toBe('- Card Number: [REDACTED:field]');
+    expect(redactor.redact('Card ending in 1111')).toContain('1111');
+  });
+
   it('masks a password query that a hash cut down to a prefix', () => {
     const secret = 'Abcdefghijklmnop#7a';
     const redactor = new Redactor();

@@ -1,0 +1,27 @@
+version: 1
+id: review
+name: A customer writes a product review and sees it
+description: Opens the Apple Juice details, which are a dialog, and sends a short made-up review.
+users: [qa-user-4]
+tags: [shopping, review]
+steps:
+  - navigate: { url: "/#/login" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - fill: { selector: "#email", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#loginButton" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/#/search" }
+  - navigate: { url: "/#/search?q=Apple" }
+  - wait: { for: selector, selector: "app-product:has-text('Apple Juice \\(1000ml\\) 1.99') [aria-label='Click for more information about the product']" }
+  - click: { selector: "app-product:has-text('Apple Juice \\(1000ml\\) 1.99') [aria-label='Click for more information about the product']" }
+  - wait: { for: selector, selector: "textarea[aria-label='Text field to review a product']" }
+  - assert: { type: text_visible, value: "Apple Juice (1000ml)" }
+  - assert: { type: text_visible, value: "Write a review" }
+  - fill: { selector: "textarea[aria-label='Text field to review a product']", value: "Tastes like apples. {{run.tag}}" }
+  - click: { selector: "button[aria-label='Send the review']" }
+  - assert: { type: text_visible, value: "You review has been saved." }
+  - click: { selector: "mat-expansion-panel[aria-label='Expand for Reviews'] mat-expansion-panel-header" }
+  - assert: { type: text_visible, value: "Tastes like apples. {{run.tag}}" }
+  - screenshot: { name: "review-shown" }

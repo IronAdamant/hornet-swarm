@@ -1,0 +1,22 @@
+version: 1
+id: order-history
+name: Order history shows the order
+description: Opens the signed-in customer's order history. Checkout has to have placed an order for this account first.
+users: [qa-user-1]
+tags: [shopping, orders]
+steps:
+  - navigate: { url: "/#/login" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - fill: { selector: "#email", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#loginButton" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/#/search" }
+  - navigate: { url: "/#/order-history" }
+  - wait: { for: selector, selector: "mat-card-title" }
+  - assert: { type: text_visible, value: "Order History" }
+  - assert: { type: text_visible, value: "Apple Juice (1000ml)" }
+  - assert: { type: text_visible, value: "In Transit" }
+  - assert: { type: text_visible, value: "5.97" }
+  - screenshot: { name: "order-history" }

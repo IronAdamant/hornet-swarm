@@ -517,6 +517,7 @@ async function runPhase1(
 export function signInSteps(project: Project, label: string): Journey['steps'] {
   const steps: Journey['steps'] = [
     { navigate: { url: project.auth.signin_url } },
+    ...(project.auth.prepare ?? []).map((selector) => ({ click: { selector } })),
     { fill: { selector: project.auth.selectors.username, credential: `${label}.username` } },
     { fill: { selector: project.auth.selectors.password, credential: `${label}.password` } },
   ];

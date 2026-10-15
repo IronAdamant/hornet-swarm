@@ -1,0 +1,30 @@
+version: 1
+id: accessibility-customer
+name: Pages a signed-in customer sees meet WCAG 2.1 AA
+description: Checks the basket, the address and payment steps, and the profile. Nothing is bought. The feedback form is left out because it asks for a captcha.
+users: [qa-user-1]
+tags: [accessibility]
+steps:
+  - navigate: { url: "/#/login" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - fill: { selector: "#email", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#loginButton" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/#/search" }
+  - navigate: { url: "/#/basket" }
+  - wait: { for: selector, selector: "#checkoutButton" }
+  - accessibility: { name: basket }
+  - navigate: { url: "/#/address/create" }
+  - wait: { for: selector, selector: "#address" }
+  - accessibility: { name: address }
+  - navigate: { url: "/#/delivery-method" }
+  - wait: { for: selector, selector: "role=button[name='Proceed to delivery method selection']" }
+  - accessibility: { name: delivery }
+  - navigate: { url: "/#/payment/shop" }
+  - wait: { for: selector, selector: "role=button[name='Proceed to review']" }
+  - accessibility: { name: payment }
+  - navigate: { url: "/profile" }
+  - wait: { for: selector, selector: "#username" }
+  - accessibility: { name: profile }

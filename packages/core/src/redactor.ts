@@ -202,16 +202,44 @@ function maskCredentialQueries(input: string, secrets: { label: string; value: s
  * the challenge cookies when they appear outside a header that was already masked.
  */
 const SESSION_JSON_KEY = 'access_token|refresh_token|id_token|totp_secret|api_key|password|passwd|secret|totp|pwd';
+/** A payment card, as a JSON string or a bare number. Years and prices are too short to match. */
+const CARD_JSON_KEY = 'cardNum|cardNumber|card_number';
 const JWT_PATTERN = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/;
 const CHALLENGE_PATH = /\/cdn-cgi\/challenge-platform\/[^\s"'<>\\]*/;
 const CHALLENGE_COOKIE = /\b(cf_clearance|__cf_bm|_cfuvid|cf_chl_[A-Za-z0-9_]+)=([^\s;"',]+)/;
 
 function maskSessionMaterial(input: string): string {
-  return maskChallengeCookies(maskChallengeTokens(maskJwts(maskCredentialJson(input))));
+  return maskChallengeCookies(maskChallengeTokens(maskJwts(maskCardNumbers(maskCredentialJson(input)))));
 }
 
 function sessionMaterialIsRaw(input: string): boolean {
-  return credentialJsonIsRaw(input) || jwtIsRaw(input) || challengeTokenIsRaw(input) || challengeCookieIsRaw(input);
+  return credentialJsonIsRaw(input) || cardNumberIsRaw(input) || jwtIsRaw(input) || challengeTokenIsRaw(input) || challengeCookieIsRaw(input);
+}
+
+function maskCardNumbers(input: string): string {
+  return maskCardFieldLines(maskCardSpelling(maskCardSpelling(input, false), true));
+}
+
+/** The page-text dump writes `Card Number:` and then the digits. That line is not a JSON field. */
+function maskCardFieldLines(input: string): string {
+  return input.replace(/(Card Number:\s*)(\d{12,19})\b/gi, '$1[REDACTED:field]');
+}
+
+function maskCardSpelling(input: string, escaped: boolean): string {
+  const quoted = escaped
+    ? new RegExp(`(\\\\"(?:${CARD_JSON_KEY})\\\\"\\s*:\\s*\\\\")(\\d{12,19})(\\\\")`, 'gi')
+    : new RegExp(`("(?:${CARD_JSON_KEY})"\\s*:\\s*")(\\d{12,19})(")`, 'gi');
+  const bare = escaped
+    ? new RegExp(`(\\\\"(?:${CARD_JSON_KEY})\\\\"\\s*:\\s*)(\\d{12,19})\\b`, 'gi')
+    : new RegExp(`("(?:${CARD_JSON_KEY})"\\s*:\\s*)(\\d{12,19})\\b`, 'gi');
+  return input.replace(quoted, '$1[REDACTED:field]$3').replace(bare, '$1[REDACTED:field]');
+}
+
+function cardNumberIsRaw(input: string): boolean {
+  const raw = new RegExp(`"(?:${CARD_JSON_KEY})"\\s*:\\s*"?(\\d{12,19})`, 'gi');
+  const escaped = new RegExp(`\\\\"(?:${CARD_JSON_KEY})\\\\"\\s*:\\s*(?:\\\\")?(\\d{12,19})`, 'gi');
+  const field = /Card Number:\s*\d{12,19}\b/i;
+  return raw.test(input) || escaped.test(input) || field.test(input);
 }
 
 function maskCredentialJson(input: string): string {

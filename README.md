@@ -33,6 +33,9 @@ Every report below came from real runs. The labs run on one Mac, and the live si
 | [Live Toolshop](docs/live-report-toolshop.md) | The same shop on the public internet: an order fault that happens only some of the time, an API stall, Cloudflare's bot check, and a site that wipes its accounts about once an hour |
 | [Accessibility: Toolshop](docs/accessibility-report-toolshop-lab.md) | Nine pages, visitor and signed-in, against WCAG 2.1 AA: unnamed quantity controls, unlabelled search, missing image descriptions, and faint text |
 | [Chaos: Toolshop](docs/chaos-report-toolshop-lab.md), [Chaos: ParaBank](docs/chaos-report-parabank-lab.md) | How each site recovers when requests are lost or slow |
+| [Juice Shop lab](docs/sample-report-juice-shop-lab.md) | A local shop: sign-up, search, basket, checkout, order history, a review, and a username. The feedback form is left out because it asks for a captcha |
+| [Accessibility: Juice Shop](docs/accessibility-report-juice-shop-lab.md) | The shop front, a product, sign-in, sign-up, and the signed-in basket, checkout, and profile, against WCAG 2.1 AA |
+| [Security: Juice Shop](docs/security-report-juice-shop-lab.md) | A light pass over the same customer journeys, on the security scale |
 | [Security: ParaBank](docs/security-report-parabank-lab.md), [Security: live Toolshop](docs/security-report-toolshop-live.md) | Security passes run by a separate swarm, on their own severity scale |
 
 ## Quick start
@@ -57,7 +60,7 @@ pnpm hornet-swarm suite --project fixture \
   --journey examples/journeys/example-app/02-tenant-isolation.journey.yaml
 ```
 
-Or run it hard against a local lab, with made-up customers it creates itself:
+Or run it hard against a local lab, with made-up customers it creates itself. `setup-lab` starts Toolshop, Restful Booker, ParaBank, and OWASP Juice Shop, all on this Mac:
 
 ```bash
 node scripts/setup-lab.mjs

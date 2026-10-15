@@ -1,0 +1,74 @@
+version: 1
+id: checkout
+name: A customer checks out with a made-up address and a made-up card
+description: Adds two products, pays with a card the shop will accept, and stops on the order confirmation. The card form stays on this shop. The off-site donation link is not used.
+users: [qa-user-1]
+tags: [shopping, checkout]
+steps:
+  - navigate: { url: "/#/login" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - fill: { selector: "#email", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#loginButton" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/#/search" }
+  - navigate: { url: "/#/search?q=Apple" }
+  - wait: { for: selector, selector: "app-product:has-text('Apple Juice \\(1000ml\\) 1.99') button[aria-label='Add to Basket']" }
+  - click: { selector: "app-product:has-text('Apple Juice \\(1000ml\\) 1.99') button[aria-label='Add to Basket']" }
+  - navigate: { url: "/#/search?q=Banana" }
+  - wait: { for: selector, selector: "app-product:has-text('Banana Juice \\(1000ml\\) 1.99') button[aria-label='Add to Basket']" }
+  - click: { selector: "app-product:has-text('Banana Juice \\(1000ml\\) 1.99') button[aria-label='Add to Basket']" }
+  - navigate: { url: "/#/basket" }
+  - wait: { for: selector, selector: "#checkoutButton" }
+  - click: { selector: "mat-row:has-text('Apple Juice') button >> nth=1" }
+  - assert: { type: text_visible, value: "Total Price: 5.97" }
+  - click: { selector: "#checkoutButton" }
+  - wait: { for: selector, selector: "role=button[name='Add a new address']" }
+  - assert: { type: text_visible, value: "Select an address" }
+  - click: { selector: "role=button[name='Add a new address']" }
+  - wait: { for: selector, selector: "#address" }
+  - assert: { type: text_visible, value: "Add New Address" }
+  - fill: { selector: "role=textbox[name='Country']", value: "Australia" }
+  - fill: { selector: "role=textbox[name='Name']", value: "{{self.vars.first_name}} {{self.vars.last_name}}" }
+  - fill: { selector: "role=spinbutton[name='Mobile Number']", value: "4123456789" }
+  - fill: { selector: "role=textbox[name='ZIP Code']", value: "2000" }
+  - fill: { selector: "#address", value: "1 Test Street" }
+  - fill: { selector: "role=textbox[name='City']", value: "Testville" }
+  - fill: { selector: "role=textbox[name='State']", value: "NSW" }
+  - click: { selector: "#submitButton" }
+  - assert: { type: text_visible, value: "The address at Testville has been successfully added to your addresses." }
+  # A repeat run already has an address in Testville. Either row is the one just saved.
+  - wait: { for: selector, selector: "mat-row:has-text('Testville') >> nth=0" }
+  - click: { selector: "mat-row:has-text('Testville') >> nth=0" }
+  - click: { selector: "role=button[name='Proceed to payment selection']" }
+  - wait: { for: selector, selector: "mat-row:has-text('Standard Delivery')" }
+  - assert: { type: text_visible, value: "Choose a delivery speed" }
+  - assert: { type: text_visible, value: "Standard Delivery" }
+  - click: { selector: "mat-row:has-text('Standard Delivery')" }
+  - click: { selector: "role=button[name='Proceed to delivery method selection']" }
+  - wait: { for: selector, selector: "role=button[name='Add new card Add a credit or debit card']" }
+  - assert: { type: text_visible, value: "My Payment Options" }
+  - click: { selector: "role=button[name='Add new card Add a credit or debit card']" }
+  - wait: { for: selector, selector: "role=spinbutton[name='Card Number']" }
+  - fill: { selector: "role=textbox[name='Name']", value: "{{self.vars.first_name}} {{self.vars.last_name}}" }
+  - fill: { selector: "role=spinbutton[name='Card Number']", value: "4111111111111111" }
+  # The year list on this form starts at 2080. A current year is not offered.
+  - select: { selector: "mat-form-field:has-text('Expiry Month') select", label: "12" }
+  - select: { selector: "mat-form-field:has-text('Expiry Year') select", label: "2080" }
+  - click: { selector: "mat-expansion-panel:has-text('Add new card') #submitButton" }
+  - assert: { type: text_visible, value: "Your card ending with 1111 has been saved for your convenience." }
+  - click: { selector: "mat-row:has-text('{{self.vars.first_name}} {{self.vars.last_name}}') >> nth=0 >> mat-radio-button" }
+  - click: { selector: "role=button[name='Proceed to review']" }
+  - wait: { for: selector, selector: "#checkoutButton" }
+  - assert: { type: text_visible, value: "Place your order and pay" }
+  - assert: { type: text_visible, value: "5.97" }
+  - assert: { type: text_visible, value: "Testville" }
+  - screenshot: { name: "order-summary" }
+  - click: { selector: "role=button[name='Complete your purchase']" }
+  - wait: { for: selector, selector: "h1.confirmation" }
+  - assert: { type: text_visible, value: "Thank you for your purchase!" }
+  - assert: { type: text_visible, value: "Your order has been placed and is being processed." }
+  - assert: { type: text_visible, value: "Apple Juice (1000ml)" }
+  - assert: { type: text_visible, value: "5.97" }
+  - screenshot: { name: "order-confirmed" }

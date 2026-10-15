@@ -1,0 +1,35 @@
+version: 1
+id: basket
+name: Two products go into the basket and the total follows the quantity
+description: Adds Apple Juice and Banana Juice, raises the Apple Juice quantity, and checks the total. The rows are removed at the end so the next run starts from an empty basket.
+users: [qa-user-3]
+tags: [shopping, basket]
+steps:
+  - navigate: { url: "/#/login" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - fill: { selector: "#email", credential: "self.username" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#loginButton" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/#/search" }
+  - navigate: { url: "/#/search?q=Apple" }
+  # "Apple Juice" is also inside "Pineapple Juice", so the price keeps this card alone.
+  - wait: { for: selector, selector: "app-product:has-text('Apple Juice \\(1000ml\\) 1.99') button[aria-label='Add to Basket']" }
+  - click: { selector: "app-product:has-text('Apple Juice \\(1000ml\\) 1.99') button[aria-label='Add to Basket']" }
+  - navigate: { url: "/#/search?q=Banana" }
+  - wait: { for: selector, selector: "app-product:has-text('Banana Juice \\(1000ml\\) 1.99') button[aria-label='Add to Basket']" }
+  - click: { selector: "app-product:has-text('Banana Juice \\(1000ml\\) 1.99') button[aria-label='Add to Basket']" }
+  - navigate: { url: "/#/basket" }
+  - wait: { for: selector, selector: "#checkoutButton" }
+  - assert: { type: text_visible, value: "Your Basket" }
+  - assert: { type: text_visible, value: "Apple Juice (1000ml)" }
+  - assert: { type: text_visible, value: "Banana Juice (1000ml)" }
+  # The quantity buttons are icon buttons with no name. Minus, plus, then remove.
+  - click: { selector: "mat-row:has-text('Apple Juice') button >> nth=1" }
+  - assert: { type: text_visible, value: "Total Price: 5.97" }
+  - screenshot: { name: "basket-total" }
+  # Put the basket back, so a later run still sees one of each and the same total.
+  - click: { selector: "mat-row:has-text('Apple Juice') button >> nth=2" }
+  - click: { selector: "mat-row:has-text('Banana Juice') button >> nth=2" }
+  - assert: { type: text_visible, value: "Total Price: 0" }

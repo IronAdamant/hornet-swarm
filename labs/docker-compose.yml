@@ -7,6 +7,8 @@
 #     site  http://127.0.0.1:3300
 #   ParaBank (Parasoft's demo online bank)
 #     bank  http://127.0.0.1:8095/parabank
+#   OWASP Juice Shop (a shop for customer journeys; its challenges stay out of the suite)
+#     shop  http://127.0.0.1:3010
 name: hornet-lab
 
 # The booker's services share the site container's network, because the published site image
@@ -113,6 +115,15 @@ services:
     image: parasoft/parabank
     ports:
       - "127.0.0.1:8095:8080"
+    restart: unless-stopped
+    mem_limit: 768m
+
+  # Official image. Its database lives in the container, so setup-lab.mjs --reset replaces
+  # the container and the shop comes back with its seed data.
+  juice-shop:
+    image: bkimminich/juice-shop:v20.3.0
+    ports:
+      - "127.0.0.1:3010:3000"
     restart: unless-stopped
     mem_limit: 768m
 

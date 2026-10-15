@@ -74,6 +74,11 @@ export const projectSchema = z
           })
           .strict(),
         success: z.array(assertionSchema).min(1),
+        /**
+         * Clicks after the sign-in page opens and before the login is typed. Use it for a banner
+         * or a cookie notice that covers the form. Each journey still closes those itself.
+         */
+        prepare: z.array(z.string().min(1)).default([]),
         auth_endpoints: z.array(z.string()).default([]),
         totp: z
           .object({

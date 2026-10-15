@@ -1,0 +1,32 @@
+version: 1
+id: register
+name: A new customer signs up and signs in
+description: Signs up a fresh made-up address on every run, using this label's stored password, then signs in.
+users: [qa-user-2]
+requires_phase1: false
+tags: [account, signup]
+steps:
+  # A fresh browser shows a welcome banner over the form and a cookie notice along the bottom.
+  - navigate: { url: "/#/register" }
+  - click: { selector: "button[aria-label='Close Welcome Banner']" }
+  - click: { selector: "role=button[name='dismiss cookie message']" }
+  - wait: { for: selector, selector: "#emailControl" }
+  - fill: { selector: "#emailControl", value: "cole.{{run.id}}@example.com" }
+  - fill: { selector: "#passwordControl", credential: "self.password" }
+  - fill: { selector: "#repeatPasswordControl", credential: "self.password" }
+  - click: { selector: "#securityQuestionControl" }
+  - click: { selector: "mat-option:has-text('Name of your favorite pet?')" }
+  - fill: { selector: "#securityAnswerControl", value: "Testville" }
+  - click: { selector: "#registerButton" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/#/login" }
+  - assert: { type: text_visible, value: "Registration completed successfully. You can now log in." }
+  - screenshot: { name: "registered" }
+  - fill: { selector: "#email", value: "cole.{{run.id}}@example.com" }
+  - fill: { selector: "#password", credential: "self.password" }
+  - click: { selector: "#loginButton" }
+  - wait: { for: navigation }
+  - assert: { type: url_contains, value: "/#/search" }
+  - click: { selector: "#navbarAccount" }
+  - assert: { type: text_visible, value: "cole.{{run.id}}@example.com" }
+  - screenshot: { name: "new-customer-signed-in" }
