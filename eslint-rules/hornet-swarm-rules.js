@@ -76,6 +76,11 @@ const secureFsOnly = {
           context.report({ node, messageId: 'creator', data: { name: 'require(fs)' } });
         }
       },
+      ImportExpression(node) {
+        if (node.source.type === 'Literal' && FS_MODULES.has(String(node.source.value))) {
+          context.report({ node, messageId: 'creator', data: { name: 'import(fs)' } });
+        }
+      },
     };
   },
 };
@@ -110,6 +115,15 @@ const sealedArtifactsOnly = {
     return {
       TSAsExpression: checkCast,
       TSTypeAssertion: checkCast,
+      CallExpression(node) {
+        const name = node.callee.type === 'Identifier' ? node.callee.name : node.callee.type === 'MemberExpression' ? memberName(node.callee) : undefined;
+        if (name !== 'writeRedactedFile' && name !== 'appendRedactedFile') return;
+        for (const argument of node.arguments.slice(1)) {
+          if ((argument.type === 'TSAsExpression' || argument.type === 'TSTypeAssertion') && argument.typeAnnotation.type === 'TSAnyKeyword') {
+            context.report({ node: argument, messageId: 'cast', data: { name: 'any' } });
+          }
+        }
+      },
       ImportDeclaration(node) {
         if (!forbidWriters) return;
         for (const specifier of node.specifiers) {

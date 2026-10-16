@@ -25,6 +25,8 @@ tester.run('secure-fs-only', rules['secure-fs-only'], {
     { code: "import * as fs from 'fs'; fs.chmodSync('/x', 0o777);", errors: [{ messageId: 'creator' }] },
     { code: "import fs from 'node:fs'; fs['writeFileSync']('/x', 'y');", errors: [{ messageId: 'creator' }] },
     { code: 'process.umask(0);', errors: [{ messageId: 'umask' }] },
+    { code: "await import('node:fs');", errors: [{ messageId: 'creator' }] },
+    { code: "await import('node:fs/promises');", errors: [{ messageId: 'creator' }] },
   ],
 });
 
@@ -37,6 +39,8 @@ tester.run('sealed-artifacts-only', rules['sealed-artifacts-only'], {
   invalid: [
     { code: 'writeRedactedFile(path, text as Redacted);', errors: [{ messageId: 'cast' }] },
     { code: 'writeRedactedFile(path, bytes as unknown as RedactedBytes);', errors: [{ messageId: 'cast' }] },
+    { code: 'writeRedactedFile(path, text as any);', errors: [{ messageId: 'cast' }] },
+    { code: 'appendRedactedFile(path, text as any);', errors: [{ messageId: 'cast' }] },
     { code: "import { writePrivateFile } from '@hornet-swarm/core';", options: [{ forbidUnsealedWriters: true }], errors: [{ messageId: 'writer' }] },
   ],
 });
