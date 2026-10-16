@@ -22,6 +22,7 @@ import {
   RUNNER_IMAGE,
   runnerContainerOptions,
   runnerIsolationProblems,
+  type IsolationView,
 } from './runner-isolation.js';
 import { containerName, controlVolume, labelsForCount, networkName, parseMemory, profileVolume, proxyName } from './units.js';
 
@@ -117,11 +118,23 @@ export async function stopRunners(project: string, label?: string): Promise<void
   );
 }
 
+/**
+ * Refuses a runner that is already on the machine but no longer matches the isolation spec.
+ * `env up` replaces that container. A job must not start it or talk to it.
+ */
+export async function assertExistingRunnerIsolated(project: string, label: string): Promise<void> {
+  const docker = createDocker();
+  const existing = await findContainer(docker, containerName(project, label));
+  if (!existing) return;
+  assertIsolated(`The runner for ${label}`, runnerProblemsFromInspect(await existing.inspect(), project, label));
+}
+
 export async function startStoppedRunner(project: string, label: string): Promise<boolean> {
   const docker = createDocker();
   const existing = await findContainer(docker, containerName(project, label));
   if (!existing) return false;
   const inspected = await existing.inspect();
+  if (runnerProblemsFromInspect(inspected, project, label).length > 0) return false;
   if (!inspected.State.Running) {
     try {
       await existing.start();
@@ -497,6 +510,37 @@ async function proxyCurrent(docker: Docker, container: Docker.Container, env: st
   }
 }
 
+function runnerProblemsFromInspect(
+  inspected: {
+    Config?: { Env?: string[] | null };
+    HostConfig?: IsolationView['host'];
+    NetworkSettings?: { Networks?: Record<string, unknown> | null };
+  },
+  project: string,
+  label: string,
+): string[] {
+  const host = inspected.HostConfig ?? {};
+  return runnerIsolationProblems(
+    {
+      env: [...(inspected.Config?.Env ?? [])],
+      host: {
+        NetworkMode: host.NetworkMode,
+        Binds: host.Binds,
+        PortBindings: host.PortBindings,
+        PublishAllPorts: host.PublishAllPorts,
+        Privileged: host.Privileged,
+        CapAdd: host.CapAdd,
+        CapDrop: host.CapDrop,
+        SecurityOpt: host.SecurityOpt,
+        ReadonlyRootfs: host.ReadonlyRootfs,
+      },
+      networks: Object.keys(inspected.NetworkSettings?.Networks ?? {}),
+    },
+    project,
+    label,
+  );
+}
+
 async function ensureRunner(docker: Docker, project: string, label: string, settings: RunnerSettings): Promise<void> {
   // A reused container returns before anything below this. Loose token or output folders refuse startup.
   const tokenDir = prepareRunnerTokenDir(project, label);
@@ -511,9 +555,10 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
     } catch {
       wanted = '';
     }
-    const sameImage = wanted === '' || inspected.Image === wanted;
+    // An image we could not identify is not reused. Treating that failure as a match kept whatever was already there.
+    const sameImage = wanted !== '' && inspected.Image === wanted;
     // A runner made by an older version, or changed by hand, is replaced rather than trusted.
-    const isolated = runnerIsolationProblems({ env: inspected.Config.Env ?? [], host: inspected.HostConfig }, project, label).length === 0;
+    const isolated = runnerProblemsFromInspect(inspected, project, label).length === 0;
     if (sameImage && isolated) {
       if (!inspected.State.Running) await existing.start();
       const endpoint = await waitForEndpoint(docker, project, label);

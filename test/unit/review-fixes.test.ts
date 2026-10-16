@@ -351,6 +351,12 @@ describe('baselines', () => {
     writeFileSync(join(runDir, 'analysis.json'), JSON.stringify({ project: 'p', users: [{ label: 'qa-user-6', journeys: [{ id: 'layout', steps: [outside] }] }] }));
     acceptBaseline('p', runId, home);
     expect(existsSync(join(home, 'baselines', 'p', 'qa-user-6', 'layout', '2.png'))).toBe(false);
+    const escaped = `${runDir}/${'../'.repeat(8)}etc/hosts`;
+    const traversal = { ...steps[0], index: 3, screenshot_paths: [escaped] };
+    writeFileSync(join(runDir, 'analysis.json'), JSON.stringify({ project: 'p', users: [{ label: 'qa-user-7', journeys: [{ id: 'layout', steps: [traversal] }] }] }));
+    acceptBaseline('p', runId, home);
+    expect(existsSync(escaped)).toBe(true);
+    expect(existsSync(join(home, 'baselines', 'p', 'qa-user-7', 'layout', '3.png'))).toBe(false);
   });
 });
 
