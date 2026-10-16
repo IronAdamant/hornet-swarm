@@ -114,7 +114,7 @@ describe('honest swarm', () => {
   it('keeps the board when runner health cannot be read', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'hornet-swarm-view-'));
     const project = 'bad project';
-    mkdirSync(join(dir, 'projects', project), { recursive: true });
+    mkdirSync(join(dir, 'projects', project), { recursive: true, mode: 0o700 });
     writeFileSync(
       join(dir, 'projects', project, 'swarm.json'),
       `${JSON.stringify({ ready: true, website: 'http://127.0.0.1:4173/login', agents: [{ label: 'qa-user-1', personality: 'Careful checker' }] })}\n`,
@@ -193,7 +193,7 @@ describe('honest swarm', () => {
   it('writes an error packet that leaves the failure text out', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hornet-error-packet-'));
     const runDir = join(dir, 'runs', 'run_error');
-    mkdirSync(runDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
     const secretText = 'handoff-secret-value';
     const wrote = writeErrorOutcome({
       home: dir,
@@ -222,7 +222,7 @@ describe('honest swarm', () => {
   it('withholds a parent packet and quarantines only the files that contain a secret', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'hornet-withhold-'));
     const runDir = join(dir, 'runs', 'run_leak');
-    mkdirSync(runDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
     const secretText = 'packet-secret-value';
     const dirty = join(runDir, 'dirty.png');
     const clean = join(runDir, 'clean.png');

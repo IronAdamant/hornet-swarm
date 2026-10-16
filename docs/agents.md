@@ -20,6 +20,7 @@ Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. R
 4. Every result is a packet with `validation_required: true`. Check each sub-agent's report against its packet: the status, every `Failed:` line in the summary, and the page text. Then tell the owner the outcome with the run ids.
    - `gate_passed: true` only means every account signed in. It says nothing about the journeys.
    - "qa-user-5 is busy until ..." means another agent holds that login. It is not a site failure. Run it again after that time.
+   - A finding goes in a report only after `check_findings` (or `hornet-swarm findings <file>`) accepts it. Each one cites the run, step, and status it rests on, or the exact words from that step's saved page text. Severity is High, Medium, or Low from `docs/severity.md`. The output says how often the cited outcome happened across every saved run.
 5. After several runs, `get_reliability` gives pass rates, p50 and p95 timings, retries, and failing streaks. Call a site reliable only from that, not from one run. Chaos runs are left out of those figures. Pass `chaos: true` to see them alone.
 
 ## A sub-agent

@@ -9,8 +9,8 @@ const port = 4173;
 const password = "FixtureOnly-s3cret\"<&value> it's (ok)!~";
 const password2 = 'FixtureOnly-other"<&value>';
 const projectDir = join(home, 'projects', 'fixture');
-mkdirSync(join(home, 'authorisations'), { recursive: true });
-mkdirSync(projectDir, { recursive: true });
+mkdirSync(join(home, 'authorisations'), { recursive: true, mode: 0o700 });
+mkdirSync(projectDir, { recursive: true, mode: 0o700 });
 // The owner authorisation keeps its signed document. A run checks that the file is there and unchanged.
 const documentBody = 'Iron Adamant owns the offline fixture app in test/fixture-app and authorises its own testing.\n';
 writeFileSync(join(home, 'authorisations', 'fixture-owner.txt'), documentBody);

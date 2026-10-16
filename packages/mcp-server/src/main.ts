@@ -10,6 +10,7 @@ import { CHAOS_PROFILES, parallelRunners, Redactor, validateJourneyYaml } from '
 import {
   acquireLease,
   addAgentNote,
+  checkFindings,
   HornetError,
   credentialStatus,
   inspectPage,
@@ -500,6 +501,24 @@ server.registerTool(
       return pack(project, reliabilityReport(project, last ?? 20, home(), chaos ? 'only' : 'exclude'));
     } catch (error) {
       return pack(project, { ok: false, error: error instanceof HornetError ? error.message : 'No reliability data.' });
+    }
+  },
+);
+
+server.registerTool(
+  'check_findings',
+  {
+    description:
+      'Check report findings against saved runs before you report them. Each finding has an id like F-01, a severity of High, Medium, or Low, a title, a claim, and evidence: a step with the status the run recorded, a sign-in status, a quote from that step\'s saved page text or error, or a file in the run folder. Returns the findings as Markdown with how often each happened, or the evidence that is missing. Report only findings this accepts.',
+    inputSchema: z.object({ project: z.string(), findings: z.array(z.unknown()).min(1) }),
+  },
+  async ({ project, findings }) => {
+    const invalid = badProject(project);
+    if (invalid) return invalid;
+    try {
+      return pack(project, checkFindings({ project, findings }, { home: home() }));
+    } catch (error) {
+      return pack(project, { ok: false, error: error instanceof HornetError ? error.message : 'The findings could not be checked.' });
     }
   },
 );

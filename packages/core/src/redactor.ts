@@ -1,4 +1,28 @@
-import { MIN_SECRET_LENGTH } from './secret-length.js';
+import { credentialFieldOf, meetsSecretLength, type Secret } from './secret.js';
+
+declare const sealed: unique symbol;
+
+/** Text that has been through Redactor.seal. Report and artifact writers accept nothing else. */
+export type Redacted = string & { readonly [sealed]: 'redacted' };
+/** Bytes that Redactor.sealBytes found free of every registered secret and session shape. */
+export type RedactedBytes = Uint8Array & { readonly [sealed]: 'redacted' };
+
+/** Redaction left something behind. The content is not saved. */
+export class UnredactableError extends Error {
+  constructor() {
+    super('A saved file would still have contained a secret, so it was not written.');
+    this.name = 'UnredactableError';
+  }
+}
+
+/**
+ * Fixed text, such as a quarantine marker, can be saved without a redactor. The parameter accepts
+ * only string literals. `string` and template types such as `${string}\n` have open-ended key
+ * sets, so an empty object satisfies a Record over them and they are refused at compile time.
+ */
+export function fixedText<T extends string>(text: Record<never, never> extends Record<T, true> ? never : T): Redacted {
+  return text as unknown as Redacted;
+}
 
 /** Headers that carry a session or an API credential. Their values are masked wherever they are saved. */
 export const SESSION_HEADER_NAMES: ReadonlySet<string> = new Set([
@@ -25,9 +49,10 @@ export class Redactor {
     this.secrets.push({ label, value });
     const token = `[REDACTED:${label}]`;
     const forms = new Set<string>();
-    const keepShort = value.length >= 8 || label.endsWith('.username');
+    const field = credentialFieldOf(label);
+    const keepShort = meetsSecretLength(value) || field === 'username';
     addDerived(forms, value, keepShort);
-    const foldCase = label.endsWith('.username') || label.endsWith('.password') || label.endsWith('.totp_secret');
+    const foldCase = field !== undefined;
     if (foldCase) addDerived(forms, value.toLowerCase(), keepShort);
     const originals = new Set<string>([value, ...urlEncodings(value)]);
     if (foldCase) for (const form of [value.toLowerCase(), ...urlEncodings(value.toLowerCase())]) originals.add(form);
@@ -41,6 +66,24 @@ export class Redactor {
 
   registerAll(secrets: RegisteredSecret[]): void {
     for (const secret of secrets) this.register(secret.label, secret.value);
+  }
+
+  registerSecret(label: string, secret: Secret): void {
+    this.register(label, secret.reveal());
+  }
+
+  /** Redacts, then proves nothing registered or session-shaped is left. The only way to make Redacted text. */
+  seal(input: string): Redacted {
+    const output = this.redact(input);
+    if (this.contains(output)) throw new UnredactableError();
+    return output as Redacted;
+  }
+
+  /** Binary content cannot be rewritten here. It is passed through only when neither text reading of it holds a secret. */
+  sealBytes(bytes: Uint8Array): RedactedBytes {
+    const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (this.contains(buffer.toString('utf8')) || this.contains(buffer.toString('latin1'))) throw new UnredactableError();
+    return bytes as RedactedBytes;
   }
 
   redact(input: string): string {
@@ -113,6 +156,9 @@ export function urlEncodings(value: string): string[] {
  * starts at one of three byte offsets. For each offset this keeps only the characters that come
  * from the value's own bytes. The base64url spelling, used by JWTs, is added too.
  */
+/** Base64 characters, not secret characters: a shorter fragment matches too much unrelated text. */
+const MIN_BASE64_FRAGMENT = 8;
+
 export function base64Forms(value: string): string[] {
   const bytes = Buffer.from(value, 'utf8');
   const forms = new Set<string>([bytes.toString('base64')]);
@@ -122,7 +168,7 @@ export function base64Forms(value: string): string[] {
     const start = offset === 0 ? 0 : offset + 1;
     const end = Math.floor((offset + bytes.length) / 3) * 4;
     const inner = encoded.slice(start, end);
-    if (inner.length >= 8) forms.add(inner);
+    if (inner.length >= MIN_BASE64_FRAGMENT) forms.add(inner);
   }
   for (const form of [...forms]) forms.add(form.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
   return [...forms];
@@ -190,7 +236,7 @@ function maskCredentialQueries(input: string, secrets: { label: string; value: s
     if (existing && existing.suffix.length === 0) return match;
     if (existing) return `${separator}${key}=${existing.token}`;
     const decoded = decodeQueryComponent(value);
-    if (decoded.length < MIN_SECRET_LENGTH) return match;
+    if (!meetsSecretLength(decoded)) return match;
     const label = credentialLabel(secrets, key, decoded);
     return `${separator}${key}=${label ? `[REDACTED:${label}]` : '[REDACTED:query]'}`;
   });
@@ -279,7 +325,7 @@ function maskCredentialJson(input: string): string {
 
 function maskJsonSpelling(input: string, escaped: boolean): string {
   return input.replace(credentialJsonPattern(escaped), (match, open: string, value: string, close: string) => {
-    if (isRedactedToken(value) || value.length < MIN_SECRET_LENGTH) return match;
+    if (isRedactedToken(value) || !meetsSecretLength(value)) return match;
     const token = JWT_PATTERN.test(value) ? '[REDACTED:jwt]' : '[REDACTED:field]';
     return `${open}${token}${close}`;
   });
@@ -297,7 +343,7 @@ function credentialJsonIsRaw(input: string): boolean {
 function jsonSpellingIsRaw(input: string, escaped: boolean): boolean {
   for (const match of input.matchAll(credentialJsonPattern(escaped))) {
     const value = match[2] ?? '';
-    if (!isRedactedToken(value) && value.length >= MIN_SECRET_LENGTH) return true;
+    if (!isRedactedToken(value) && meetsSecretLength(value)) return true;
   }
   return false;
 }
@@ -338,12 +384,12 @@ function challengeSegment(segment: string): boolean {
   } catch {
     decoded = segment;
   }
-  return decoded.includes(':') && decoded.length >= MIN_SECRET_LENGTH;
+  return decoded.includes(':') && meetsSecretLength(decoded);
 }
 
 function maskChallengeCookies(input: string): string {
   return input.replace(new RegExp(CHALLENGE_COOKIE.source, 'g'), (match, name: string, value: string) => {
-    if (isRedactedToken(value) || value.length < MIN_SECRET_LENGTH) return match;
+    if (isRedactedToken(value) || !meetsSecretLength(value)) return match;
     return `${name}=[REDACTED:challenge]`;
   });
 }
@@ -351,7 +397,7 @@ function maskChallengeCookies(input: string): string {
 function challengeCookieIsRaw(input: string): boolean {
   for (const match of input.matchAll(new RegExp(CHALLENGE_COOKIE.source, 'g'))) {
     const value = match[2] ?? '';
-    if (!isRedactedToken(value) && value.length >= MIN_SECRET_LENGTH) return true;
+    if (!isRedactedToken(value) && meetsSecretLength(value)) return true;
   }
   return false;
 }
@@ -364,7 +410,7 @@ function credentialQueryIsRaw(input: string): boolean {
       if (existing.suffix.length > 0) return true;
       continue;
     }
-    if (decodeQueryComponent(value).length >= MIN_SECRET_LENGTH) return true;
+    if (meetsSecretLength(decodeQueryComponent(value))) return true;
   }
   return false;
 }
@@ -373,10 +419,10 @@ function credentialLabel(secrets: { label: string; value: string }[], key: strin
   const family = keyFamily(key);
   let best: { label: string; family: boolean; exact: boolean; overlap: number } | undefined;
   for (const secret of secrets) {
-    const fold = secret.label.endsWith('.password') || secret.label.endsWith('.totp_secret') || secret.label.endsWith('.username');
+    const fold = credentialFieldOf(secret.label) !== undefined;
     const stored = fold ? secret.value.toLowerCase() : secret.value;
     const given = fold ? candidate.toLowerCase() : candidate;
-    if (stored.length < MIN_SECRET_LENGTH || given.length < MIN_SECRET_LENGTH) continue;
+    if (!meetsSecretLength(stored) || !meetsSecretLength(given)) continue;
     if (!stored.startsWith(given) && !given.startsWith(stored)) continue;
     const next = {
       label: secret.label,

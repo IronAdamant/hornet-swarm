@@ -8,3 +8,4 @@ images/runner/build
 *.tsbuildinfo
 .env
 .pnpm-store
+.past-*

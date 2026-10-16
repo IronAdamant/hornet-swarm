@@ -1,18 +1,18 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
+import { existsSync, rmSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
-import { Redactor } from '@hornet-swarm/core';
-import { aegisHome, ensureDir } from './home.js';
-import { withFileLock, writeFileAtomic } from './leases-store.js';
-import { runnerFetch } from './runner-auth.js';
+import { CREDENTIAL_FIELDS, privateDir, privateTempDir, Redactor, Secret, valueForField, writePrivateFile, type CredentialField } from '@hornet-swarm/core';
+import { aegisHome } from './home.js';
+import { withFileLock } from './leases-store.js';
+import { RunnerSession } from './runner-session.js';
 import { totpCode, waitForFreshCode } from './totp.js';
 
 const SERVICE = 'hornet-swarm-age-key';
 const LEGACY_SERVICE = 'aegis-age-key';
-const FIELDS = ['username', 'password', 'totp_secret'] as const;
-export type SecretField = (typeof FIELDS)[number];
+const FIELDS = CREDENTIAL_FIELDS;
+export type SecretField = CredentialField;
 
 type SecretUser = { username?: string; password?: string; totp_secret?: string };
 type SecretFile = { users: Record<string, SecretUser> };
@@ -54,6 +54,7 @@ export function listFields(project: string, label: string, home = aegisHome()): 
   return FIELDS.filter((field) => typeof user[field] === 'string' && user[field]);
 }
 
+/** For setup scripts. The value goes through Secret.parse like every other entry point, so the length rule applies. */
 export function setSecret(
   project: string,
   label: string,
@@ -61,7 +62,7 @@ export function setSecret(
   value: string,
   home = aegisHome(),
 ): { ok: true; label: string; field: SecretField } {
-  setSecrets(project, { [label]: { [field]: value } }, home);
+  setSecrets(project, { [label]: { [field]: Secret.require(field, value) } }, home);
   return { ok: true, label, field };
 }
 
@@ -73,59 +74,61 @@ const STORE_LOCK_MS = 60_000;
  * happen under a lock, so two writers never lose each other's changes, and the new file
  * replaces the old one in a single rename, so a crash never leaves half a store.
  */
-export function setSecrets(project: string, updates: Record<string, Partial<Record<SecretField, string>>>, home = aegisHome()): void {
+export function setSecrets(project: string, updates: Record<string, Partial<Record<SecretField, Secret>>>, home = aegisHome()): void {
   if (!/^[a-z0-9-]+$/.test(project)) throw new Error('project id must be lowercase letters, numbers, and dashes');
   for (const [label, fields] of Object.entries(updates)) {
     if (!/^qa-user-\d+$/.test(label)) throw new Error('label must look like qa-user-1');
     for (const [field, value] of Object.entries(fields)) {
       if (!FIELDS.includes(field as SecretField)) throw new Error('unsupported field');
-      if (!value) throw new Error('empty secret');
+      // A plain string, or a Secret whose field was reassigned, would skip the length rule.
+      valueForField(value, field as SecretField);
     }
   }
   withFileLock(home, `secrets-${project}`, () => {
     const users = readUsers(home, project);
-    for (const [label, fields] of Object.entries(updates)) users[label] = { ...(users[label] ?? {}), ...fields };
+    for (const [label, fields] of Object.entries(updates)) {
+      const revealed = Object.fromEntries(Object.entries(fields).map(([field, secret]) => [field, valueForField(secret, field as SecretField)]));
+      users[label] = { ...(users[label] ?? {}), ...revealed };
+    }
     writeUsers(home, project, users);
   }, STORE_LOCK_MS);
 }
 
-export async function injectTotp(project: string, label: string, endpoint: string, home = aegisHome()): Promise<InjectedHandle> {
-  const secret = readUsers(home, project)[label]?.totp_secret;
+/** Hands the current TOTP code to a runner. Only a session of an authorised run can ask. */
+export async function injectTotp(session: RunnerSession): Promise<InjectedHandle> {
+  assertSession(session);
+  const { label } = session;
+  const secret = readUsers(session.home, session.projectId)[label]?.totp_secret;
   if (!secret) return { ok: true, handles: [] };
   // A strict site accepts only the current 30-second code. The journey types it a few steps later,
   // so a code made near the end of its window could expire first. Wait for a fresh one.
   const wait = waitForFreshCode();
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   const code = totpCode(secret);
-  const response = await runnerFetch(
-    project,
-    endpoint,
-    '/v1/secrets',
-    { method: 'POST', body: JSON.stringify({ credentials: [{ handle: `${label}.totp_code`, value: code }] }) },
-    home,
-    label,
-  );
+  const response = await session.fetch('/v1/secrets', { method: 'POST', body: JSON.stringify({ credentials: [{ handle: `${label}.totp_code`, value: code }] }) });
   if (!response.ok) throw new Error('Runner rejected the login handoff.');
   return { ok: true, handles: [`${label}.totp_code`], code };
 }
 
-export async function injectSecrets(
-  project: string,
-  label: string,
-  endpoint: string,
-  home = aegisHome(),
-): Promise<InjectedHandle> {
-  const user = readUsers(home, project)[label];
+/** Hands a label's stored login to its runner. Only a session of an authorised run can ask. */
+export async function injectSecrets(session: RunnerSession): Promise<InjectedHandle> {
+  assertSession(session);
+  const { label } = session;
+  const user = readUsers(session.home, session.projectId)[label];
   if (!user) throw new Error(`No stored login for ${label}.`);
   const credentials = FIELDS.flatMap((field) => {
     const value = user[field];
     return value ? [{ handle: `${label}.${field}`, value }] : [];
   });
   if (credentials.length === 0) throw new Error(`No stored login for ${label}.`);
-  const response = await runnerFetch(project, endpoint, '/v1/secrets', { method: 'POST', body: JSON.stringify({ credentials }) }, home, label);
+  const response = await session.fetch('/v1/secrets', { method: 'POST', body: JSON.stringify({ credentials }) });
   if (!response.ok) throw new Error(`Runner rejected the login handoff (${response.status}).`);
   const body = (await response.json()) as { ok?: boolean; handles?: string[] };
   return { ok: true, handles: body.handles ?? credentials.map((entry) => entry.handle) };
+}
+
+function assertSession(session: RunnerSession): void {
+  if (!(session instanceof RunnerSession)) throw new Error('A login is handed only to a runner session of an authorised run.');
 }
 
 function readUsers(home: string, project: string): Record<string, SecretUser> {
@@ -140,15 +143,14 @@ function readUsers(home: string, project: string): Record<string, SecretUser> {
 }
 
 function writeUsers(home: string, project: string, users: Record<string, SecretUser>): void {
-  const directory = ensureDir(join(home, 'projects', project));
+  const directory = privateDir(join(home, 'projects', project));
   const destination = join(directory, 'secrets.sops.yaml');
   const identity = ageIdentity(home);
   const plain = stringify({ users });
-  const tempDir = mkdtempSync(join(tmpdir(), 'hornet-swarm-sops-'));
+  const tempDir = privateTempDir('hornet-swarm-sops-');
   const tempFile = join(tempDir, 'plain.yaml');
   try {
-    writeFileSync(tempFile, plain, { mode: 0o600 });
-    chmodSync(tempFile, 0o600);
+    writePrivateFile(tempFile, plain);
     const encrypted = execFileSync(
       'sops',
       ['encrypt', '--age', identity.publicKey, '--input-type', 'yaml', '--output-type', 'yaml', tempFile],
@@ -158,7 +160,7 @@ function writeUsers(home: string, project: string, users: Record<string, SecretU
       Object.values(user).some((value) => typeof value === 'string' && value.length >= 4 && encrypted.includes(value)),
     );
     if (encrypted.includes(plain) || leaked) throw new Error('encrypted store still contained a secret');
-    writeFileAtomic(destination, encrypted, 0o600);
+    writePrivateFile(destination, encrypted);
   } catch (error) {
     if (error instanceof Error && error.message === 'encrypted store still contained a secret') throw error;
     throw new Error('Could not encrypt the store.', { cause: error });
@@ -186,8 +188,7 @@ function childEnv(secret: string): NodeJS.ProcessEnv {
 function ageIdentity(home: string): { secret: string; publicKey: string } {
   const secret = loadAgeSecret();
   const publicKey = publicKeyFrom(secret);
-  ensureDir(home);
-  writeFileSync(join(home, 'age.pub'), `${publicKey}\n`, { mode: 0o644 });
+  writePrivateFile(join(privateDir(home), 'age.pub'), `${publicKey}\n`);
   return { secret, publicKey };
 }
 

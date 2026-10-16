@@ -1,13 +1,22 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { readdirSync, unlinkSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import JSZip from 'jszip';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import { matchGlob, quoteBrokenCardJson, Redactor, SESSION_HEADER_NAMES } from '@hornet-swarm/core';
+import {
+  fixedText,
+  matchGlob,
+  quoteBrokenCardJson,
+  readRegularFile,
+  Redactor,
+  SESSION_HEADER_NAMES,
+  UnredactableError,
+  writeRedactedFile,
+  type Redacted,
+  type RedactedBytes,
+} from '@hornet-swarm/core';
 
 const PLACEHOLDER_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -32,18 +41,20 @@ export function walkFiles(dir: string): string[] {
   return found;
 }
 
-export async function redactTree(dir: string, redactor: Redactor): Promise<void> {
+/** Masks every file in place. Returns the files that masking could not clean; each was quarantined. */
+export async function redactTree(dir: string, redactor: Redactor): Promise<string[]> {
+  const withheld: string[] = [];
   for (const file of walkFiles(dir)) {
-    if (file.endsWith('.zip')) await redactZip(file, redactor);
-    else if (file.endsWith('.png')) redactPng(file, redactor);
-    else redactText(file, redactor);
+    const done = file.endsWith('.zip') ? await redactZip(file, redactor) : file.endsWith('.png') ? await redactPng(file, redactor) : redactText(file, redactor);
+    if (done === 'withheld') withheld.push(file);
   }
+  return withheld;
 }
 
 export async function scanTree(dir: string, redactor: Redactor): Promise<string[]> {
   const hits: string[] = [];
   for (const file of walkFiles(dir)) {
-    const bytes = readFileSync(file);
+    const bytes = readRegularFile(file);
     if (file.endsWith('.zip')) {
       hits.push(...(await scanZipBuffer(bytes, redactor, file)));
       continue;
@@ -80,7 +91,7 @@ async function scanZipBuffer(bytes: Buffer, redactor: Redactor, label: string): 
 
 export function quarantineFile(file: string): void {
   unlinkSync(file);
-  writeFileSync(`${file}.quarantined`, 'quarantined\n');
+  writeRedactedFile(`${file}.quarantined`, fixedText('quarantined\n'));
 }
 
 export async function writeEvidenceZip(sourceDir: string, destination: string, redactor: Redactor): Promise<void> {
@@ -91,14 +102,13 @@ export async function writeEvidenceZip(sourceDir: string, destination: string, r
   const files = walkFiles(sourceDir)
     .filter((file) => resolve(file) !== skipped)
     .map((file) => {
-    const data = readFileSync(file);
+    const data = readRegularFile(file);
     const path = relative(sourceDir, file);
     zip.file(path, data);
     return { path, sha256: createHash('sha256').update(data).digest('hex') };
   });
   zip.file('manifest.json', `${JSON.stringify({ created_at: new Date().toISOString(), files }, null, 2)}\n`);
-  mkdirSync(dirname(destination), { recursive: true });
-  writeFileSync(destination, await zip.generateAsync({ type: 'nodebuffer' }));
+  writeRedactedFile(destination, redactor.sealBytes(await zip.generateAsync({ type: 'nodebuffer' })), { parent: 'chosen' });
 }
 
 export function compareScreenshots(before: Buffer, after: Buffer): { visual: 'same' | 'changed'; ratio: number } {
@@ -115,22 +125,36 @@ export function timingChanged(beforeMs: number, afterMs: number): boolean {
   return afterMs - beforeMs > 300 && afterMs > beforeMs * 1.2;
 }
 
-function redactText(file: string, redactor: Redactor): void {
-  const raw = readFileSync(file);
-  const text = raw.toString('utf8');
-  const latin = raw.toString('latin1');
-  if (redactor.contains(text) || redactor.contains(latin)) {
-    writeFileSync(file, redactor.redact(text));
-    return;
+type Outcome = 'kept' | 'rewritten' | 'withheld';
+
+/** Writes sealed content over `file`, or quarantines `file` when `seal` finds a secret it cannot mask. */
+function replaceOrQuarantine(file: string, seal: () => Redacted | RedactedBytes): Outcome {
+  try {
+    writeRedactedFile(file, seal());
+    return 'rewritten';
+  } catch (error) {
+    if (!(error instanceof UnredactableError)) throw error;
+    quarantineFile(file);
+    return 'withheld';
   }
-  // A card token saved with no quotes is not a secret any more. Quoting it keeps the HAR parseable.
-  const repaired = quoteBrokenCardJson(text);
-  if (repaired !== text) writeFileSync(file, repaired);
 }
 
-function redactPng(file: string, redactor: Redactor): void {
-  const text = ocr(file);
-  if (redactor.contains(text)) writeFileSync(file, PLACEHOLDER_PNG);
+function redactText(file: string, redactor: Redactor): Outcome {
+  const raw = readRegularFile(file);
+  const text = raw.toString('utf8');
+  const latin = raw.toString('latin1');
+  if (redactor.contains(text) || redactor.contains(latin)) return replaceOrQuarantine(file, () => redactor.seal(text));
+  // A card token saved with no quotes is not a secret any more. Quoting it keeps the HAR parseable.
+  const repaired = quoteBrokenCardJson(text);
+  if (repaired === text) return 'kept';
+  return replaceOrQuarantine(file, () => redactor.seal(repaired));
+}
+
+async function redactPng(file: string, redactor: Redactor): Promise<Outcome> {
+  const bytes = readRegularFile(file);
+  const visible = redactor.contains(bytes.toString('utf8')) || redactor.contains(bytes.toString('latin1')) || redactor.contains(await ocrBuffer(bytes));
+  if (!visible) return 'kept';
+  return replaceOrQuarantine(file, () => redactor.sealBytes(PLACEHOLDER_PNG));
 }
 
 const IMAGE_ENTRY = /\.(png|jpe?g|webp)$/i;
@@ -141,16 +165,19 @@ const IMAGE_ENTRY = /\.(png|jpe?g|webp)$/i;
  * they show a secret. Any other binary entry that holds a secret is dropped. Every other
  * entry keeps its original bytes, so the trace viewer can still open the file.
  */
-async function redactZip(file: string, redactor: Redactor): Promise<void> {
-  const zip = await JSZip.loadAsync(readFileSync(file));
-  if (!(await redactLoadedZip(zip, redactor))) return;
+async function redactZip(file: string, redactor: Redactor): Promise<Outcome> {
+  const zip = await JSZip.loadAsync(readRegularFile(file));
+  if (!(await redactLoadedZip(zip, redactor))) return 'kept';
   const next = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-  if (redactor.contains(next.toString('latin1'))) {
+  try {
+    writeRedactedFile(file, redactor.sealBytes(next));
+    return 'rewritten';
+  } catch (error) {
+    if (!(error instanceof UnredactableError)) throw error;
     unlinkSync(file);
-    writeFileSync(`${file}.dropped`, 'trace dropped because redaction could not clean it\n');
-    return;
+    writeRedactedFile(`${file}.dropped`, fixedText('trace dropped because redaction could not clean it\n'));
+    return 'rewritten';
   }
-  writeFileSync(file, next);
 }
 
 async function redactLoadedZip(zip: JSZip, redactor: Redactor): Promise<boolean> {
@@ -191,7 +218,7 @@ async function redactLoadedZip(zip: JSZip, redactor: Redactor): Promise<boolean>
     }
   }
   const flagged = await mapLimit(images, 4, async ({ name, bytes }) =>
-    redactor.contains(bytes.toString('latin1')) || redactor.contains(await ocrBuffer(bytes, name)) ? name : undefined,
+    redactor.contains(bytes.toString('latin1')) || redactor.contains(await ocrBuffer(bytes)) ? name : undefined,
   );
   for (const name of flagged) {
     if (!name) continue;
@@ -223,29 +250,13 @@ async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T) => Pr
   return results;
 }
 
-function ocr(file: string): string {
-  try {
-    return execFileSync('tesseract', [file, 'stdout', '-l', 'eng'], {
-      encoding: 'utf8',
-      timeout: 30_000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch {
-    return '';
-  }
-}
-
-async function ocrBuffer(bytes: Buffer, name: string): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), 'hornet-swarm-ocr-'));
-  const file = join(dir, `frame${/\.[a-z]+$/i.exec(name)?.[0] ?? '.png'}`);
-  try {
-    writeFileSync(file, bytes, { mode: 0o600 });
-    return await new Promise<string>((done) => {
-      execFile('tesseract', [file, 'stdout', '-l', 'eng'], { encoding: 'utf8', timeout: 30_000 }, (error, stdout) => done(error ? '' : stdout));
-    });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+/** Reads a frame through tesseract's stdin, so the unmasked frame is never written to disk and a link is never opened. */
+function ocrBuffer(bytes: Buffer): Promise<string> {
+  return new Promise<string>((done) => {
+    const child = execFile('tesseract', ['stdin', 'stdout', '-l', 'eng'], { encoding: 'utf8', timeout: 30_000 }, (error, stdout) => done(error ? '' : stdout));
+    child.stdin?.on('error', () => undefined);
+    child.stdin?.end(bytes);
+  });
 }
 
 const SESSION_HEADERS = SESSION_HEADER_NAMES;
@@ -259,27 +270,28 @@ type HarLike = {
 /**
  * Masks session headers and cookies in every request, and drops request and response bodies
  * for URLs that match the project's auth_endpoints. Applies to network.har files and to the
- * network log inside trace.zip. Returns how many bodies were dropped.
+ * network log inside trace.zip. A rewritten file is also sealed with `redactor`. Returns how
+ * many bodies were dropped.
  */
-export async function sanitizeNetworkLogs(dir: string, authEndpoints: string[]): Promise<number> {
+export async function sanitizeNetworkLogs(dir: string, authEndpoints: string[], redactor: Redactor): Promise<number> {
   let dropped = 0;
   for (const file of walkFiles(dir)) {
     if (file.endsWith('.har')) {
       let har: { log?: { entries?: HarLike[] } };
       try {
-        har = JSON.parse(readFileSync(file, 'utf8')) as typeof har;
+        har = JSON.parse(readRegularFile(file).toString('utf8')) as typeof har;
       } catch {
         continue;
       }
       const sha1s = new Set<string>();
       for (const entry of har.log?.entries ?? []) dropped += sanitizeEntry(entry, authEndpoints, sha1s);
-      writeFileSync(file, JSON.stringify(har));
+      replaceOrQuarantine(file, () => redactor.seal(JSON.stringify(har)));
       continue;
     }
     if (!file.endsWith('.zip')) continue;
     let zip: JSZip;
     try {
-      zip = await JSZip.loadAsync(readFileSync(file));
+      zip = await JSZip.loadAsync(readRegularFile(file));
     } catch {
       continue;
     }
@@ -307,7 +319,10 @@ export async function sanitizeNetworkLogs(dir: string, authEndpoints: string[]):
         if (name === `resources/${sha1}` || name.startsWith(`resources/${sha1}.`)) zip.remove(name);
       }
     }
-    if (changed) writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+    if (changed) {
+      const next = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+      replaceOrQuarantine(file, () => redactor.sealBytes(next));
+    }
   }
   return dropped;
 }

@@ -16,7 +16,7 @@ let control: ControlServer;
 
 beforeAll(async () => {
   rotateControlToken(project, label, directory);
-  control = await startControlServer({ socketPath, token: '', tokenFile });
+  control = await startControlServer({ socketPath, tokenFile });
 });
 
 afterAll(async () => {

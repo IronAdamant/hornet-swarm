@@ -107,6 +107,7 @@ The Toolshop journeys assert what a working shop does, so each planted bug becom
 - `hornet-swarm creds serve` opens the private login page on `127.0.0.1`.
 - `hornet-swarm creds add <project> <label>` asks for a username and password without showing the password.
 - `hornet-swarm export-evidence <run id> --project <id> --out proof.zip` packs the proof for one run.
+- `hornet-swarm findings <file> [--out report.md]` checks a report's findings (YAML or JSON: `project`, then `findings` with `id`, `severity`, `title`, `claim`, and `evidence`) against the saved runs. It prints them with how often each happened, or lists the evidence that is missing and exits 3.
 - `hornet-swarm accept-baseline <run id> --project <id>` saves the current screenshots, and the words on each screenshotted page, as the comparison point. Each label has its own baseline, because some accounts are meant to look different.
 - `hornet-swarm auth check <id>` checks an authorisation and its signed document.
 - `hornet-swarm stats --project <id>` shows how reliable the site has been over recent runs: pass rate, p50 and p95 timings, retries, and failing streaks, per journey and for sign-in. `--last <n>` picks how many runs. `--json` prints the same for an agent.
@@ -202,6 +203,10 @@ Each runner writes screenshots, traces, and network logs under `~/.hornet-swarm/
 Docker Desktop on this Mac shows the folder to the container as root, and the runner user (uid 10001) can still write there. The files come back owned by the user who started Hornet Swarm, so the controller can read them. Mode `0700` is enough for that. A group shared with the container would let more accounts in, and it is not required.
 
 If that folder already exists and other accounts can open it, startup stops and names the folder. Hornet Swarm does not change its mode.
+
+The same holds for every private file and folder: `~/.hornet-swarm` itself, the project, lease, credential, and token files, and the runner socket folder. Each one is created owner-only, and an existing one that other accounts can open, that is a symbolic link, or that another user owns is refused with the command that fixes it. A home made by an older version is often `0755`. Fix it once with `chmod -R go-rwx ~/.hornet-swarm`.
+
+Runners start on an internal Docker network with only their own control token mounted, read-only. The egress proxy refuses the control relay port (8899) and marks what it forwards, and the relay refuses anything so marked. A runner container that no longer matches these settings is replaced, not reused, the next time it is started.
 
 After each job the files are moved into the run folder, so nothing unredacted stays in the runner folder. Links written by a runner are not followed. Each runner sees only its own control token, read-only. The egress proxy allows only the exact host and port pairs of the project's origins, plus the credential page port on this Mac.
 

@@ -2,7 +2,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { HornetError, acceptBaseline, assertAuthorisationUsable, documentPath, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, inspectPage, measureResources, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
+import { HornetError, acceptBaseline, assertAuthorisationUsable, checkFindings, documentPath, readFindingsFile, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, inspectPage, measureResources, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
 import { Command } from 'commander';
 
 const program = new Command();
@@ -322,6 +322,27 @@ program
       const report = reliabilityReport(opts.project ?? defaultProjectFromHome(), last, undefined, opts.chaos ? 'only' : 'exclude');
       if (opts.json) writeJson(report);
       else process.stdout.write(reliabilityMarkdown(report));
+    } catch (error) {
+      fail(opts.json, messageOf(error), 3);
+    }
+  });
+
+program
+  .command('findings')
+  .description('Check a report\'s findings against saved runs, and print them only if every piece of evidence is there')
+  .argument('<file>', 'findings file (YAML or JSON)')
+  .option('--out <file>', 'also save the checked findings as Markdown')
+  .option('--json', 'print machine-readable JSON')
+  .action((file: string, opts: { out?: string; json?: boolean }) => {
+    try {
+      const result = checkFindings(readFindingsFile(file), opts.out ? { out: opts.out } : {});
+      if (!result.ok) {
+        if (opts.json) writeJson(result);
+        else process.stderr.write(`These findings are not backed by a saved run:\n${result.problems.map((problem) => `- ${problem}`).join('\n')}\n`);
+        process.exit(3);
+      }
+      if (opts.json) writeJson(result);
+      else process.stdout.write(result.markdown);
     } catch (error) {
       fail(opts.json, messageOf(error), 3);
     }

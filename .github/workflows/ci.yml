@@ -11,10 +11,15 @@ on:
 
 jobs:
   linux:
-    name: Build, lint, and unit tests
+    name: Build, typecheck, lint, and unit tests
     runs-on: ubuntu-latest
+    env:
+      # The proof tests replay real past bugs from git history. In CI a missing commit fails them.
+      HORNET_REQUIRE_HISTORY: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -52,6 +57,9 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
 
       - name: Lint
         run: pnpm lint

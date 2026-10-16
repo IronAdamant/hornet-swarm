@@ -29,7 +29,7 @@ beforeAll(async () => {
   process.env.AEGIS_HEADLESS = '1';
   if (chrome) process.env.AEGIS_BROWSER = chrome;
   rotateControlToken('socket-project', 'qa-user-1', directory);
-  control = await startControlServer({ socketPath, token: 'unused-boot-token', tokenFile });
+  control = await startControlServer({ socketPath, tokenFile });
   gateway = await startControlGateway({ port: 0, project: 'socket-project', controlDir: directory });
   browser = await chromium.launch({ headless: true, ...(chrome ? { executablePath: chrome } : {}), args: ['--no-sandbox'] });
 }, 120_000);

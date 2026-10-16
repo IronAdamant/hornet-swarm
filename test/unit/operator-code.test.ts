@@ -176,7 +176,7 @@ describe('operator code', () => {
     expect(har.includes(code)).toBe(false);
 
     const runDir = join(home, 'runs', 'run_code');
-    mkdirSync(runDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
     const packet = await publishParent({
       home,
       projectId: project,

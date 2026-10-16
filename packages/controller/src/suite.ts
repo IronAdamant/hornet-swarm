@@ -1,27 +1,27 @@
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 import {
-  activitiesPermitted,
   analysisSchema,
-  CHAOS_PROFILES,
-  chaosPermitted,
+  copyPrivateFile,
+  copyPrivateTree,
   chaosSequence,
   globalConfigSchema,
   parallelRunners,
   passiveOrigins,
   perRunnerRate,
-  practiceLimits,
-  productionGate,
-  projectDomainsAuthorised,
+  privateDir,
   Redactor,
   rewriteForContainer,
   runResultSchema,
   type Analysis,
   signinBudget,
+  UnredactableError,
   validateJourneyYaml,
+  writePrivateFile,
+  writeRedactedFile,
   type Journey,
   type Project,
   type RunResult,
@@ -46,16 +46,18 @@ import {
   type RichJourney,
   type RichStep,
   type RichUser,
+  unsupportedPass,
 } from '@hornet-swarm/report';
 import { writeAudit } from './audit.js';
-import { assertAuthorisationUsable, loadAuthorisation, loadProject } from './authorisation.js';
+import { loadAuthorisation, loadProject } from './authorisation.js';
 import { injectSecrets, injectTotp, listFields, projectSecretValues, registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
 import { ensureCredentialPage } from './credentials.js';
-import { runnerStatus, startStoppedRunner, stopRunners } from './env.js';
-import { aegisHome, ensureDir } from './home.js';
-import { acquireLease, heartbeatStoredLease, releaseStoredLease, withFileLock, writeFileAtomic } from './leases-store.js';
-import { runWithToken, runnerFetch } from './runner-auth.js';
+import { assertExistingRunnerIsolated, runnerStatus, startStoppedRunner, stopRunners } from './env.js';
+import { aegisHome } from './home.js';
+import { acquireLease, heartbeatStoredLease, releaseStoredLease, withFileLock } from './leases-store.js';
+import { runnerFetch } from './runner-auth.js';
+import { AuthorisedRun, RunnerSession } from './runner-session.js';
 
 
 export { HornetError } from './errors.js';
@@ -146,29 +148,21 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   } catch {
     // Retention is housekeeping. A failure to prune old runs does not stop this one.
   }
-  assertAuthorisationUsable(auth, home);
-  const domains = projectDomainsAuthorised(project, auth);
-  if (!domains.ok) throw new HornetError(domains.reason, 3);
-  const production = productionGate(project, auth, Boolean(request.confirmProduction));
-  if (!production.ok) throw new HornetError(production.reason, 3);
-  const polite = practiceLimits(project, auth);
-  if (!polite.ok) throw new HornetError(polite.reason, 3);
-  if (request.chaos) {
-    if (!CHAOS_PROFILES.includes(request.chaos.profile)) throw new HornetError(`unknown chaos profile: ${request.chaos.profile}. Use one of ${CHAOS_PROFILES.join(', ')}.`, 3);
-    const allowed = chaosPermitted(auth, project);
-    if (!allowed.ok) throw new HornetError(allowed.reason, 3);
-  }
   const includeRegressions = request.includeRegressions ?? true;
-  const journeys = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? [], includeRegressions, request.journeyPathsAllowed ?? true);
-  const knownSecrets = projectSecretValues(project.id, home);
-  for (const journey of journeys) {
-    const checked = validateJourneyYaml(journey.text, project, knownSecrets);
-    // Name the journey, so "steps.19: Invalid input" says which of several files to fix.
-    if (!checked.valid || !checked.journey) throw new HornetError(`${journeyIdOf(journey.text) ?? basename(journey.file)}: ${checked.errors.join('; ')}`, 3);
-    journey.journey = checked.journey;
-  }
-  const activities = activitiesPermitted(auth, { signIn: true, journeys: journeys.map((entry) => entry.journey as Journey) });
-  if (!activities.ok) throw new HornetError(activities.reason, 3);
+  const { run, loaded: journeys } = AuthorisedRun.authorise(
+    { project, auth, agentId, home, confirmProduction: Boolean(request.confirmProduction), ...(request.chaos ? { chaos: request.chaos } : {}) },
+    () => {
+      const loaded = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? [], includeRegressions, request.journeyPathsAllowed ?? true);
+      const knownSecrets = projectSecretValues(project.id, home);
+      for (const journey of loaded) {
+        const checked = validateJourneyYaml(journey.text, project, knownSecrets);
+        // Name the journey, so "steps.19: Invalid input" says which of several files to fix.
+        if (!checked.valid || !checked.journey) throw new HornetError(`${journeyIdOf(journey.text) ?? basename(journey.file)}: ${checked.errors.join('; ')}`, 3);
+        journey.journey = checked.journey;
+      }
+      return { loaded, journeys: loaded.map((entry) => entry.journey as Journey) };
+    },
+  );
   const labels = selectRunLabels({
     phase1Only: Boolean(request.phase1Only),
     ...(request.users ? { users: request.users } : {}),
@@ -180,7 +174,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   const deadline = Date.now() + project.limits.max_run_duration_min * 60_000;
   const ttlMs = request.leaseTtlMs ?? 30 * 60 * 1000;
   const via = request.via ?? 'cli';
-  const runDir = ensureDir(join(home, 'runs', runId));
+  const runDir = privateDir(join(home, 'runs', runId));
   const rich: RichUser[] = [];
   let killed = false;
   let durationStop = false;
@@ -261,7 +255,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         continue;
       }
       const held = await hold(label, async () => {
-        const phase1 = await runPhase1(project, label, runId, home, agentId, deadline, totpCodes);
+        const phase1 = await runPhase1(run, label, runId, deadline, totpCodes);
         phaseResults.push({ label, report: phase1.report });
         if (phase1.killed) killed = true;
         if (phase1.report.blocked_reason === 'duration') durationStop = true;
@@ -284,7 +278,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         const held = await hold(item.label, async () => {
           for (const entry of runnable) {
             if (killed || durationStop) break;
-            const played = await runJourney(project, item.label, entry.journey as Journey, runId, home, deadline, totpCodes, request.chaos);
+            const played = await runJourney(run, item.label, entry.journey as Journey, runId, deadline, totpCodes, request.chaos);
             if (played.killed) killed = true;
             if (played.duration) durationStop = true;
             userJourneys.push(played.journey);
@@ -378,13 +372,12 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   });
   const summary = summaryMarkdown(rich, status, request.chaos);
   const artifacts = collectArtifacts(runDir);
-  writeRunReports(runDir, result, analysis, summary, undefined, artifacts);
-  writeFileSync(join(runDir, 'junit.xml'), junitXml(result));
   const redactor = new Redactor();
   registerProjectSecrets(project.id, redactor, home);
   for (const code of totpCodes) redactor.register('totp_code', code);
-  await redactTree(runDir, redactor);
-  const hits = await scanTree(runDir, redactor);
+  const withheld = writeRunReports(runDir, result, analysis, summary, redactor, artifacts);
+  withheld.push(...(await redactTree(runDir, redactor)));
+  const hits = [...withheld, ...(await scanTree(runDir, redactor))];
   if (hits.length > 0) {
     for (const hit of hits) quarantineHit(hit);
     const failedSummary = summaryMarkdown(rich, 'redaction_failure');
@@ -477,15 +470,8 @@ async function contained(work: () => Promise<{ report: JobReport; killed: boolea
   }
 }
 
-async function runPhase1(
-  project: Project,
-  label: string,
-  runId: string,
-  home: string,
-  _agent: string,
-  deadline: number,
-  codes: string[],
-): Promise<{ report: JobReport; killed: boolean }> {
+async function runPhase1(run: AuthorisedRun, label: string, runId: string, deadline: number, codes: string[]): Promise<{ report: JobReport; killed: boolean }> {
+  const { project, home } = run;
   const budget = signinState(home, project, label);
   if (!budget.allowed) {
     return {
@@ -510,7 +496,7 @@ async function runPhase1(
     retries: 0,
     steps,
   };
-  return contained(() => execute(project, label, journey, runId, home, deadline, undefined, codes));
+  return contained(() => execute(run, label, journey, runId, deadline, undefined, codes));
 }
 
 /** The project's own sign-in, as journey steps: the sign-in check runs these, and so does an inspection. */
@@ -527,20 +513,19 @@ export function signInSteps(project: Project, label: string): Journey['steps'] {
 }
 
 async function runJourney(
-  project: Project,
+  run: AuthorisedRun,
   label: string,
   journey: Journey,
   runId: string,
-  home: string,
   deadline: number,
   codes: string[],
   chaos?: { profile: string; seed: string },
 ): Promise<{ journey: RichJourney; killed: boolean; duration: boolean }> {
-  let played = await contained(() => execute(project, label, journey, runId, home, deadline, chaos, codes));
+  let played = await contained(() => execute(run, label, journey, runId, deadline, chaos, codes));
   let tries = 0;
   while (!played.killed && played.report.blocked_reason !== 'duration' && played.report.status === 'failed' && tries < journey.retries) {
     tries += 1;
-    played = await contained(() => execute(project, label, journey, runId, home, deadline, chaos, codes));
+    played = await contained(() => execute(run, label, journey, runId, deadline, chaos, codes));
   }
   return {
     killed: played.killed,
@@ -550,28 +535,27 @@ async function runJourney(
 }
 
 async function execute(
-  project: Project,
+  run: AuthorisedRun,
   label: string,
   journey: Journey,
   runId: string,
-  home: string,
   deadline: number,
   chaos?: { profile: string; seed: string },
   codes: string[] = [],
 ): Promise<{ report: JobReport; killed: boolean }> {
-  return runWithToken(project.id, label, home, () => executeIssued(project, label, journey, runId, home, deadline, chaos, codes));
+  return RunnerSession.open(run, label, endpointFor, (session) => executeIssued(session, journey, runId, deadline, chaos, codes));
 }
 
 async function executeIssued(
-  project: Project,
-  label: string,
+  session: RunnerSession,
   journey: Journey,
   runId: string,
-  home: string,
   deadline: number,
   chaos?: { profile: string; seed: string },
   codes: string[] = [],
 ): Promise<{ report: JobReport; killed: boolean }> {
+  const { project, home } = session.run;
+  const { label } = session;
   // A run stopped before this job is not handed the login at all.
   const stopNow = existsSync(join(home, 'KILL')) ? 'kill' : Date.now() >= deadline ? 'duration' : undefined;
   if (stopNow) {
@@ -584,11 +568,11 @@ async function executeIssued(
       stopRunners,
     });
   }
-  const endpoint = await endpointFor(project.id, label);
+  const endpoint = await session.endpoint();
   // A guest has no login to hand over. A journey that asks for one fails at its fill step and says so.
-  const injected = listFields(project.id, label, home).length > 0 ? await injectSecrets(project.id, label, endpoint, home) : { ok: true, handles: [] };
+  const injected = listFields(project.id, label, home).length > 0 ? await injectSecrets(session) : { ok: true, handles: [] };
   if (project.auth.totp.enabled) {
-    const totp = await injectTotp(project.id, label, endpoint, home);
+    const totp = await injectTotp(session);
     if (totp.code) codes.push(totp.code);
   }
   const target = containerTarget(project);
@@ -639,12 +623,12 @@ async function executeIssued(
     else if (Date.now() >= deadline) void arm('duration');
   }, 400);
   try {
-    const response = await runnerFetch(project.id, endpoint, '/v1/jobs', {
+    const response = await session.fetch('/v1/jobs', {
       method: 'POST',
       body: JSON.stringify(body),
       signal: controller.signal,
-    }, home);
-    const report = (await response.json()) as JobReport;
+    });
+    const report = vouchedReport((await response.json()) as JobReport, journey.steps.length);
     await moveArtifacts(home, project, label, runId, journey.id);
     rewriteArtifacts(home, project.id, label, runId, journey.id, report);
     void injected;
@@ -729,6 +713,7 @@ async function closeOperatorGate(gate: OperatorGateHandle): Promise<void> {
 
 async function endpointFor(projectId: string, label: string): Promise<string> {
   const missing = `No healthy runner for ${label}. Start one with: hornet-swarm env up --project ${projectId}`;
+  await assertExistingRunnerIsolated(projectId, label);
   const runner = await runnerStatus(projectId, label);
   if (runner.health === 'healthy' && runner.endpoint) return runner.endpoint;
   const started = await startStoppedRunner(projectId, label);
@@ -785,7 +770,7 @@ export function writeErrorOutcome(input: {
       authorisation_id: input.authorisationId,
       redaction: 'pass',
     });
-    writeFileSync(join(input.runDir, 'run.json'), redactor.redact(`${JSON.stringify(result, null, 2)}\n`));
+    writeRedactedFile(join(input.runDir, 'run.json'), redactor.seal(`${JSON.stringify(result, null, 2)}\n`));
     run = true;
   } catch {
     run = false;
@@ -810,10 +795,8 @@ export function writeErrorOutcome(input: {
       max_run_duration_min: input.maxRunDurationMin ?? 30,
       deadline: input.deadline ? new Date(input.deadline).toISOString() : '',
     };
-    let encoded = JSON.stringify(body, null, 2);
-    if (redactor.contains(encoded) || redactor.contains(input.message)) encoded = redactor.redact(encoded);
-    ensureDir(join(input.home, 'projects', input.projectId));
-    writeFileSync(packetPath, `${encoded}\n`);
+    privateDir(join(input.home, 'projects', input.projectId));
+    writeRedactedFile(packetPath, redactor.seal(`${JSON.stringify(body, null, 2)}\n`));
     packet = true;
   } catch {
     packet = false;
@@ -902,6 +885,12 @@ function applyBaselines(home: string, project: string, users: RichUser[]): void 
   }
 }
 
+function isInside(root: string, file: string): boolean {
+  const base = resolve(root);
+  const target = resolve(file);
+  return target === base || target.startsWith(`${base}${sep}`);
+}
+
 export function acceptBaseline(project: string, runId: string, home = aegisHome()): { ok: true } {
   if (!/^[a-z0-9-]+$/.test(project)) throw new HornetError('Unknown project.', 3);
   if (!RUN_ID.test(runId)) throw new HornetError('Unknown run id.', 3);
@@ -915,20 +904,20 @@ export function acceptBaseline(project: string, runId: string, home = aegisHome(
     if (!/^qa-user-\d+$/.test(user.label)) continue;
     for (const journey of user.journeys) {
       if (!/^[a-z0-9-]+$/.test(journey.id)) continue;
-      const dir = ensureDir(join(home, 'baselines', project, user.label, journey.id));
+      const dir = privateDir(join(home, 'baselines', project, user.label, journey.id));
       const timings: Record<string, number> = {};
       for (const step of journey.steps) {
         timings[String(step.index)] = step.duration_ms;
         timings[`console-${step.index}`] = step.console_error_count ?? 0;
         timings[`network-${step.index}`] = step.network_errors?.length ?? 0;
-        // Only files inside this run are copied. The paths come from the run's own report.
+        // Only files inside this run are copied. A prefix check still allows runDir/../../elsewhere.
         const shot = step.screenshot_paths?.[0];
-        if (!shot || !shot.startsWith(`${runDir}/`) || !existsSync(shot)) continue;
-        copyFileSync(shot, join(dir, `${step.index}.png`));
+        if (!shot || !isInside(runDir, shot) || !existsSync(shot)) continue;
+        copyPrivateFile(shot, join(dir, `${step.index}.png`));
         const text = shot.replace(/\.png$/, '.txt');
-        if (existsSync(text)) copyFileSync(text, join(dir, `${step.index}.txt`));
+        if (existsSync(text)) copyPrivateFile(text, join(dir, `${step.index}.txt`));
       }
-      writeFileSync(join(dir, 'timings.json'), `${JSON.stringify(timings)}\n`);
+      writePrivateFile(join(dir, 'timings.json'), `${JSON.stringify(timings)}\n`);
     }
   }
   return { ok: true };
@@ -938,7 +927,7 @@ export async function exportEvidence(project: string, runId: string, destination
   const redactor = new Redactor();
   registerProjectSecrets(project, redactor, home);
   const runDir = join(home, 'runs', runId);
-  await redactTree(runDir, redactor);
+  if ((await redactTree(runDir, redactor)).length > 0) throw new Error('evidence failed the redaction scan');
   await writeEvidenceZip(runDir, destination, redactor);
   return { ok: true, path: destination };
 }
@@ -1045,7 +1034,7 @@ export async function moveArtifacts(home: string, project: Project, label: strin
   // The run's folder is first moved out of the runner's reach in one rename. A rename moves a
   // link itself rather than what it points to, so a runner that put a link where its folder
   // belongs can never make the copy or the delete below reach a file elsewhere on this Mac.
-  const staged = join(ensureDir(join(home, 'staging')), `${label}-${runId}-${randomBytes(4).toString('hex')}`);
+  const staged = join(privateDir(join(home, 'staging')), `${label}-${runId}-${randomBytes(4).toString('hex')}`);
   renameSync(runEntry, staged);
   try {
     const source = join(staged, journeyId);
@@ -1055,9 +1044,11 @@ export async function moveArtifacts(home: string, project: Project, label: strin
       throw new HornetError('The runner wrote a link where its results belong. Nothing was copied, and the link was removed.', 4);
     }
     if (!lstatExists(source)) return;
-    const destination = ensureDir(join(home, 'runs', runId, label, journeyId));
-    cpSync(source, destination, { recursive: true, filter: (path) => !lstatSync(path).isSymbolicLink() });
-    await sanitizeNetworkLogs(destination, authEndpointPatterns(project));
+    const destination = privateDir(join(home, 'runs', runId, label, journeyId));
+    copyPrivateTree(source, destination);
+    const redactor = new Redactor();
+    registerProjectSecrets(project.id, redactor, home);
+    await sanitizeNetworkLogs(destination, authEndpointPatterns(project), redactor);
   } finally {
     if (lstatExists(staged) && lstatSync(staged).isSymbolicLink()) unlinkSync(staged);
     else rmSync(staged, { recursive: true, force: true });
@@ -1143,9 +1134,9 @@ export function saveAgentJourney(projectId: string, yamlText: string, home = aeg
     throw new HornetError(`A project journey already uses the id ${id}. Pick another id.`, 3);
   }
   const dir = agentJourneysDir(home, project.id);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  privateDir(dir);
   const path = join(dir, `${id}.journey.yaml`);
-  writeFileAtomic(path, yamlText.endsWith('\n') ? yamlText : `${yamlText}\n`);
+  writePrivateFile(path, yamlText.endsWith('\n') ? yamlText : `${yamlText}\n`);
   return { path, id };
 }
 
@@ -1201,12 +1192,12 @@ function regressionFiles(home: string, project: string): string[] {
  */
 function rememberRegression(home: string, project: string, entry: { file: string; journey?: Journey }, outcome: 'fail' | 'pass' | 'none'): void {
   if (!entry.journey || outcome === 'none') return;
-  const dir = ensureDir(join(home, 'regressions', project));
+  const dir = privateDir(join(home, 'regressions', project));
   const file = join(dir, `${entry.journey.id}.journey.yaml`);
   const ledgerPath = join(dir, `${entry.journey.id}.json`);
   if (outcome === 'fail') {
-    if (entry.file !== file) writeFileSync(file, readFileSync(entry.file));
-    writeFileSync(ledgerPath, `${JSON.stringify({ state: 'open', consecutive: 0 })}\n`);
+    if (entry.file !== file) writePrivateFile(file, readFileSync(entry.file));
+    writePrivateFile(ledgerPath, `${JSON.stringify({ state: 'open', consecutive: 0 })}\n`);
     return;
   }
   if (!existsSync(ledgerPath)) return;
@@ -1214,7 +1205,7 @@ function rememberRegression(home: string, project: string, entry: { file: string
   if (ledger.state !== 'open') return;
   const consecutive = ledger.consecutive + 1;
   const fixed = consecutive >= 3;
-  writeFileSync(ledgerPath, `${JSON.stringify({ state: fixed ? 'fixed' : 'open', consecutive })}\n`);
+  writePrivateFile(ledgerPath, `${JSON.stringify({ state: fixed ? 'fixed' : 'open', consecutive })}\n`);
   if (fixed) rmSync(file, { force: true });
 }
 
@@ -1257,7 +1248,7 @@ function recordSignin(home: string, project: string, label: string): void {
     const cutoff = Date.now() - 60 * 60 * 1000;
     const current = readSignins(home, project).filter((entry) => entry.at >= cutoff);
     current.push({ label, at: Date.now() });
-    writeFileAtomic(file, `${JSON.stringify(current)}\n`);
+    writePrivateFile(file, `${JSON.stringify(current)}\n`);
   });
 }
 
@@ -1276,6 +1267,15 @@ function phaseRecord(report: JobReport): RichUser['phase1'] {
     ...(report.blocked_reason ? { blocked_reason: report.blocked_reason } : {}),
     ...(report.steps.find((step) => step.error)?.error ? { error: report.steps.find((step) => step.error)?.error } : {}),
   };
+}
+
+/** A pass the runner cannot show step by step becomes a harness error, with the reason as its last step. */
+export function vouchedReport(report: JobReport, sentSteps: number): JobReport {
+  const problem = unsupportedPass(report, sentSteps);
+  if (!problem) return report;
+  const now = new Date().toISOString();
+  const marker: RichStep = { index: report.steps.length, type: 'check', status: 'error', duration_ms: 0, started_at: now, finished_at: now, error: problem };
+  return { ...report, ok: false, status: 'error', steps: [...report.steps, marker] };
 }
 
 export function journeyFromJob(report: JobReport, meta: { id: string; name: string; tries: number }): RichJourney {
@@ -1371,20 +1371,34 @@ function totals(users: RichUser[]): RunResult['totals'] {
   };
 }
 
+/** Returns the files left unwritten because redaction could not clean them. The caller treats them as redaction hits. */
 function writeRunReports(
   runDir: string,
   result: RunResult,
   analysis: Analysis,
   summary: string,
-  redactor?: Redactor,
+  redactor: Redactor,
   artifacts?: { screenshots: string[]; traces: string[] },
-): void {
-  const emit = (text: string) => (redactor ? redactor.redact(text) : text);
-  writeFileSync(join(runDir, 'run.json'), emit(`${JSON.stringify(result, null, 2)}\n`));
-  writeFileSync(join(runDir, 'summary.md'), emit(summary));
-  writeFileSync(join(runDir, 'analysis.json'), emit(`${JSON.stringify(analysis, null, 2)}\n`));
-  writeFileSync(join(runDir, 'analysis.md'), emit(analysisMarkdown(analysis)));
-  writeFileSync(join(runDir, 'report.html'), emit(htmlReport(result, summary, artifacts)));
+): string[] {
+  const reports: [string, () => string][] = [
+    ['run.json', () => `${JSON.stringify(result, null, 2)}\n`],
+    ['summary.md', () => summary],
+    ['analysis.json', () => `${JSON.stringify(analysis, null, 2)}\n`],
+    ['analysis.md', () => analysisMarkdown(analysis)],
+    ['report.html', () => htmlReport(result, summary, artifacts)],
+    ['junit.xml', () => junitXml(result)],
+  ];
+  const withheld: string[] = [];
+  for (const [name, render] of reports) {
+    const file = join(runDir, name);
+    try {
+      writeRedactedFile(file, redactor.seal(render()));
+    } catch (error) {
+      if (!(error instanceof UnredactableError)) throw error;
+      withheld.push(file);
+    }
+  }
+  return withheld;
 }
 
 function collectArtifacts(runDir: string): { screenshots: string[]; texts: string[]; traces: string[] } {
@@ -1472,11 +1486,11 @@ export async function publishParent(input: {
     packet.trace_paths = [];
     packet.html_path = '';
     encoded = JSON.stringify(packet, null, 2);
-    if (input.redactor.contains(encoded)) encoded = input.redactor.redact(encoded);
   }
-  ensureDir(join(input.home, 'projects', input.projectId));
-  writeFileSync(packetPath, `${encoded}\n`);
-  return JSON.parse(encoded) as ParentPacket;
+  const sealed = input.redactor.seal(`${encoded}\n`);
+  privateDir(join(input.home, 'projects', input.projectId));
+  writeRedactedFile(packetPath, sealed);
+  return JSON.parse(sealed) as ParentPacket;
 }
 
 function failAnalysis(analysis: Analysis): Analysis {
@@ -1528,9 +1542,9 @@ export async function rescanRun(runDir: string, project: string, home = aegisHom
   const summary = summaryMarkdown([], 'redaction_failure');
   if (analysis) writeRunReports(runDir, result, failAnalysis(analysis), summary, redactor);
   else {
-    writeFileSync(file, redactor.redact(`${JSON.stringify(result, null, 2)}\n`));
-    writeFileSync(join(runDir, 'summary.md'), redactor.redact(summary));
-    writeFileSync(join(runDir, 'report.html'), redactor.redact(htmlReport(result, summary)));
+    writeRedactedFile(file, redactor.seal(`${JSON.stringify(result, null, 2)}\n`));
+    writeRedactedFile(join(runDir, 'summary.md'), redactor.seal(summary));
+    writeRedactedFile(join(runDir, 'report.html'), redactor.seal(htmlReport(result, summary)));
   }
   writeAudit({ interface: 'cli', action: 'redaction_failure', project, run_id: result.run_id, result: 'quarantined' }, redactor, home);
   return { ok: false, status: 'redaction_failure' };

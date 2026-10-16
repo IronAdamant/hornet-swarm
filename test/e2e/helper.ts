@@ -39,7 +39,7 @@ export function hornet(args: string[], input?: string, timeout = 180_000): { sta
  * A run refuses an authorisation whose document is missing or has changed.
  */
 export function localDocumentHash(name = 'local.txt'): string {
-  mkdirSync(join(home, 'authorisations'), { recursive: true });
+  mkdirSync(join(home, 'authorisations'), { recursive: true, mode: 0o700 });
   const body = `Offline fixture authorisation (${name}). Test data only.\n`;
   writeFileSync(join(home, 'authorisations', name), body);
   return createHash('sha256').update(body).digest('hex');

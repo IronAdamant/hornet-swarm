@@ -1,21 +1,31 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
 import { cpus, networkInterfaces, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import type { Project } from '@hornet-swarm/core';
-import { projectSchema, rewriteForContainer } from '@hornet-swarm/core';
+import { copyPrivateFile, privateDir, projectSchema, rewriteForContainer, writePrivateFile } from '@hornet-swarm/core';
 import type Docker from 'dockerode';
 import { createDocker, detectRuntime } from './docker.js';
-import { aegisHome, ensureDir, ensureHome } from './home.js';
-import { ensureControlToken, runnerFetch } from './runner-auth.js';
+import { aegisHome, ensureHome } from './home.js';
+import { controlTokenDir, ensureControlToken, runnerFetch } from './runner-auth.js';
+import { HornetError } from './errors.js';
+import {
+  assertIsolated,
+  CONTROL_PORT,
+  PROXY_IMAGE,
+  proxyContainerOptions,
+  proxyIsolationProblems,
+  relayReachableThrough,
+  RUNNER_IMAGE,
+  runnerContainerOptions,
+  runnerIsolationProblems,
+  type IsolationView,
+} from './runner-isolation.js';
 import { containerName, controlVolume, labelsForCount, networkName, parseMemory, profileVolume, proxyName } from './units.js';
 
-const RUNNER_IMAGE = 'hornet-swarm-runner:local';
-const PROXY_IMAGE = 'hornet-swarm-proxy:local';
-const CONTROL_PORT = '8899/tcp';
 
 export type RunnerStatus = {
   label: string;
@@ -47,25 +57,16 @@ type RunnerSettings = {
   rps: number;
 };
 
+/** An existing directory that other accounts can open is refused. Its mode is left unchanged. */
 export function prepareRunnerTokenDir(project: string, label: string, home = aegisHome()): string {
-  const tokenDir = join(home, 'control', project);
-  if (!existsSync(tokenDir)) chmodSync(ensureDir(tokenDir), 0o700);
-  // An existing directory that other accounts can open is refused. Its mode is left unchanged.
+  const tokenDir = privateDir(controlTokenDir(project, home), { looseMessage: 'The control token directory is open to other accounts.' });
   ensureControlToken(project, label, home);
   return tokenDir;
 }
 
 export function prepareRunnerOutputDir(project: string, label: string, home = aegisHome()): string {
   const directory = join(home, 'runners', project, label);
-  if (!existsSync(directory)) {
-    chmodSync(ensureDir(directory), 0o700);
-    return directory;
-  }
-  const actual = statSync(directory).mode & 0o777;
-  if ((actual & ~0o700) !== 0) {
-    throw new Error(`The runner output folder is open to other accounts: ${directory}`);
-  }
-  return directory;
+  return privateDir(directory, { looseMessage: `The runner output folder is open to other accounts: ${directory}` });
 }
 
 export async function envUp(options: { project: string; count?: number }): Promise<EnvStatus> {
@@ -117,11 +118,23 @@ export async function stopRunners(project: string, label?: string): Promise<void
   );
 }
 
+/**
+ * Refuses a runner that is already on the machine but no longer matches the isolation spec.
+ * `env up` replaces that container. A job must not start it or talk to it.
+ */
+export async function assertExistingRunnerIsolated(project: string, label: string): Promise<void> {
+  const docker = createDocker();
+  const existing = await findContainer(docker, containerName(project, label));
+  if (!existing) return;
+  assertIsolated(`The runner for ${label}`, runnerProblemsFromInspect(await existing.inspect(), project, label));
+}
+
 export async function startStoppedRunner(project: string, label: string): Promise<boolean> {
   const docker = createDocker();
   const existing = await findContainer(docker, containerName(project, label));
   if (!existing) return false;
   const inspected = await existing.inspect();
+  if (runnerProblemsFromInspect(inspected, project, label).length > 0) return false;
   if (!inspected.State.Running) {
     try {
       await existing.start();
@@ -309,7 +322,7 @@ export function hostDescription(info: { OperatingSystem?: string; Name?: string;
  * packaged figures. The repo's own files are never changed by a command.
  */
 function writeMeasured(table: Record<string, unknown>): void {
-  writeFileSync(join(ensureHome(), 'measured-resources.json'), `${JSON.stringify(table, null, 2)}\n`);
+  writePrivateFile(join(ensureHome(), 'measured-resources.json'), `${JSON.stringify(table, null, 2)}\n`);
 }
 
 function repoRoot(): string {
@@ -352,8 +365,8 @@ function runtimePath(project: string): string {
 
 /** `chosen` records a count the owner picked with --count, which sticks. A default follows the project file. */
 function saveRuntime(project: string, settings: RunnerSettings, chosen: boolean): void {
-  ensureDir(join(aegisHome(), 'projects', project));
-  writeFileSync(runtimePath(project), `${JSON.stringify({ count: settings.count, labels: settings.labels, chosen })}\n`);
+  privateDir(join(aegisHome(), 'projects', project));
+  writePrivateFile(runtimePath(project), `${JSON.stringify({ count: settings.count, labels: settings.labels, chosen })}\n`);
 }
 
 /**
@@ -424,9 +437,15 @@ function localAddresses(): string[] {
 
 async function ensureNetwork(docker: Docker, project: string): Promise<void> {
   const name = networkName(project);
+  let existing: { Internal?: boolean } | undefined;
   try {
-    await docker.getNetwork(name).inspect();
+    existing = (await docker.getNetwork(name).inspect()) as { Internal?: boolean };
   } catch {
+    existing = undefined;
+  }
+  // A runner's only way out is the egress proxy. A network with its own route out is never used.
+  if (existing && !existing.Internal) throw new HornetError(`The network ${name} has a route out of Docker. Nothing was started. Run: hornet-swarm env reset --project ${project}`, 4);
+  if (!existing) {
     await docker.createNetwork({
       Name: name,
       Driver: 'bridge',
@@ -458,24 +477,17 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
       // recreate below
     }
   }
-  const container = await docker.createContainer({
-    name,
-    Image: PROXY_IMAGE,
-    Labels: { 'hornet-swarm.project': project, 'hornet-swarm.role': 'proxy' },
-    Env: env,
-    ExposedPorts: { '8888/tcp': {}, '8899/tcp': {} },
-    HostConfig: {
-      NetworkMode: 'bridge',
-      Binds: [`${controlVolume(project)}:/control`],
-      PortBindings: { '8899/tcp': [{ HostIp: '127.0.0.1', HostPort: '' }] },
-      Memory: 128 * 1024 * 1024,
-      MemorySwap: 128 * 1024 * 1024,
-      ReadonlyRootfs: false,
-    },
-  });
+  const options = proxyContainerOptions(project, name, env);
+  assertIsolated('The proxy', proxyIsolationProblems({ env: options.Env, host: options.HostConfig }));
+  const container = await docker.createContainer(options);
   await container.start();
   // Bind 8899 to the bridge address before the project network exists, so the browser cannot open it.
   await waitForBridgeGateway(docker, project);
+  const opened = relayReachableThrough(settings.allowHosts, await controlPort(docker, project));
+  if (opened.length > 0) {
+    await container.remove({ force: true }).catch(() => undefined);
+    assertIsolated('The proxy', [`its allow list reaches the control relay: ${opened.join(', ')}`]);
+  }
   await docker.getNetwork(networkName(project)).connect({ Container: container.id });
 }
 
@@ -488,6 +500,7 @@ async function proxyCurrent(docker: Docker, container: Docker.Container, env: st
     return (
       inspected.State.Running &&
       inspected.Image === wanted &&
+      proxyIsolationProblems({ env: inspected.Config.Env ?? [], host: inspected.HostConfig }).length === 0 &&
       env.every((entry) => current.has(entry)) &&
       networks.includes(networkName(project)) &&
       (await controlPort(docker, project)) !== null
@@ -495,6 +508,37 @@ async function proxyCurrent(docker: Docker, container: Docker.Container, env: st
   } catch {
     return false;
   }
+}
+
+function runnerProblemsFromInspect(
+  inspected: {
+    Config?: { Env?: string[] | null };
+    HostConfig?: IsolationView['host'];
+    NetworkSettings?: { Networks?: Record<string, unknown> | null };
+  },
+  project: string,
+  label: string,
+): string[] {
+  const host = inspected.HostConfig ?? {};
+  return runnerIsolationProblems(
+    {
+      env: [...(inspected.Config?.Env ?? [])],
+      host: {
+        NetworkMode: host.NetworkMode,
+        Binds: host.Binds,
+        PortBindings: host.PortBindings,
+        PublishAllPorts: host.PublishAllPorts,
+        Privileged: host.Privileged,
+        CapAdd: host.CapAdd,
+        CapDrop: host.CapDrop,
+        SecurityOpt: host.SecurityOpt,
+        ReadonlyRootfs: host.ReadonlyRootfs,
+      },
+      networks: Object.keys(inspected.NetworkSettings?.Networks ?? {}),
+    },
+    project,
+    label,
+  );
 }
 
 async function ensureRunner(docker: Docker, project: string, label: string, settings: RunnerSettings): Promise<void> {
@@ -511,8 +555,11 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
     } catch {
       wanted = '';
     }
-    const sameImage = wanted === '' || inspected.Image === wanted;
-    if (sameImage) {
+    // An image we could not identify is not reused. Treating that failure as a match kept whatever was already there.
+    const sameImage = wanted !== '' && inspected.Image === wanted;
+    // A runner made by an older version, or changed by hand, is replaced rather than trusted.
+    const isolated = runnerProblemsFromInspect(inspected, project, label).length === 0;
+    if (sameImage && isolated) {
       if (!inspected.State.Running) await existing.start();
       const endpoint = await waitForEndpoint(docker, project, label);
       const healthy = await waitHealthy(project, endpoint, 20_000);
@@ -530,34 +577,9 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   const seccomp = JSON.stringify(JSON.parse(readFileSync(installSeccomp(), 'utf8')));
   if (!seccomp.startsWith('{')) throw new Error(`seccomp did not encode as JSON: ${seccomp.slice(0, 30)}`);
   const memory = parseMemory(settings.memory);
-  const container = await docker.createContainer({
-    name,
-    Image: RUNNER_IMAGE,
-    // Root keeps SETUID so entrypoint.sh can drop Node, then Chrome, to other users.
-    User: '0:0',
-    Labels: { 'hornet-swarm.project': project, 'hornet-swarm.user': label, 'hornet-swarm.role': 'runner' },
-    Env: [
-      `AEGIS_PROXY=http://${proxyName(project)}:8888`,
-      `AEGIS_LABEL=${label}`,
-      `AEGIS_CONTROL_SOCKET=/control/${label}.sock`,
-      `AEGIS_CONTROL_TOKEN_FILE=/tokens/${label}.token`,
-    ],
-    HostConfig: {
-      ReadonlyRootfs: true,
-      Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=256m' },
-      // Only this label's token is mounted, read-only. A runner cannot read another runner's token.
-      Binds: [`${volume}:/home/runner/profile`, `${outDir}:/out`, `${controlVolume(project)}:/control`, `${join(tokenDir, `${label}.token`)}:/tokens/${label}.token:ro`],
-      Memory: memory,
-      MemorySwap: memory,
-      NanoCpus: Math.round(settings.cpus * 1e9),
-      CapAdd: ['SETUID', 'SETGID', 'SETPCAP'],
-      CapDrop: ['ALL'],
-      SecurityOpt: ['no-new-privileges:true', `seccomp=${seccomp}`],
-      PidsLimit: 512,
-      ShmSize: 512 * 1024 * 1024,
-      NetworkMode: networkName(project),
-    },
-  });
+  const options = runnerContainerOptions({ project, label, name, volume, outDir, tokenFile: join(tokenDir, `${label}.token`), seccomp, memory, cpus: settings.cpus });
+  assertIsolated(`The runner for ${label}`, runnerIsolationProblems({ env: options.Env, host: options.HostConfig }, project, label));
+  const container = await docker.createContainer(options);
   await container.start();
   const endpoint = await waitForEndpoint(docker, project, label);
   const healthy = await waitHealthy(project, endpoint, 20_000);
@@ -569,7 +591,7 @@ function installSeccomp(): string {
   const repoSource = join(process.cwd(), 'images/runner/seccomp.json');
   const dest = join(ensureHome(), 'seccomp.json');
   const from = exists(source) ? source : repoSource;
-  copyFileSync(from, dest);
+  copyPrivateFile(from, dest);
   return dest;
 }
 
