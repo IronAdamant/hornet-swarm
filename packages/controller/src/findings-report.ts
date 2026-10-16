@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, join, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
-import { Redactor, runResultSchema, writeRedactedFile } from '@hornet-swarm/core';
+import { readRegularFile, Redactor, runResultSchema, writeRedactedFile } from '@hornet-swarm/core';
 import { findingsMarkdown, verifyFindings, type SavedRun } from '@hornet-swarm/report';
 import { registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
@@ -35,6 +35,35 @@ export function readFindingsFile(path: string): unknown {
   }
 }
 
+/** A regular file inside the run folder. A link is not evidence and is not followed. */
+function runFileIsRegular(runDir: string, relativePath: string): boolean {
+  const file = pathInside(runDir, relativePath);
+  if (!file) return false;
+  try {
+    return lstatSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function readRunFile(runDir: string, relativePath: string): string | undefined {
+  const file = pathInside(runDir, relativePath);
+  if (!file) return undefined;
+  try {
+    if (!lstatSync(file).isFile()) return undefined;
+    return readRegularFile(file).toString('utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function pathInside(runDir: string, relativePath: string): string | undefined {
+  const root = resolve(runDir);
+  const file = resolve(runDir, relativePath);
+  if (file !== root && !file.startsWith(`${root}${sep}`)) return undefined;
+  return file;
+}
+
 function savedRuns(project: string, home: string): Map<string, SavedRun> {
   const root = join(home, 'runs');
   const runs = new Map<string, SavedRun>();
@@ -52,15 +81,14 @@ function savedRuns(project: string, home: string): Map<string, SavedRun> {
     runs.set(runId, {
       result,
       pageTexts: (label, journeyId, index) => {
-        const dir = join(runDir, label, journeyId);
         const step = result.users.find((user) => user.label === label)?.journeys.find((journey) => journey.id === journeyId)?.steps.find((entry) => entry.index === index);
         const names = [`failed-step-${index}.txt`, ...(step?.screenshot ? [basename(step.screenshot).replace(/\.png$/, '.txt')] : [])];
         return names.flatMap((name) => {
-          const file = join(dir, name);
-          return existsSync(file) ? [readFileSync(file, 'utf8')] : [];
+          const text = readRunFile(runDir, join(label, journeyId, name));
+          return text === undefined ? [] : [text];
         });
       },
-      hasFile: (relativePath) => existsSync(join(runDir, relativePath)),
+      hasFile: (relativePath) => runFileIsRegular(runDir, relativePath),
     });
   }
   return runs;

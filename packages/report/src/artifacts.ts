@@ -1,6 +1,6 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { readdirSync, unlinkSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import JSZip from 'jszip';
 import pixelmatch from 'pixelmatch';
@@ -9,6 +9,7 @@ import {
   fixedText,
   matchGlob,
   quoteBrokenCardJson,
+  readRegularFile,
   Redactor,
   SESSION_HEADER_NAMES,
   UnredactableError,
@@ -44,7 +45,7 @@ export function walkFiles(dir: string): string[] {
 export async function redactTree(dir: string, redactor: Redactor): Promise<string[]> {
   const withheld: string[] = [];
   for (const file of walkFiles(dir)) {
-    const done = file.endsWith('.zip') ? await redactZip(file, redactor) : file.endsWith('.png') ? redactPng(file, redactor) : redactText(file, redactor);
+    const done = file.endsWith('.zip') ? await redactZip(file, redactor) : file.endsWith('.png') ? await redactPng(file, redactor) : redactText(file, redactor);
     if (done === 'withheld') withheld.push(file);
   }
   return withheld;
@@ -53,7 +54,7 @@ export async function redactTree(dir: string, redactor: Redactor): Promise<strin
 export async function scanTree(dir: string, redactor: Redactor): Promise<string[]> {
   const hits: string[] = [];
   for (const file of walkFiles(dir)) {
-    const bytes = readFileSync(file);
+    const bytes = readRegularFile(file);
     if (file.endsWith('.zip')) {
       hits.push(...(await scanZipBuffer(bytes, redactor, file)));
       continue;
@@ -101,7 +102,7 @@ export async function writeEvidenceZip(sourceDir: string, destination: string, r
   const files = walkFiles(sourceDir)
     .filter((file) => resolve(file) !== skipped)
     .map((file) => {
-    const data = readFileSync(file);
+    const data = readRegularFile(file);
     const path = relative(sourceDir, file);
     zip.file(path, data);
     return { path, sha256: createHash('sha256').update(data).digest('hex') };
@@ -139,7 +140,7 @@ function replaceOrQuarantine(file: string, seal: () => Redacted | RedactedBytes)
 }
 
 function redactText(file: string, redactor: Redactor): Outcome {
-  const raw = readFileSync(file);
+  const raw = readRegularFile(file);
   const text = raw.toString('utf8');
   const latin = raw.toString('latin1');
   if (redactor.contains(text) || redactor.contains(latin)) return replaceOrQuarantine(file, () => redactor.seal(text));
@@ -149,8 +150,10 @@ function redactText(file: string, redactor: Redactor): Outcome {
   return replaceOrQuarantine(file, () => redactor.seal(repaired));
 }
 
-function redactPng(file: string, redactor: Redactor): Outcome {
-  if (!redactor.contains(ocr(file))) return 'kept';
+async function redactPng(file: string, redactor: Redactor): Promise<Outcome> {
+  const bytes = readRegularFile(file);
+  const visible = redactor.contains(bytes.toString('utf8')) || redactor.contains(bytes.toString('latin1')) || redactor.contains(await ocrBuffer(bytes));
+  if (!visible) return 'kept';
   return replaceOrQuarantine(file, () => redactor.sealBytes(PLACEHOLDER_PNG));
 }
 
@@ -163,7 +166,7 @@ const IMAGE_ENTRY = /\.(png|jpe?g|webp)$/i;
  * entry keeps its original bytes, so the trace viewer can still open the file.
  */
 async function redactZip(file: string, redactor: Redactor): Promise<Outcome> {
-  const zip = await JSZip.loadAsync(readFileSync(file));
+  const zip = await JSZip.loadAsync(readRegularFile(file));
   if (!(await redactLoadedZip(zip, redactor))) return 'kept';
   const next = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   try {
@@ -247,19 +250,7 @@ async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T) => Pr
   return results;
 }
 
-function ocr(file: string): string {
-  try {
-    return execFileSync('tesseract', [file, 'stdout', '-l', 'eng'], {
-      encoding: 'utf8',
-      timeout: 30_000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch {
-    return '';
-  }
-}
-
-/** Reads a frame through tesseract's stdin, so the unmasked frame is never written to disk. */
+/** Reads a frame through tesseract's stdin, so the unmasked frame is never written to disk and a link is never opened. */
 function ocrBuffer(bytes: Buffer): Promise<string> {
   return new Promise<string>((done) => {
     const child = execFile('tesseract', ['stdin', 'stdout', '-l', 'eng'], { encoding: 'utf8', timeout: 30_000 }, (error, stdout) => done(error ? '' : stdout));
@@ -288,7 +279,7 @@ export async function sanitizeNetworkLogs(dir: string, authEndpoints: string[], 
     if (file.endsWith('.har')) {
       let har: { log?: { entries?: HarLike[] } };
       try {
-        har = JSON.parse(readFileSync(file, 'utf8')) as typeof har;
+        har = JSON.parse(readRegularFile(file).toString('utf8')) as typeof har;
       } catch {
         continue;
       }
@@ -300,7 +291,7 @@ export async function sanitizeNetworkLogs(dir: string, authEndpoints: string[], 
     if (!file.endsWith('.zip')) continue;
     let zip: JSZip;
     try {
-      zip = await JSZip.loadAsync(readFileSync(file));
+      zip = await JSZip.loadAsync(readRegularFile(file));
     } catch {
       continue;
     }
