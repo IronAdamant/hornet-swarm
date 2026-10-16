@@ -76,6 +76,7 @@ users:
       ['request_credentials', { label: 'qa-user-1', reason: 'r' }],
       ['add_agent_note', { label: 'qa-user-1', note: 'n' }],
       ['get_reliability', {}],
+      ['check_findings', { findings: [{}] }],
       ['inspect_page', { label: 'qa-user-1', url: '/login' }],
     ];
     for (const [tool, args] of tools) {

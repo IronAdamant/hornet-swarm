@@ -12,6 +12,8 @@ export { addAgentNote, authorisationExclusions, readAgentNotes, readSwarm, saveS
 export { engageKill, releaseKill } from './kill.js';
 export { inspectionName, inspectPage } from './inspect.js';
 export { HornetError } from './errors.js';
+export { checkFindings, readFindingsFile } from './findings-report.js';
+export type { FindingsReport } from './findings-report.js';
 export { writeAudit } from './audit.js';
 export type { EnvStatus, ResetResult } from './env.js';
 export { hostAllowed, startControlGateway, startEgressProxy } from './egress-proxy.js';
