@@ -177,8 +177,8 @@ function allowTouchId(): { restore: () => void } {
 
 function writeAuthorisedProject(home: string): void {
   const projectDir = join(home, 'projects', 'fixture');
-  mkdirSync(join(home, 'authorisations'), { recursive: true });
-  mkdirSync(projectDir, { recursive: true });
+  mkdirSync(join(home, 'authorisations'), { recursive: true, mode: 0o700 });
+  mkdirSync(projectDir, { recursive: true, mode: 0o700 });
   const documentBody = 'Fixture owner authorisation for the offline test app.\n';
   writeFileSync(join(home, 'authorisations', 'fixture-owner.txt'), documentBody);
   const documentHash = createHash('sha256').update(documentBody).digest('hex');

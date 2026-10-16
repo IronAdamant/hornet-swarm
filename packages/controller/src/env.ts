@@ -1,16 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
 import { cpus, networkInterfaces, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import type { Project } from '@hornet-swarm/core';
-import { projectSchema, rewriteForContainer } from '@hornet-swarm/core';
+import { copyPrivateFile, privateDir, projectSchema, rewriteForContainer, writePrivateFile } from '@hornet-swarm/core';
 import type Docker from 'dockerode';
 import { createDocker, detectRuntime } from './docker.js';
-import { aegisHome, ensureDir, ensureHome } from './home.js';
-import { ensureControlToken, runnerFetch } from './runner-auth.js';
+import { aegisHome, ensureHome } from './home.js';
+import { controlTokenDir, ensureControlToken, runnerFetch } from './runner-auth.js';
 import { containerName, controlVolume, labelsForCount, networkName, parseMemory, profileVolume, proxyName } from './units.js';
 
 const RUNNER_IMAGE = 'hornet-swarm-runner:local';
@@ -47,25 +47,16 @@ type RunnerSettings = {
   rps: number;
 };
 
+/** An existing directory that other accounts can open is refused. Its mode is left unchanged. */
 export function prepareRunnerTokenDir(project: string, label: string, home = aegisHome()): string {
-  const tokenDir = join(home, 'control', project);
-  if (!existsSync(tokenDir)) chmodSync(ensureDir(tokenDir), 0o700);
-  // An existing directory that other accounts can open is refused. Its mode is left unchanged.
+  const tokenDir = privateDir(controlTokenDir(project, home), { looseMessage: 'The control token directory is open to other accounts.' });
   ensureControlToken(project, label, home);
   return tokenDir;
 }
 
 export function prepareRunnerOutputDir(project: string, label: string, home = aegisHome()): string {
   const directory = join(home, 'runners', project, label);
-  if (!existsSync(directory)) {
-    chmodSync(ensureDir(directory), 0o700);
-    return directory;
-  }
-  const actual = statSync(directory).mode & 0o777;
-  if ((actual & ~0o700) !== 0) {
-    throw new Error(`The runner output folder is open to other accounts: ${directory}`);
-  }
-  return directory;
+  return privateDir(directory, { looseMessage: `The runner output folder is open to other accounts: ${directory}` });
 }
 
 export async function envUp(options: { project: string; count?: number }): Promise<EnvStatus> {
@@ -309,7 +300,7 @@ export function hostDescription(info: { OperatingSystem?: string; Name?: string;
  * packaged figures. The repo's own files are never changed by a command.
  */
 function writeMeasured(table: Record<string, unknown>): void {
-  writeFileSync(join(ensureHome(), 'measured-resources.json'), `${JSON.stringify(table, null, 2)}\n`);
+  writePrivateFile(join(ensureHome(), 'measured-resources.json'), `${JSON.stringify(table, null, 2)}\n`);
 }
 
 function repoRoot(): string {
@@ -352,8 +343,8 @@ function runtimePath(project: string): string {
 
 /** `chosen` records a count the owner picked with --count, which sticks. A default follows the project file. */
 function saveRuntime(project: string, settings: RunnerSettings, chosen: boolean): void {
-  ensureDir(join(aegisHome(), 'projects', project));
-  writeFileSync(runtimePath(project), `${JSON.stringify({ count: settings.count, labels: settings.labels, chosen })}\n`);
+  privateDir(join(aegisHome(), 'projects', project));
+  writePrivateFile(runtimePath(project), `${JSON.stringify({ count: settings.count, labels: settings.labels, chosen })}\n`);
 }
 
 /**
@@ -569,7 +560,7 @@ function installSeccomp(): string {
   const repoSource = join(process.cwd(), 'images/runner/seccomp.json');
   const dest = join(ensureHome(), 'seccomp.json');
   const from = exists(source) ? source : repoSource;
-  copyFileSync(from, dest);
+  copyPrivateFile(from, dest);
   return dest;
 }
 

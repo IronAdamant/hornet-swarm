@@ -13,7 +13,7 @@
 // password is kept in this repo. No password is printed.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
@@ -66,8 +66,12 @@ const TOOLSHOP_CUSTOMERS = {
 
 let setSecret;
 let listFields;
+let privateDir;
+let writePrivateFile;
+let copyPrivateFile;
 try {
   ({ setSecret, listFields } = await import(join(root, 'packages/controller/dist/index.js')));
+  ({ privateDir, writePrivateFile, copyPrivateFile } = await import(join(root, 'packages/core/dist/index.js')));
 } catch {
   process.stderr.write('Build the workspace first: pnpm build\n');
   process.exit(4);
@@ -100,6 +104,8 @@ async function readmeLogin(url, pattern) {
 const uiDir = join(labsDir, 'toolshop-ui');
 if (!existsSync(join(uiDir, 'index.html'))) {
   say('Building the Toolshop front end (one time, a few minutes)...');
+  privateDir(join(homedir(), '.hornet-swarm'));
+  // The built front end is public code that the lab's web container serves, so it is not private.
   mkdirSync(uiDir, { recursive: true });
   const envFile = join(labsDir, 'toolshop-env.ts');
   writeFileSync(envFile, "export const environment = {\n  production: true,\n  apiUrl: 'http://host.docker.internal:8091'\n};\n");
@@ -171,7 +177,7 @@ if (reset) {
 
 // 3. The owner's statement and authorisation. Covers this Mac only.
 const docsDir = join(home, 'authorisations', 'docs');
-mkdirSync(docsDir, { recursive: true, mode: 0o700 });
+privateDir(docsDir);
 // UTC, as the harness reads authorisation dates.
 const today = new Date().toISOString().slice(0, 10);
 const until = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10);
@@ -192,21 +198,21 @@ const statement = [
   '',
 ].join('\n');
 const statementFile = join(docsDir, `lab-owner-statement-${today}.txt`);
-writeFileSync(statementFile, statement, { mode: 0o600 });
+writePrivateFile(statementFile, statement);
 const authorisation = parse(readFileSync(join(root, 'examples/authorisations/lab-owner.yaml'), 'utf8'));
 authorisation.valid_from = today;
 authorisation.valid_until = until;
 authorisation.document = { path: statementFile, sha256: createHash('sha256').update(statement).digest('hex') };
-writeFileSync(join(home, 'authorisations', 'lab-owner.yaml'), stringify(authorisation));
+writePrivateFile(join(home, 'authorisations', 'lab-owner.yaml'), stringify(authorisation));
 
 // 4. Projects and journeys.
 for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab', 'juice-shop-lab']) {
   const projectDir = join(home, 'projects', id);
-  mkdirSync(join(projectDir, 'journeys'), { recursive: true });
+  privateDir(join(projectDir, 'journeys'));
   const source = join(root, 'examples/projects', id);
-  copyFileSync(join(source, 'project.yaml'), join(projectDir, 'project.yaml'));
+  copyPrivateFile(join(source, 'project.yaml'), join(projectDir, 'project.yaml'));
   for (const file of readdirSync(join(source, 'journeys')).filter((entry) => entry.endsWith('.yaml'))) {
-    copyFileSync(join(source, 'journeys', file), join(projectDir, 'journeys', file));
+    copyPrivateFile(join(source, 'journeys', file), join(projectDir, 'journeys', file));
   }
 }
 
@@ -386,7 +392,7 @@ const boards = {
 };
 for (const [id, agents] of Object.entries(boards)) {
   const project = parse(readFileSync(join(home, 'projects', id, 'project.yaml'), 'utf8'));
-  writeFileSync(join(home, 'projects', id, 'swarm.json'), `${JSON.stringify({ ready: true, project: id, website: project.targets.base_url, agents }, null, 2)}\n`);
+  writePrivateFile(join(home, 'projects', id, 'swarm.json'), `${JSON.stringify({ ready: true, project: id, website: project.targets.base_url, agents }, null, 2)}\n`);
 }
 
 say(

@@ -11,7 +11,7 @@ const username = 'QA1@Example.TEST';
 describe('secret broker', () => {
   it('stores with sops, injects over HTTP, and never returns a secret value', async () => {
     const swarmHome = join(homedir(), '.hornet-swarm');
-    mkdirSync(swarmHome, { recursive: true });
+    mkdirSync(swarmHome, { recursive: true, mode: 0o700 });
     const home = mkdtempSync(join(swarmHome, 'work-broker-'));
     const stored = setSecret('fixture', 'qa-user-1', 'password', secret, home);
     setSecret('fixture', 'qa-user-1', 'username', username, home);

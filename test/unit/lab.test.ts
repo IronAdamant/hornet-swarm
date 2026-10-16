@@ -151,7 +151,7 @@ describe('reliability keeps chaos runs apart', () => {
     const home = mkdtempSync(join(tmpdir(), 'hornet-rel-'));
     const write = (id: string, status: 'pass' | 'fail', chaos: boolean) => {
       const dir = join(home, 'runs', id);
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
       const run = {
         schema_version: '1',
         run_id: id,
@@ -389,8 +389,8 @@ describe('small helpers behind the clearer reports', () => {
     const root = mkdtempSync(join(tmpdir(), 'hornet-fresh-'));
     const src = join(root, 'packages', 'core', 'src');
     const dist = join(root, 'packages', 'core', 'dist');
-    mkdirSync(src, { recursive: true });
-    mkdirSync(dist, { recursive: true });
+    mkdirSync(src, { recursive: true, mode: 0o700 });
+    mkdirSync(dist, { recursive: true, mode: 0o700 });
     writeFileSync(join(dist, 'index.js'), 'export const a = 1;');
     writeFileSync(join(src, 'index.ts'), 'export const a = 1;');
     utimesSync(join(dist, 'index.js'), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
@@ -433,7 +433,7 @@ describe('runner counts', () => {
     const before = process.env.AEGIS_HOME;
     process.env.AEGIS_HOME = home;
     try {
-      mkdirSync(join(home, 'projects', 'bank'), { recursive: true });
+      mkdirSync(join(home, 'projects', 'bank'), { recursive: true, mode: 0o700 });
       const write = (body: unknown) => writeFileSync(join(home, 'projects', 'bank', 'runtime.json'), JSON.stringify(body));
       write({ count: 4, labels: ['qa-user-1'] });
       expect(savedCount('bank')).toBeUndefined();

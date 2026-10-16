@@ -5,7 +5,7 @@ export type { RuntimeName } from './docker.js';
 export { allowHostsFrom, containerChosen, envReset, envStatus, envUp, hostDescription, measureResources, defaultProjectFromHome, runnerStatus, startStoppedRunner, stopRunners } from './env.js';
 export { injectSecrets, injectTotp, keychainAddCommand, listFields, listLabels, projectSecretValues, registerProjectSecrets, setSecret, setSecrets, storedFields } from './broker.js';
 export { assertAuthorisationUsable, documentMatches, documentPath, hostAuthorised, loadAuthorisation, loadProject, sha256File } from './authorisation.js';
-export { acquireLease, heartbeatStoredLease, leaseHolder, leasesHeldByOthers, releaseHeldLeases, releaseStoredLease, withFileLock, writeFileAtomic } from './leases-store.js';
+export { acquireLease, heartbeatStoredLease, leaseHolder, leasesHeldByOthers, releaseHeldLeases, releaseStoredLease, withFileLock } from './leases-store.js';
 export { acceptBaseline, applyReturnedJob, authEndpointPatterns, baselineDir, cleanupRetention, exportEvidence, foldRunStatus, journeyFromJob, listProjectUsers, publishParent, readJourneyYaml, reliabilityReport, rescanRun, runOutcome, runSuite, saveAgentJourney, selectRunLabels, textChanged, writeErrorOutcome } from './suite.js';
 export { credentialStatus, MAX_CODES_PER_GATE, requestCredentials, startCredentialPage, storeOwnerLogin } from './credentials.js';
 export { addAgentNote, authorisationExclusions, readAgentNotes, readSwarm, saveSwarmBoard, swarmSnapshot } from './swarm.js';
