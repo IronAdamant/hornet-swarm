@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -129,6 +129,9 @@ describe('report findings must point at saved evidence', () => {
       problems: ['F-01: run_20261015-110000_cccccc is not a saved run of toolshop.', `F-01: ${failedRun} has no file qa-user-1/checkout/trace.zip.`],
     });
     expect(checkFindings(finding([{ kind: 'file', run: failedRun, path: '../../age.key' }]), { home }).ok).toBe(false);
+    symlinkSync('/etc/passwd', join(home, 'runs', failedRun, 'qa-user-1', 'checkout', 'escape.txt'));
+    const linked = checkFindings(finding([{ kind: 'file', run: failedRun, path: 'qa-user-1/checkout/escape.txt' }]), { home });
+    expect(linked.ok).toBe(false);
   });
 
   it('renders nothing that did not come from the checker', () => {

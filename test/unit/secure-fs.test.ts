@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +7,7 @@ import {
   appendPrivateFile,
   assertGroupSocket,
   chosenDir,
+  copyPrivateFile,
   copyPrivateTree,
   fixedText,
   groupSharedDir,
@@ -95,6 +96,28 @@ describe('secure-fs creates private paths at creation', () => {
     expect(mode(join(destination, 'nested'))).toBe(0o700);
     expect(mode(join(destination, 'nested', 'shot.txt'))).toBe(0o600);
     expect(() => lstatSync(join(destination, 'escape'))).toThrow();
+  });
+
+  it('does not copy a symlink, even when the caller names the link itself', () => {
+    const root = scratch();
+    const secret = join(root, 'secret');
+    writeFileSync(secret, 'age-key-material');
+    const link = join(root, 'shot.png');
+    symlinkSync(secret, link);
+    const destination = join(root, 'copied.png');
+    expect(() => copyPrivateFile(link, destination)).toThrow(/symbolic link/);
+    expect(existsSync(destination)).toBe(false);
+    expect(readFileSync(secret, 'utf8')).toBe('age-key-material');
+  });
+
+  it('refuses to write a file into a folder other accounts can open', () => {
+    const root = scratch();
+    const loose = join(root, 'loose');
+    mkdirSync(loose, { mode: 0o755 });
+    chmodSync(loose, 0o755);
+    expect(() => writePrivateFile(join(loose, 'token'), 'secret')).toThrow(InsecurePathError);
+    expect(existsSync(join(loose, 'token'))).toBe(false);
+    expect(mode(loose)).toBe(0o755);
   });
 
   it('shares a socket folder with one group only, and binds the socket 0660 with no window', async () => {

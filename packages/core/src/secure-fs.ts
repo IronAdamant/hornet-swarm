@@ -11,7 +11,7 @@ import {
   mkdtempSync,
   openSync,
   readdirSync,
-  readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeSync,
@@ -166,9 +166,24 @@ export function appendRedactedFile(path: string, content: Redacted): void {
   appendPrivateFile(path, content);
 }
 
-/** Copies `from` into a new 0600 file at `to`. The source's mode is never carried over. */
+/**
+ * Reads a regular file without following a link. A runner can replace a result file with a link
+ * to anything on this machine; `readFileSync` would copy that target into the run.
+ */
+export function readRegularFile(path: string): Buffer {
+  const fd = openNoFollow(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | noFollow());
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) throw new InsecurePathError(`${path} is not a regular file.`, path);
+    return readWholeFile(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Copies `from` into a new 0600 file at `to`. The source's mode is never carried over, and a link is not followed. */
 export function copyPrivateFile(from: string, to: string): void {
-  writePrivateFile(to, readFileSync(from));
+  writePrivateFile(to, readRegularFile(from));
 }
 
 /**
@@ -219,8 +234,8 @@ function prepareParent(path: string, parent: 'private' | 'chosen'): void {
     privateDir(folder);
     return;
   }
-  // A folder's mode is checked by privateDir where it is made. Here a link or another account's folder is still refused.
-  checkPath(folder, 'dir', 0, {});
+  // The folder may have been private when it was made and opened up since. Refuse it before writing.
+  checkPath(folder, 'dir', OWNER_ONLY, {});
 }
 
 function checkPath(path: string, kind: PathKind, forbidden: number, guard: PathGuard): void {
@@ -246,4 +261,29 @@ function checkStats(stats: Stats, path: string, kind: PathKind, forbidden: numbe
 
 function noFollow(): number {
   return constants.O_NOFOLLOW ?? 0;
+}
+
+function openNoFollow(path: string, flags: number, mode?: number): number {
+  try {
+    return mode === undefined ? openSync(path, flags) : openSync(path, flags, mode);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
+      throw new InsecurePathError(`${path} is a symbolic link. Hornet Swarm does not follow links for private files.`, path);
+    }
+    throw error;
+  }
+}
+
+/** `readFileSync` on a descriptor starts at the current offset, which is not always zero. */
+function readWholeFile(fd: number): Buffer {
+  const chunks: Buffer[] = [];
+  const buf = Buffer.alloc(64 * 1024);
+  let offset = 0;
+  for (;;) {
+    const n = readSync(fd, buf, 0, buf.length, offset);
+    if (n === 0) break;
+    chunks.push(Buffer.from(buf.subarray(0, n)));
+    offset += n;
+  }
+  return Buffer.concat(chunks);
 }
