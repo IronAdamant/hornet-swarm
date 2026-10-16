@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { listFields, setSecret, setSecrets } from '../../packages/controller/src/broker.ts';
-import { parseLogin, Redactor, Secret, SHORT_SECRET_ERROR, shortSecretError } from '../../packages/core/src/index.ts';
+import { parseLogin, Redactor, Secret, SHORT_SECRET_ERROR, shortSecretError, valueForField } from '../../packages/core/src/index.ts';
 import { folderAt, hasRevision, REPO_ROOT } from '../support/git-history.ts';
 
 const BEFORE_THIS_CHANGE = '5723644';
@@ -37,8 +37,15 @@ describe('the Secret type', () => {
     const home = mkdtempSync(join(tmpdir(), 'hornet-secret-type-'));
     expect(() => setSecret('shop', 'qa-user-1', 'password', 'abc', home)).toThrow(SHORT_SECRET_ERROR);
     expect(() => setSecrets('shop', { 'qa-user-1': { password: 'abc' as unknown as Secret } }, home)).toThrow(/Secret made by Secret.parse/);
-    const forged = Object.assign(Object.create(Secret.prototype) as Secret, { field: 'password' });
-    expect(() => setSecrets('shop', { 'qa-user-1': { password: forged } }, home)).toThrow();
+    const forged = Object.create(Secret.prototype) as Secret;
+    expect(() => setSecrets('shop', { 'qa-user-1': { password: forged } }, home)).toThrow(/Secret made by Secret.parse/);
+    const username = Secret.require('username', 'abc');
+    Object.defineProperty(username, 'field', { value: 'password' });
+    username.reveal = () => 'long-enough-password';
+    expect(() => valueForField(username, 'password')).toThrow(/Secret made by Secret.parse/);
+    const password = Secret.require('password', 'long-enough');
+    password.reveal = () => 'abc';
+    expect(valueForField(password, 'password')).toBe('long-enough');
     expect(listFields('shop', 'qa-user-1', home)).toEqual([]);
   });
 
