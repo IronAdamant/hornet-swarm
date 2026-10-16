@@ -11,11 +11,20 @@ import type Docker from 'dockerode';
 import { createDocker, detectRuntime } from './docker.js';
 import { aegisHome, ensureHome } from './home.js';
 import { controlTokenDir, ensureControlToken, runnerFetch } from './runner-auth.js';
+import { HornetError } from './errors.js';
+import {
+  assertIsolated,
+  CONTROL_PORT,
+  PROXY_IMAGE,
+  proxyContainerOptions,
+  proxyIsolationProblems,
+  relayReachableThrough,
+  RUNNER_IMAGE,
+  runnerContainerOptions,
+  runnerIsolationProblems,
+} from './runner-isolation.js';
 import { containerName, controlVolume, labelsForCount, networkName, parseMemory, profileVolume, proxyName } from './units.js';
 
-const RUNNER_IMAGE = 'hornet-swarm-runner:local';
-const PROXY_IMAGE = 'hornet-swarm-proxy:local';
-const CONTROL_PORT = '8899/tcp';
 
 export type RunnerStatus = {
   label: string;
@@ -415,9 +424,15 @@ function localAddresses(): string[] {
 
 async function ensureNetwork(docker: Docker, project: string): Promise<void> {
   const name = networkName(project);
+  let existing: { Internal?: boolean } | undefined;
   try {
-    await docker.getNetwork(name).inspect();
+    existing = (await docker.getNetwork(name).inspect()) as { Internal?: boolean };
   } catch {
+    existing = undefined;
+  }
+  // A runner's only way out is the egress proxy. A network with its own route out is never used.
+  if (existing && !existing.Internal) throw new HornetError(`The network ${name} has a route out of Docker. Nothing was started. Run: hornet-swarm env reset --project ${project}`, 4);
+  if (!existing) {
     await docker.createNetwork({
       Name: name,
       Driver: 'bridge',
@@ -449,24 +464,17 @@ async function ensureProxy(docker: Docker, project: string, settings: RunnerSett
       // recreate below
     }
   }
-  const container = await docker.createContainer({
-    name,
-    Image: PROXY_IMAGE,
-    Labels: { 'hornet-swarm.project': project, 'hornet-swarm.role': 'proxy' },
-    Env: env,
-    ExposedPorts: { '8888/tcp': {}, '8899/tcp': {} },
-    HostConfig: {
-      NetworkMode: 'bridge',
-      Binds: [`${controlVolume(project)}:/control`],
-      PortBindings: { '8899/tcp': [{ HostIp: '127.0.0.1', HostPort: '' }] },
-      Memory: 128 * 1024 * 1024,
-      MemorySwap: 128 * 1024 * 1024,
-      ReadonlyRootfs: false,
-    },
-  });
+  const options = proxyContainerOptions(project, name, env);
+  assertIsolated('The proxy', proxyIsolationProblems({ env: options.Env, host: options.HostConfig }));
+  const container = await docker.createContainer(options);
   await container.start();
   // Bind 8899 to the bridge address before the project network exists, so the browser cannot open it.
   await waitForBridgeGateway(docker, project);
+  const opened = relayReachableThrough(settings.allowHosts, await controlPort(docker, project));
+  if (opened.length > 0) {
+    await container.remove({ force: true }).catch(() => undefined);
+    assertIsolated('The proxy', [`its allow list reaches the control relay: ${opened.join(', ')}`]);
+  }
   await docker.getNetwork(networkName(project)).connect({ Container: container.id });
 }
 
@@ -479,6 +487,7 @@ async function proxyCurrent(docker: Docker, container: Docker.Container, env: st
     return (
       inspected.State.Running &&
       inspected.Image === wanted &&
+      proxyIsolationProblems({ env: inspected.Config.Env ?? [], host: inspected.HostConfig }).length === 0 &&
       env.every((entry) => current.has(entry)) &&
       networks.includes(networkName(project)) &&
       (await controlPort(docker, project)) !== null
@@ -503,7 +512,9 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
       wanted = '';
     }
     const sameImage = wanted === '' || inspected.Image === wanted;
-    if (sameImage) {
+    // A runner made by an older version, or changed by hand, is replaced rather than trusted.
+    const isolated = runnerIsolationProblems({ env: inspected.Config.Env ?? [], host: inspected.HostConfig }, project, label).length === 0;
+    if (sameImage && isolated) {
       if (!inspected.State.Running) await existing.start();
       const endpoint = await waitForEndpoint(docker, project, label);
       const healthy = await waitHealthy(project, endpoint, 20_000);
@@ -521,34 +532,9 @@ async function ensureRunner(docker: Docker, project: string, label: string, sett
   const seccomp = JSON.stringify(JSON.parse(readFileSync(installSeccomp(), 'utf8')));
   if (!seccomp.startsWith('{')) throw new Error(`seccomp did not encode as JSON: ${seccomp.slice(0, 30)}`);
   const memory = parseMemory(settings.memory);
-  const container = await docker.createContainer({
-    name,
-    Image: RUNNER_IMAGE,
-    // Root keeps SETUID so entrypoint.sh can drop Node, then Chrome, to other users.
-    User: '0:0',
-    Labels: { 'hornet-swarm.project': project, 'hornet-swarm.user': label, 'hornet-swarm.role': 'runner' },
-    Env: [
-      `AEGIS_PROXY=http://${proxyName(project)}:8888`,
-      `AEGIS_LABEL=${label}`,
-      `AEGIS_CONTROL_SOCKET=/control/${label}.sock`,
-      `AEGIS_CONTROL_TOKEN_FILE=/tokens/${label}.token`,
-    ],
-    HostConfig: {
-      ReadonlyRootfs: true,
-      Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=256m' },
-      // Only this label's token is mounted, read-only. A runner cannot read another runner's token.
-      Binds: [`${volume}:/home/runner/profile`, `${outDir}:/out`, `${controlVolume(project)}:/control`, `${join(tokenDir, `${label}.token`)}:/tokens/${label}.token:ro`],
-      Memory: memory,
-      MemorySwap: memory,
-      NanoCpus: Math.round(settings.cpus * 1e9),
-      CapAdd: ['SETUID', 'SETGID', 'SETPCAP'],
-      CapDrop: ['ALL'],
-      SecurityOpt: ['no-new-privileges:true', `seccomp=${seccomp}`],
-      PidsLimit: 512,
-      ShmSize: 512 * 1024 * 1024,
-      NetworkMode: networkName(project),
-    },
-  });
+  const options = runnerContainerOptions({ project, label, name, volume, outDir, tokenFile: join(tokenDir, `${label}.token`), seccomp, memory, cpus: settings.cpus });
+  assertIsolated(`The runner for ${label}`, runnerIsolationProblems({ env: options.Env, host: options.HostConfig }, project, label));
+  const container = await docker.createContainer(options);
   await container.start();
   const endpoint = await waitForEndpoint(docker, project, label);
   const healthy = await waitHealthy(project, endpoint, 20_000);

@@ -197,7 +197,7 @@ describe('unattended swarm', () => {
   it('a redaction failure packet has empty evidence and artifact paths', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'hornet-withhold-'));
     const runDir = join(dir, 'runs', 'run_leak');
-    mkdirSync(runDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
     const leaked = 'packet-leak-value';
     const dirty = join(runDir, 'dirty.png');
     const clean = join(runDir, 'clean.png');
