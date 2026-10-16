@@ -118,7 +118,7 @@ describe('regressions, chaos, baselines, evidence, and flaky results', () => {
 
   it('removes run folders older than the retention window', () => {
     const old = join(home, 'runs/run_old_retention');
-    mkdirSync(old, { recursive: true });
+    mkdirSync(old, { recursive: true, mode: 0o700 });
     const past = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     utimesSync(old, past, past);
     const removed = cleanupRetention(home, 1);

@@ -6,7 +6,7 @@ import { parse, stringify } from 'yaml';
 import { CREDENTIAL_FIELDS, privateDir, privateTempDir, Redactor, Secret, writePrivateFile, type CredentialField } from '@hornet-swarm/core';
 import { aegisHome } from './home.js';
 import { withFileLock } from './leases-store.js';
-import { runnerFetch } from './runner-auth.js';
+import { RunnerSession } from './runner-session.js';
 import { totpCode, waitForFreshCode } from './totp.js';
 
 const SERVICE = 'hornet-swarm-age-key';
@@ -94,43 +94,41 @@ export function setSecrets(project: string, updates: Record<string, Partial<Reco
   }, STORE_LOCK_MS);
 }
 
-export async function injectTotp(project: string, label: string, endpoint: string, home = aegisHome()): Promise<InjectedHandle> {
-  const secret = readUsers(home, project)[label]?.totp_secret;
+/** Hands the current TOTP code to a runner. Only a session of an authorised run can ask. */
+export async function injectTotp(session: RunnerSession): Promise<InjectedHandle> {
+  assertSession(session);
+  const { label } = session;
+  const secret = readUsers(session.home, session.projectId)[label]?.totp_secret;
   if (!secret) return { ok: true, handles: [] };
   // A strict site accepts only the current 30-second code. The journey types it a few steps later,
   // so a code made near the end of its window could expire first. Wait for a fresh one.
   const wait = waitForFreshCode();
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   const code = totpCode(secret);
-  const response = await runnerFetch(
-    project,
-    endpoint,
-    '/v1/secrets',
-    { method: 'POST', body: JSON.stringify({ credentials: [{ handle: `${label}.totp_code`, value: code }] }) },
-    home,
-    label,
-  );
+  const response = await session.fetch('/v1/secrets', { method: 'POST', body: JSON.stringify({ credentials: [{ handle: `${label}.totp_code`, value: code }] }) });
   if (!response.ok) throw new Error('Runner rejected the login handoff.');
   return { ok: true, handles: [`${label}.totp_code`], code };
 }
 
-export async function injectSecrets(
-  project: string,
-  label: string,
-  endpoint: string,
-  home = aegisHome(),
-): Promise<InjectedHandle> {
-  const user = readUsers(home, project)[label];
+/** Hands a label's stored login to its runner. Only a session of an authorised run can ask. */
+export async function injectSecrets(session: RunnerSession): Promise<InjectedHandle> {
+  assertSession(session);
+  const { label } = session;
+  const user = readUsers(session.home, session.projectId)[label];
   if (!user) throw new Error(`No stored login for ${label}.`);
   const credentials = FIELDS.flatMap((field) => {
     const value = user[field];
     return value ? [{ handle: `${label}.${field}`, value }] : [];
   });
   if (credentials.length === 0) throw new Error(`No stored login for ${label}.`);
-  const response = await runnerFetch(project, endpoint, '/v1/secrets', { method: 'POST', body: JSON.stringify({ credentials }) }, home, label);
+  const response = await session.fetch('/v1/secrets', { method: 'POST', body: JSON.stringify({ credentials }) });
   if (!response.ok) throw new Error(`Runner rejected the login handoff (${response.status}).`);
   const body = (await response.json()) as { ok?: boolean; handles?: string[] };
   return { ok: true, handles: body.handles ?? credentials.map((entry) => entry.handle) };
+}
+
+function assertSession(session: RunnerSession): void {
+  if (!(session instanceof RunnerSession)) throw new Error('A login is handed only to a runner session of an authorised run.');
 }
 
 function readUsers(home: string, project: string): Record<string, SecretUser> {

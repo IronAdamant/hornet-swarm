@@ -4,10 +4,7 @@ import { networkInterfaces } from 'node:os';
 import { basename, join } from 'node:path';
 import { parse } from 'yaml';
 import {
-  activitiesPermitted,
   analysisSchema,
-  CHAOS_PROFILES,
-  chaosPermitted,
   copyPrivateFile,
   copyPrivateTree,
   chaosSequence,
@@ -15,10 +12,7 @@ import {
   parallelRunners,
   passiveOrigins,
   perRunnerRate,
-  practiceLimits,
   privateDir,
-  productionGate,
-  projectDomainsAuthorised,
   Redactor,
   rewriteForContainer,
   runResultSchema,
@@ -54,14 +48,15 @@ import {
   type RichUser,
 } from '@hornet-swarm/report';
 import { writeAudit } from './audit.js';
-import { assertAuthorisationUsable, loadAuthorisation, loadProject } from './authorisation.js';
+import { loadAuthorisation, loadProject } from './authorisation.js';
 import { injectSecrets, injectTotp, listFields, projectSecretValues, registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
 import { ensureCredentialPage } from './credentials.js';
 import { runnerStatus, startStoppedRunner, stopRunners } from './env.js';
 import { aegisHome } from './home.js';
 import { acquireLease, heartbeatStoredLease, releaseStoredLease, withFileLock } from './leases-store.js';
-import { runWithToken, runnerFetch } from './runner-auth.js';
+import { runnerFetch } from './runner-auth.js';
+import { AuthorisedRun, RunnerSession } from './runner-session.js';
 
 
 export { HornetError } from './errors.js';
@@ -152,29 +147,21 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   } catch {
     // Retention is housekeeping. A failure to prune old runs does not stop this one.
   }
-  assertAuthorisationUsable(auth, home);
-  const domains = projectDomainsAuthorised(project, auth);
-  if (!domains.ok) throw new HornetError(domains.reason, 3);
-  const production = productionGate(project, auth, Boolean(request.confirmProduction));
-  if (!production.ok) throw new HornetError(production.reason, 3);
-  const polite = practiceLimits(project, auth);
-  if (!polite.ok) throw new HornetError(polite.reason, 3);
-  if (request.chaos) {
-    if (!CHAOS_PROFILES.includes(request.chaos.profile)) throw new HornetError(`unknown chaos profile: ${request.chaos.profile}. Use one of ${CHAOS_PROFILES.join(', ')}.`, 3);
-    const allowed = chaosPermitted(auth, project);
-    if (!allowed.ok) throw new HornetError(allowed.reason, 3);
-  }
   const includeRegressions = request.includeRegressions ?? true;
-  const journeys = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? [], includeRegressions, request.journeyPathsAllowed ?? true);
-  const knownSecrets = projectSecretValues(project.id, home);
-  for (const journey of journeys) {
-    const checked = validateJourneyYaml(journey.text, project, knownSecrets);
-    // Name the journey, so "steps.19: Invalid input" says which of several files to fix.
-    if (!checked.valid || !checked.journey) throw new HornetError(`${journeyIdOf(journey.text) ?? basename(journey.file)}: ${checked.errors.join('; ')}`, 3);
-    journey.journey = checked.journey;
-  }
-  const activities = activitiesPermitted(auth, { signIn: true, journeys: journeys.map((entry) => entry.journey as Journey) });
-  if (!activities.ok) throw new HornetError(activities.reason, 3);
+  const { run, loaded: journeys } = AuthorisedRun.authorise(
+    { project, auth, agentId, home, confirmProduction: Boolean(request.confirmProduction), ...(request.chaos ? { chaos: request.chaos } : {}) },
+    () => {
+      const loaded = request.phase1Only ? [] : loadJourneys(home, project, request.journeyFiles ?? [], includeRegressions, request.journeyPathsAllowed ?? true);
+      const knownSecrets = projectSecretValues(project.id, home);
+      for (const journey of loaded) {
+        const checked = validateJourneyYaml(journey.text, project, knownSecrets);
+        // Name the journey, so "steps.19: Invalid input" says which of several files to fix.
+        if (!checked.valid || !checked.journey) throw new HornetError(`${journeyIdOf(journey.text) ?? basename(journey.file)}: ${checked.errors.join('; ')}`, 3);
+        journey.journey = checked.journey;
+      }
+      return { loaded, journeys: loaded.map((entry) => entry.journey as Journey) };
+    },
+  );
   const labels = selectRunLabels({
     phase1Only: Boolean(request.phase1Only),
     ...(request.users ? { users: request.users } : {}),
@@ -267,7 +254,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         continue;
       }
       const held = await hold(label, async () => {
-        const phase1 = await runPhase1(project, label, runId, home, agentId, deadline, totpCodes);
+        const phase1 = await runPhase1(run, label, runId, deadline, totpCodes);
         phaseResults.push({ label, report: phase1.report });
         if (phase1.killed) killed = true;
         if (phase1.report.blocked_reason === 'duration') durationStop = true;
@@ -290,7 +277,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
         const held = await hold(item.label, async () => {
           for (const entry of runnable) {
             if (killed || durationStop) break;
-            const played = await runJourney(project, item.label, entry.journey as Journey, runId, home, deadline, totpCodes, request.chaos);
+            const played = await runJourney(run, item.label, entry.journey as Journey, runId, deadline, totpCodes, request.chaos);
             if (played.killed) killed = true;
             if (played.duration) durationStop = true;
             userJourneys.push(played.journey);
@@ -482,15 +469,8 @@ async function contained(work: () => Promise<{ report: JobReport; killed: boolea
   }
 }
 
-async function runPhase1(
-  project: Project,
-  label: string,
-  runId: string,
-  home: string,
-  _agent: string,
-  deadline: number,
-  codes: string[],
-): Promise<{ report: JobReport; killed: boolean }> {
+async function runPhase1(run: AuthorisedRun, label: string, runId: string, deadline: number, codes: string[]): Promise<{ report: JobReport; killed: boolean }> {
+  const { project, home } = run;
   const budget = signinState(home, project, label);
   if (!budget.allowed) {
     return {
@@ -515,7 +495,7 @@ async function runPhase1(
     retries: 0,
     steps,
   };
-  return contained(() => execute(project, label, journey, runId, home, deadline, undefined, codes));
+  return contained(() => execute(run, label, journey, runId, deadline, undefined, codes));
 }
 
 /** The project's own sign-in, as journey steps: the sign-in check runs these, and so does an inspection. */
@@ -532,20 +512,19 @@ export function signInSteps(project: Project, label: string): Journey['steps'] {
 }
 
 async function runJourney(
-  project: Project,
+  run: AuthorisedRun,
   label: string,
   journey: Journey,
   runId: string,
-  home: string,
   deadline: number,
   codes: string[],
   chaos?: { profile: string; seed: string },
 ): Promise<{ journey: RichJourney; killed: boolean; duration: boolean }> {
-  let played = await contained(() => execute(project, label, journey, runId, home, deadline, chaos, codes));
+  let played = await contained(() => execute(run, label, journey, runId, deadline, chaos, codes));
   let tries = 0;
   while (!played.killed && played.report.blocked_reason !== 'duration' && played.report.status === 'failed' && tries < journey.retries) {
     tries += 1;
-    played = await contained(() => execute(project, label, journey, runId, home, deadline, chaos, codes));
+    played = await contained(() => execute(run, label, journey, runId, deadline, chaos, codes));
   }
   return {
     killed: played.killed,
@@ -555,28 +534,27 @@ async function runJourney(
 }
 
 async function execute(
-  project: Project,
+  run: AuthorisedRun,
   label: string,
   journey: Journey,
   runId: string,
-  home: string,
   deadline: number,
   chaos?: { profile: string; seed: string },
   codes: string[] = [],
 ): Promise<{ report: JobReport; killed: boolean }> {
-  return runWithToken(project.id, label, home, () => executeIssued(project, label, journey, runId, home, deadline, chaos, codes));
+  return RunnerSession.open(run, label, endpointFor, (session) => executeIssued(session, journey, runId, deadline, chaos, codes));
 }
 
 async function executeIssued(
-  project: Project,
-  label: string,
+  session: RunnerSession,
   journey: Journey,
   runId: string,
-  home: string,
   deadline: number,
   chaos?: { profile: string; seed: string },
   codes: string[] = [],
 ): Promise<{ report: JobReport; killed: boolean }> {
+  const { project, home } = session.run;
+  const { label } = session;
   // A run stopped before this job is not handed the login at all.
   const stopNow = existsSync(join(home, 'KILL')) ? 'kill' : Date.now() >= deadline ? 'duration' : undefined;
   if (stopNow) {
@@ -589,11 +567,11 @@ async function executeIssued(
       stopRunners,
     });
   }
-  const endpoint = await endpointFor(project.id, label);
+  const endpoint = await session.endpoint();
   // A guest has no login to hand over. A journey that asks for one fails at its fill step and says so.
-  const injected = listFields(project.id, label, home).length > 0 ? await injectSecrets(project.id, label, endpoint, home) : { ok: true, handles: [] };
+  const injected = listFields(project.id, label, home).length > 0 ? await injectSecrets(session) : { ok: true, handles: [] };
   if (project.auth.totp.enabled) {
-    const totp = await injectTotp(project.id, label, endpoint, home);
+    const totp = await injectTotp(session);
     if (totp.code) codes.push(totp.code);
   }
   const target = containerTarget(project);
@@ -644,11 +622,11 @@ async function executeIssued(
     else if (Date.now() >= deadline) void arm('duration');
   }, 400);
   try {
-    const response = await runnerFetch(project.id, endpoint, '/v1/jobs', {
+    const response = await session.fetch('/v1/jobs', {
       method: 'POST',
       body: JSON.stringify(body),
       signal: controller.signal,
-    }, home);
+    });
     const report = (await response.json()) as JobReport;
     await moveArtifacts(home, project, label, runId, journey.id);
     rewriteArtifacts(home, project.id, label, runId, journey.id, report);

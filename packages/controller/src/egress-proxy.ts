@@ -13,6 +13,10 @@ export type ProxyOptions = {
 
 /** Refusals from the harness carry this header, so the runner never counts them against the site. */
 export const HARNESS_HEADER = 'x-hornet-swarm';
+/** Every request the egress proxy forwards carries this header. The control relay refuses any request that has it. */
+export const EGRESS_HEADER = 'x-hornet-swarm-egress';
+/** The control relay's port. The egress proxy never opens it, whatever a project's allow list says. */
+export const CONTROL_RELAY_PORT = 8899;
 const QUEUE_LIMIT_MS = 30_000;
 
 function normalHost(host: string): string {
@@ -85,7 +89,7 @@ async function openTunnel(
 ): Promise<void> {
   const { host, port } = splitTarget(req.url ?? '');
   socket.on('error', () => undefined);
-  if (!host || !hostAllowed(host, allow, port)) {
+  if (!host || port === CONTROL_RELAY_PORT || !hostAllowed(host, allow, port)) {
     log({ event: 'deny', host: host ?? '', port, proto: 'connect' });
     socket.write(`HTTP/1.1 403 Forbidden\r\n${HARNESS_HEADER}: denied\r\n\r\n`);
     socket.end();
@@ -129,7 +133,7 @@ async function forwardHttp(
     return;
   }
   const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
-  if (!hostAllowed(target.hostname, allow, port)) {
+  if (port === CONTROL_RELAY_PORT || !hostAllowed(target.hostname, allow, port)) {
     log({ event: 'deny', host: target.hostname, port, proto: 'http' });
     res.writeHead(403, { [HARNESS_HEADER]: 'denied' });
     res.end('blocked');
@@ -146,6 +150,7 @@ async function forwardHttp(
   const headers = { ...req.headers };
   for (const hop of ['proxy-connection', 'proxy-authorization', 'connection']) delete headers[hop];
   headers.host = target.host;
+  headers[EGRESS_HEADER] = '1';
   const upstream = httpRequest(
     {
       host: target.hostname,
@@ -229,6 +234,11 @@ export function startControlGateway(options: {
   host?: string;
 }): Promise<{ port: number; host: string; close: () => Promise<void> }> {
   const server = createServer((req, res) => {
+    if (req.headers[EGRESS_HEADER] !== undefined) {
+      res.writeHead(403);
+      res.end('forbidden');
+      return;
+    }
     const requested = req.url ?? '/';
     const pathOnly = requested.split('?')[0] ?? '/';
     const match = /^\/r\/([a-z0-9-]+)(\/.*)?$/.exec(pathOnly);
@@ -305,7 +315,7 @@ async function serveProxy(): Promise<void> {
   await startEgressProxy({ port, allow, rps });
   const host = await waitForExternalIpv4();
   await startControlGateway({
-    port: Number(process.env.AEGIS_CONTROL_PORT ?? 8899),
+    port: Number(process.env.AEGIS_CONTROL_PORT ?? CONTROL_RELAY_PORT),
     project: process.env.AEGIS_PROJECT ?? 'default',
     controlDir: process.env.AEGIS_CONTROL_DIR ?? '/control',
     host,
