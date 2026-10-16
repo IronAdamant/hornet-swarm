@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 import {
   analysisSchema,
@@ -53,7 +53,7 @@ import { loadAuthorisation, loadProject } from './authorisation.js';
 import { injectSecrets, injectTotp, listFields, projectSecretValues, registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
 import { ensureCredentialPage } from './credentials.js';
-import { runnerStatus, startStoppedRunner, stopRunners } from './env.js';
+import { assertExistingRunnerIsolated, runnerStatus, startStoppedRunner, stopRunners } from './env.js';
 import { aegisHome } from './home.js';
 import { acquireLease, heartbeatStoredLease, releaseStoredLease, withFileLock } from './leases-store.js';
 import { runnerFetch } from './runner-auth.js';
@@ -713,6 +713,7 @@ async function closeOperatorGate(gate: OperatorGateHandle): Promise<void> {
 
 async function endpointFor(projectId: string, label: string): Promise<string> {
   const missing = `No healthy runner for ${label}. Start one with: hornet-swarm env up --project ${projectId}`;
+  await assertExistingRunnerIsolated(projectId, label);
   const runner = await runnerStatus(projectId, label);
   if (runner.health === 'healthy' && runner.endpoint) return runner.endpoint;
   const started = await startStoppedRunner(projectId, label);
@@ -884,6 +885,12 @@ function applyBaselines(home: string, project: string, users: RichUser[]): void 
   }
 }
 
+function isInside(root: string, file: string): boolean {
+  const base = resolve(root);
+  const target = resolve(file);
+  return target === base || target.startsWith(`${base}${sep}`);
+}
+
 export function acceptBaseline(project: string, runId: string, home = aegisHome()): { ok: true } {
   if (!/^[a-z0-9-]+$/.test(project)) throw new HornetError('Unknown project.', 3);
   if (!RUN_ID.test(runId)) throw new HornetError('Unknown run id.', 3);
@@ -903,9 +910,9 @@ export function acceptBaseline(project: string, runId: string, home = aegisHome(
         timings[String(step.index)] = step.duration_ms;
         timings[`console-${step.index}`] = step.console_error_count ?? 0;
         timings[`network-${step.index}`] = step.network_errors?.length ?? 0;
-        // Only files inside this run are copied. The paths come from the run's own report.
+        // Only files inside this run are copied. A prefix check still allows runDir/../../elsewhere.
         const shot = step.screenshot_paths?.[0];
-        if (!shot || !shot.startsWith(`${runDir}/`) || !existsSync(shot)) continue;
+        if (!shot || !isInside(runDir, shot) || !existsSync(shot)) continue;
         copyPrivateFile(shot, join(dir, `${step.index}.png`));
         const text = shot.replace(/\.png$/, '.txt');
         if (existsSync(text)) copyPrivateFile(text, join(dir, `${step.index}.txt`));

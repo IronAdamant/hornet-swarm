@@ -26,6 +26,8 @@ export type IsolationView = {
     SecurityOpt?: string[] | null;
     ReadonlyRootfs?: boolean;
   };
+  /** Networks from an inspected container. Absent on a create request, which has only NetworkMode. */
+  networks?: string[];
 };
 
 export type RunnerSpecInput = {
@@ -113,11 +115,17 @@ export function runnerIsolationProblems(view: IsolationView, project: string, la
   if (tokenBinds.length !== 1 || tokenBinds[0]?.target !== ownToken || basename(tokenBinds[0].source) !== `${label}.token` || !tokenBinds[0].readOnly) {
     problems.push(`must mount only its own token, read-only, at ${ownToken}`);
   }
-  if (binds.some((bind) => bind.source.endsWith('docker.sock'))) problems.push('mounts the Docker socket');
+  if (binds.some((bind) => exposesDockerSocket(bind.source))) problems.push('mounts the Docker socket');
+  const ownTokenBind = tokenBinds.length === 1 ? tokenBinds[0] : undefined;
+  if (ownTokenBind) {
+    for (const problem of tokenDirectoryBinds(binds, ownTokenBind)) problems.push(problem);
+  }
   const control = binds.find((bind) => bind.target === '/control');
   if (control && control.source !== controlVolume(project)) problems.push(`mounts ${control.source} as its control folder`);
   if (!view.env.includes(`AEGIS_CONTROL_TOKEN_FILE=${ownToken}`)) problems.push('does not read its token from its own token file');
   if (view.env.some((entry) => entry.startsWith('AEGIS_CONTROL_TOKEN='))) problems.push('carries a control token in its environment');
+  const extraNetworks = (view.networks ?? []).filter((network) => network !== networkName(project));
+  if (extraNetworks.length > 0) problems.push(`is also attached to ${extraNetworks.join(', ')}`);
   return problems;
 }
 
@@ -168,4 +176,29 @@ function capName(cap: string): string {
 function parseBind(bind: string): { source: string; target: string; readOnly: boolean } {
   const [source = '', target = '', options = ''] = bind.split(':');
   return { source, target, readOnly: options.split(',').includes('ro') };
+}
+
+/** A mount of the socket's parent directory exposes it even when the source path does not end in docker.sock. */
+function exposesDockerSocket(source: string): boolean {
+  const normalized = source.replace(/\/+$/, '');
+  return normalized === '/var/run' || normalized === '/run' || normalized.endsWith('docker.sock');
+}
+
+/**
+ * Any other mount that is a token file, or a directory that contains this runner's token.
+ * The one allowed mount is the runner's own token file.
+ */
+function tokenDirectoryBinds(binds: { source: string; target: string }[], own: { source: string; target: string }): string[] {
+  const slash = own.source.lastIndexOf('/');
+  const tokenDir = slash > 0 ? own.source.slice(0, slash) : '';
+  const problems: string[] = [];
+  for (const bind of binds) {
+    if (bind.source === own.source && bind.target === own.target) continue;
+    const source = bind.source.replace(/\/+$/, '');
+    if (source.endsWith('.token')) problems.push('mounts a token file besides its own');
+    else if (tokenDir && source && (source === tokenDir || tokenDir.startsWith(`${source}/`) || source.startsWith(`${tokenDir}/`))) {
+      problems.push(`mounts ${source}, which can reach the token directory`);
+    }
+  }
+  return problems;
 }

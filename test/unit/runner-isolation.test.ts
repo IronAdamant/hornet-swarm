@@ -7,7 +7,7 @@ import {
   runnerIsolationProblems,
   type IsolationView,
 } from '../../packages/controller/src/runner-isolation.ts';
-import { controlVolume, proxyName } from '../../packages/controller/src/units.ts';
+import { controlVolume, networkName, proxyName } from '../../packages/controller/src/units.ts';
 import { fileAt, hasRevision } from '../support/git-history.ts';
 
 const project = 'shop';
@@ -50,12 +50,22 @@ describe('runner isolation invariants', () => {
     ['another label\'s token', (target) => (target.host.Binds = [...(target.host.Binds ?? []).slice(0, 3), `${tokenDir}/qa-user-2.token:/tokens/qa-user-1.token:ro`]), /only its own token/],
     ['a writable token', (target) => (target.host.Binds = [...(target.host.Binds ?? []).slice(0, 3), `${tokenDir}/qa-user-1.token:/tokens/qa-user-1.token`]), /only its own token/],
     ['the Docker socket', (target) => target.host.Binds?.push('/var/run/docker.sock:/var/run/docker.sock'), /Docker socket/],
+    ['the directory that holds the Docker socket', (target) => target.host.Binds?.push('/var/run:/var/run'), /Docker socket/],
+    ['the token directory mounted somewhere else', (target) => target.host.Binds?.push(`${tokenDir}:/host-tokens:ro`), /token directory/],
     ['another project\'s control folder', (target) => (target.host.Binds = (target.host.Binds ?? []).map((bind) => bind.replace(controlVolume(project), controlVolume('other')))), /control folder/],
     ['a token in the environment', (target) => target.env.push('AEGIS_CONTROL_TOKEN=abc'), /token in its environment/],
   ])('refuses %s', (_name, change, problem) => {
     const target = view();
     change(target);
     expect(runnerIsolationProblems(target, project, label).join('; ')).toMatch(problem);
+  });
+
+  it('refuses a reused runner that is also attached to another network', () => {
+    const target = view();
+    target.networks = [networkName(project), 'bridge'];
+    expect(runnerIsolationProblems(target, project, label).join('; ')).toMatch(/also attached to bridge/);
+    target.networks = [networkName(project)];
+    expect(runnerIsolationProblems(target, project, label)).toEqual([]);
   });
 
   it('passes the one proxy spec and refuses a relay or egress port opened beyond loopback', () => {
