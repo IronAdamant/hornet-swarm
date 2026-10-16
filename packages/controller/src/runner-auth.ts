@@ -1,8 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
+import { assertPrivatePath, privateDir, rewritePrivateFileInPlace } from '@hornet-swarm/core';
 import { aegisHome } from './home.js';
+
+const LOOSE_DIRECTORY = { looseMessage: 'The control token directory is open to other accounts.' };
+const LOOSE_FILE = { looseMessage: 'The control token file is open to other accounts.' };
 
 export function controlTokenDir(project: string, home = aegisHome()): string {
   return join(home, 'control', project);
@@ -16,20 +20,17 @@ export function ensureControlToken(project: string, label: string, home = aegisH
   const directory = controlTokenDir(project, home);
   const file = controlTokenPath(project, label, home);
   if (!existsSync(file)) return rotateControlToken(project, label, home);
-  assertOwnerOnly(directory, 0o700, 'directory');
-  assertOwnerOnly(file, 0o600, 'file');
+  assertPrivatePath(directory, 'dir', LOOSE_DIRECTORY);
+  assertPrivatePath(file, 'file', LOOSE_FILE);
   return readFileSync(file, 'utf8').trim();
 }
 
 export function rotateControlToken(project: string, label: string, home = aegisHome()): string {
-  const directory = controlTokenDir(project, home);
-  prepareTokenDirectory(directory);
+  const directory = privateDir(controlTokenDir(project, home), LOOSE_DIRECTORY);
   const file = join(directory, `${label}.token`);
-  // A file other accounts can read is left as it is. The run does not receive a replacement.
-  if (existsSync(file)) assertOwnerOnly(file, 0o600, 'file');
   const token = randomBytes(32).toString('hex');
-  writeFileSync(file, `${token}\n`, { mode: 0o600 });
-  chmodSync(file, 0o600);
+  // A file other accounts can read is refused and left as it is. The run does not receive a replacement.
+  rewritePrivateFileInPlace(file, `${token}\n`, LOOSE_FILE);
   return token;
 }
 
@@ -45,20 +46,6 @@ export async function runWithToken<T>(project: string, label: string, home: stri
   } finally {
     revokeControlToken(project, label, home);
   }
-}
-
-function prepareTokenDirectory(directory: string): void {
-  if (existsSync(directory)) {
-    assertOwnerOnly(directory, 0o700, 'directory');
-    return;
-  }
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  chmodSync(directory, 0o700);
-}
-
-function assertOwnerOnly(path: string, limit: number, kind: string): void {
-  const actual = statSync(path).mode & 0o777;
-  if ((actual & ~limit) !== 0) throw new Error(`The control token ${kind} is open to other accounts.`);
 }
 
 export function readControlToken(project: string, label: string, home = aegisHome()): string {

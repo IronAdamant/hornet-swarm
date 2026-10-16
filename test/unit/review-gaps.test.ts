@@ -42,7 +42,7 @@ users:
 
 function tempHome(): string {
   const home = mkdtempSync(join(tmpdir(), 'hornet-gaps-'));
-  mkdirSync(join(home, 'projects', 'gaps', 'journeys'), { recursive: true });
+  mkdirSync(join(home, 'projects', 'gaps', 'journeys'), { recursive: true, mode: 0o700 });
   writeFileSync(join(home, 'projects', 'gaps', 'project.yaml'), FIXTURE_PROJECT);
   return home;
 }
@@ -129,7 +129,7 @@ describe('trace and HAR handling', () => {
     zip.file('resources/other.css', 'body{}');
     writeFileSync(join(dir, 'trace.zip'), await zip.generateAsync({ type: 'nodebuffer' }));
 
-    expect(await sanitizeNetworkLogs(dir, ['**/login'])).toBe(2);
+    expect(await sanitizeNetworkLogs(dir, ['**/login'], new Redactor())).toBe(2);
     const har = JSON.parse(readFileSync(join(dir, 'network.har'), 'utf8')) as { log: { entries: ReturnType<typeof entry>[] } };
     const [login, search] = har.log.entries;
     expect(login?.request.postData.text).toBe('[REDACTED:auth_endpoint]');

@@ -22,7 +22,7 @@ describe('agents name journeys and projects by id only', () => {
   beforeAll(async () => {
     execFileSync('pnpm', ['--filter', '@hornet-swarm/mcp-server', 'build'], { cwd: root, stdio: 'ignore' });
     writeFileSync(outside, 'version: 1\nid: outside\nsecret_marker: do-not-echo\n');
-    mkdirSync(join(home, 'projects', 'paths'), { recursive: true });
+    mkdirSync(join(home, 'projects', 'paths'), { recursive: true, mode: 0o700 });
     writeFileSync(
       join(home, 'projects', 'paths', 'project.yaml'),
       `id: paths
@@ -113,7 +113,7 @@ describe('a fresh MCP server serves the current journey rules and reliability sp
   let client: Client;
 
   beforeAll(async () => {
-    mkdirSync(join(home, 'projects', 'shop'), { recursive: true });
+    mkdirSync(join(home, 'projects', 'shop'), { recursive: true, mode: 0o700 });
     writeFileSync(
       join(home, 'projects', 'shop', 'project.yaml'),
       `id: shop
@@ -134,7 +134,7 @@ users:
     // Two runs without chaos and one with it.
     const write = (id: string, status: 'pass' | 'fail', chaos: boolean) => {
       const dir = join(home, 'runs', id);
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
       writeFileSync(
         join(dir, 'run.json'),
         JSON.stringify({
@@ -159,7 +159,7 @@ users:
     write('run_3', 'fail', true);
     // An owner authorisation that does not list chaos, with its signed statement.
     const statement = 'Test statement: shop owner allows sign-in and journeys, not chaos.\n';
-    mkdirSync(join(home, 'authorisations', 'docs'), { recursive: true });
+    mkdirSync(join(home, 'authorisations', 'docs'), { recursive: true, mode: 0o700 });
     const doc = join(home, 'authorisations', 'docs', 'shop-owner.txt');
     writeFileSync(doc, statement);
     const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);

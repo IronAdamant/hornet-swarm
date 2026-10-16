@@ -1,12 +1,11 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stringify } from 'yaml';
-import { validateJourneyDocument, type Journey, type PageMap } from '@hornet-swarm/core';
+import { privateDir, validateJourneyDocument, writePrivateFile, type Journey, type PageMap } from '@hornet-swarm/core';
 import { loadProject } from './authorisation.js';
 import { listFields, projectSecretValues } from './broker.js';
 import { HornetError } from './errors.js';
 import { aegisHome } from './home.js';
-import { writeFileAtomic } from './leases-store.js';
 import { runSuite, signInSteps } from './suite.js';
 
 export type InspectRequest = {
@@ -83,9 +82,9 @@ export async function inspectPage(request: InspectRequest): Promise<InspectOutco
   // Inspections are kept apart from the project's journeys and the agents' journeys, so a suite
   // never runs one.
   const dir = join(home, 'projects', project.id, 'inspections');
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  privateDir(dir);
   const file = join(dir, `${id}.journey.yaml`);
-  writeFileAtomic(file, stringify(journey));
+  writePrivateFile(file, stringify(journey));
   const result = await runSuite({
     project: project.id,
     journeyFiles: [file],

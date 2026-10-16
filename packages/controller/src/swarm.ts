@@ -1,14 +1,14 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { isMap, isSeq, parse, parseDocument, type Document, type YAMLMap } from 'yaml';
-import { containerHost, projectSchema, Redactor, shortSecretError, type Project } from '@hornet-swarm/core';
+import { containerHost, parseLogin, privateDir, projectSchema, Redactor, writePrivateFile, type ParsedLogin, type Project } from '@hornet-swarm/core';
 import { hostAuthorised, loadAuthorisation } from './authorisation.js';
-import { listLabels, registerProjectSecrets, setSecrets, storedFields, type SecretField } from './broker.js';
+import { listLabels, registerProjectSecrets, setSecrets, storedFields } from './broker.js';
 import { envStatus } from './env.js';
 import { HornetError } from './errors.js';
-import { aegisHome, ensureDir } from './home.js';
-import { leaseHolder, withFileLock, writeFileAtomic } from './leases-store.js';
+import { aegisHome } from './home.js';
+import { leaseHolder, withFileLock } from './leases-store.js';
 
 /** One sub-agent: its login label, the personality it plays, and the owner's rules for it. */
 export type SwarmAgent = { label: string; personality: string; rules?: string };
@@ -118,10 +118,10 @@ export function addAgentNote(project: string, label: string, agentId: string, te
   registerProjectSecrets(project, redactor, home);
   const note: AgentNote = { at: new Date().toISOString(), agent: agentId, text: redactor.redact(trimmed) };
   const file = notesPath(home, project, label);
-  mkdirSync(join(home, 'projects', project, 'notes'), { recursive: true, mode: 0o700 });
+  privateDir(join(home, 'projects', project, 'notes'));
   const count = withFileLock(home, `notes-${project}-${label}`, () => {
     const notes = [...readAgentNotes(project, label, home), note].slice(-NOTES_KEPT);
-    writeFileAtomic(file, `${JSON.stringify(notes, null, 2)}\n`);
+    writePrivateFile(file, `${JSON.stringify(notes, null, 2)}\n`);
     return notes.length;
   });
   return { ok: true, notes: count };
@@ -176,10 +176,12 @@ export function saveSwarmBoard(
   for (const card of filled) {
     const keepsStored = hasLogin(card.label);
     if ((!card.username || !card.password) && !keepsStored) throw new HornetError('Each login needs a username and a password.', 3);
-    if (card.password) {
-      const problem = shortSecretError(card.password);
-      if (problem) throw new HornetError(problem, 3);
-    }
+  }
+  const parsed = new Map<string, ParsedLogin>();
+  for (const card of filled) {
+    const login = parseLogin({ ...(card.username ? { username: card.username } : {}), ...(card.password ? { password: card.password } : {}) });
+    if (!login.ok) throw new HornetError(login.error, 3);
+    parsed.set(card.label, login.secrets);
   }
   const file = join(home, 'projects', projectId, 'project.yaml');
   let document: Document;
@@ -212,18 +214,15 @@ export function saveSwarmBoard(
   updateProjectDocument(document, project, website, selectors, agents);
   // The edited file must still be a valid project before any login is stored.
   projectSchema.parse(document.toJS());
-  const updates: Record<string, Partial<Record<SecretField, string>>> = {};
-  for (const card of filled) {
-    const fields: Partial<Record<SecretField, string>> = {};
-    if (card.username) fields.username = card.username;
-    if (card.password) fields.password = card.password;
-    if (Object.keys(fields).length > 0) updates[card.label] = fields;
+  const updates: Record<string, ParsedLogin> = {};
+  for (const [label, fields] of parsed) {
+    if (Object.keys(fields).length > 0) updates[label] = fields;
   }
   if (Object.keys(updates).length > 0) setSecrets(projectId, updates, home);
-  writeFileAtomic(file, document.toString(), 0o644);
+  writePrivateFile(file, document.toString());
   const view: SwarmView = { ready: true, project: projectId, website: website.toString(), agents };
-  ensureDir(join(home, 'projects', projectId));
-  writeFileAtomic(swarmPath(home, projectId), `${JSON.stringify(view, null, 2)}\n`);
+  privateDir(join(home, 'projects', projectId));
+  writePrivateFile(swarmPath(home, projectId), `${JSON.stringify(view, null, 2)}\n`);
   return view;
 }
 

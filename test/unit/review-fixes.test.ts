@@ -133,7 +133,7 @@ describe('the signed authorisation document', () => {
   const home = mkdtempSync(join(tmpdir(), 'hornet-doc-'));
   const body = 'Signed by the owner on 1 October 2026.\n';
   const hash = createHash('sha256').update(body).digest('hex');
-  mkdirSync(join(home, 'authorisations'), { recursive: true });
+  mkdirSync(join(home, 'authorisations'), { recursive: true, mode: 0o700 });
   writeFileSync(join(home, 'authorisations', 'signed.txt'), body);
 
   it('passes when the file is there and its hash matches', () => {
@@ -325,11 +325,11 @@ describe('baselines', () => {
 
   it('keeps one baseline per label and still reads an older shared one', () => {
     const shared = join(home, 'baselines', 'p', 'layout');
-    mkdirSync(shared, { recursive: true });
+    mkdirSync(shared, { recursive: true, mode: 0o700 });
     writeFileSync(join(shared, 'timings.json'), '{}\n');
     expect(baselineDir(home, 'p', 'qa-user-1', 'layout')).toBe(shared);
     const own = join(home, 'baselines', 'p', 'qa-user-1', 'layout');
-    mkdirSync(own, { recursive: true });
+    mkdirSync(own, { recursive: true, mode: 0o700 });
     expect(baselineDir(home, 'p', 'qa-user-1', 'layout')).toBe(own);
     expect(baselineDir(home, 'p', 'qa-user-2', 'fresh')).toBe(join(home, 'baselines', 'p', 'qa-user-2', 'fresh'));
   });
@@ -343,7 +343,7 @@ describe('baselines', () => {
     const runId = 'run_20261014-100000_abcdef';
     const runDir = join(home, 'runs', runId);
     const shotDir = join(runDir, 'qa-user-5', 'layout');
-    mkdirSync(shotDir, { recursive: true });
+    mkdirSync(shotDir, { recursive: true, mode: 0o700 });
     writeFileSync(join(shotDir, 'page.png'), 'png');
     writeFileSync(join(shotDir, 'page.txt'), 'Products');
     const steps = [{ index: 2, type: 'screenshot', status: 'pass', duration_ms: 5, started_at: '', finished_at: '', screenshot_paths: [join(shotDir, 'page.png'), '/etc/hosts'] }];
@@ -367,7 +367,7 @@ describe('moving a runner folder never follows a link', () => {
 
   it('copies a real folder and empties the runner copy', async () => {
     const out = join(home, 'runners', 'move', 'qa-user-1', 'run_a', 'journey');
-    mkdirSync(out, { recursive: true });
+    mkdirSync(out, { recursive: true, mode: 0o700 });
     writeFileSync(join(out, 'console.log'), 'ok');
     await moveArtifacts(home, config, 'qa-user-1', 'run_a', 'journey');
     expect(readFileSync(join(home, 'runs', 'run_a', 'qa-user-1', 'journey', 'console.log'), 'utf8')).toBe('ok');
@@ -379,7 +379,7 @@ describe('moving a runner folder never follows a link', () => {
     mkdirSync(join(victim, 'journey'));
     writeFileSync(join(victim, 'journey', 'keep.txt'), 'precious');
     const runnerDir = join(home, 'runners', 'move', 'qa-user-1');
-    mkdirSync(runnerDir, { recursive: true });
+    mkdirSync(runnerDir, { recursive: true, mode: 0o700 });
     symlinkSync(victim, join(runnerDir, 'run_b'));
     await expect(moveArtifacts(home, config, 'qa-user-1', 'run_b', 'journey')).rejects.toThrow(/link/);
     expect(readFileSync(join(victim, 'journey', 'keep.txt'), 'utf8')).toBe('precious');
@@ -392,7 +392,7 @@ describe('moving a runner folder never follows a link', () => {
     const victim = mkdtempSync(join(tmpdir(), 'hornet-victim-'));
     writeFileSync(join(victim, 'keep.txt'), 'precious');
     const runDir = join(home, 'runners', 'move', 'qa-user-1', 'run_c');
-    mkdirSync(runDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
     symlinkSync(victim, join(runDir, 'journey'));
     await expect(moveArtifacts(home, config, 'qa-user-1', 'run_c', 'journey')).rejects.toThrow(/link/);
     expect(readFileSync(join(victim, 'keep.txt'), 'utf8')).toBe('precious');
@@ -459,7 +459,7 @@ describe('file locks', () => {
 describe('the credential page and the swarm board', () => {
   // The store needs the Keychain age key, as in broker.test.ts. The work folder sits in the Hornet Swarm home.
   const swarmHome = join(homedir(), '.hornet-swarm');
-  mkdirSync(swarmHome, { recursive: true });
+  mkdirSync(swarmHome, { recursive: true, mode: 0o700 });
   const home = mkdtempSync(join(swarmHome, 'work-fixes-'));
   let page: { port: number; close: () => Promise<void> } | undefined;
   let restorePath: (() => void) | undefined;
@@ -549,8 +549,8 @@ describe('the credential page and the swarm board', () => {
 
 function writeProject(home: string): void {
   const body = 'Owner authorisation for the offline fixture.\n';
-  mkdirSync(join(home, 'authorisations'), { recursive: true });
-  mkdirSync(join(home, 'projects', 'fixes'), { recursive: true });
+  mkdirSync(join(home, 'authorisations'), { recursive: true, mode: 0o700 });
+  mkdirSync(join(home, 'projects', 'fixes'), { recursive: true, mode: 0o700 });
   writeFileSync(join(home, 'authorisations', 'fixes.txt'), body);
   writeFileSync(
     join(home, 'authorisations', 'fixes-owner.yaml'),

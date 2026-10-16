@@ -10,7 +10,7 @@
 // and rules for each label. It contacts the site only to read the published login and save that
 // statement. Set HORNET_PRACTICE_PASSWORD to skip reading the password from the site.
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -94,8 +94,12 @@ if (!site) {
 }
 
 let setSecret;
+let privateDir;
+let writePrivateFile;
+let copyPrivateFile;
 try {
   ({ setSecret } = await import(join(root, 'packages/controller/dist/index.js')));
+  ({ privateDir, writePrivateFile, copyPrivateFile } = await import(join(root, 'packages/core/dist/index.js')));
 } catch {
   process.stderr.write('Build the workspace first: pnpm build\n');
   process.exit(4);
@@ -108,7 +112,7 @@ const until = new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000);
 authorisation.valid_from = today.toISOString().slice(0, 10);
 authorisation.valid_until = until.toISOString().slice(0, 10);
 const docsDir = join(home, 'authorisations', 'docs');
-mkdirSync(docsDir, { recursive: true, mode: 0o700 });
+privateDir(docsDir);
 const saveStatement = !process.argv.includes('--no-statement');
 if (saveStatement) {
   try {
@@ -116,24 +120,23 @@ if (saveStatement) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body = Buffer.from(await response.arrayBuffer());
     const file = join(docsDir, `${site.authorisation}-${authorisation.valid_from}.html`);
-    writeFileSync(file, body, { mode: 0o600 });
+    writePrivateFile(file, body);
     authorisation.document = { path: file, sha256: createHash('sha256').update(body).digest('hex') };
     process.stdout.write(`Saved the practice statement: ${file}\n`);
   } catch (error) {
     process.stdout.write(`Could not save the practice statement (${error instanceof Error ? error.message : error}). The authorisation still records its address.\n`);
   }
 }
-mkdirSync(join(home, 'authorisations'), { recursive: true });
-writeFileSync(join(home, 'authorisations', `${site.authorisation}.yaml`), stringify(authorisation));
+writePrivateFile(join(privateDir(join(home, 'authorisations')), `${site.authorisation}.yaml`), stringify(authorisation));
 
 // Project and journeys.
 const projectDir = join(home, 'projects', site.project);
 const journeysDir = join(projectDir, 'journeys');
-mkdirSync(journeysDir, { recursive: true });
+privateDir(journeysDir);
 const sourceDir = join(root, 'examples/projects', site.project);
-copyFileSync(join(sourceDir, 'project.yaml'), join(projectDir, 'project.yaml'));
+copyPrivateFile(join(sourceDir, 'project.yaml'), join(projectDir, 'project.yaml'));
 for (const file of readdirSync(join(sourceDir, 'journeys')).filter((entry) => entry.endsWith('.yaml'))) {
-  copyFileSync(join(sourceDir, 'journeys', file), join(journeysDir, file));
+  copyPrivateFile(join(sourceDir, 'journeys', file), join(journeysDir, file));
 }
 
 // Logins go into the encrypted store, never into a project file. Each site publishes its own login.
@@ -152,7 +155,7 @@ const board = {
   website: project.targets.base_url,
   agents: Object.entries(site.agents).map(([label, agent]) => ({ label, ...agent })),
 };
-writeFileSync(join(projectDir, 'swarm.json'), `${JSON.stringify(board, null, 2)}\n`);
+writePrivateFile(join(projectDir, 'swarm.json'), `${JSON.stringify(board, null, 2)}\n`);
 
 process.stdout.write(
   [

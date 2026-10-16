@@ -1,18 +1,17 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { credentialRequestSchema, projectDomainsAuthorised, shortSecretError } from '@hornet-swarm/core';
+import { appendPrivateFile, appendRedactedFile, credentialRequestSchema, parseLogin, privateDir, privateTempDir, projectDomainsAuthorised, Redactor, shortSecretError, writePrivateFile } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
 import { assertAuthorisationUsable, loadAuthorisation, loadProject } from './authorisation.js';
 import { setSecrets } from './broker.js';
 import { HornetError } from './errors.js';
-import { aegisHome, ensureDir } from './home.js';
-import { withFileLock, writeFileAtomic } from './leases-store.js';
+import { aegisHome } from './home.js';
+import { withFileLock } from './leases-store.js';
 import { cardsFromForm, saveSwarmBoard, swarmBoardHtml } from './swarm.js';
 
 type CredentialRequest = {
@@ -200,10 +199,10 @@ export function storeOwnerLogin(
   totp: string | undefined,
   home = aegisHome(),
 ): { ok: true; label: string; status: 'ready' } {
-  const problem = shortSecretError(password, totp);
-  if (problem) throw new HornetError(problem, 3);
+  const login = parseLogin({ username, password, ...(totp ? { totp_secret: totp } : {}) });
+  if (!login.ok) throw new HornetError(login.error, 3);
   assertProjectAuthorised(project, home);
-  setSecrets(project, { [label]: { username, password, ...(totp ? { totp_secret: totp } : {}) } }, home);
+  setSecrets(project, { [label]: login.secrets }, home);
   mark(home, project, label, 'ready');
   writeAudit({ interface: 'cli', action: 'credential_stored', project, labels: [label], result: 'ready' }, undefined, home);
   return { ok: true, label, status: 'ready' };
@@ -483,7 +482,7 @@ function codeForm(gate: OperatorGate): string {
 function notifyOperator(home: string, project: string, label: string, port: number, token: string): void {
   const reason = 'A texted or emailed code is needed.';
   const notice = { project, label, reason, url: `http://127.0.0.1:${port}/codes?token=${token}`, at: new Date().toISOString() };
-  appendFileSync(join(ensureDir(home), 'notifications.log'), `${JSON.stringify(notice)}\n`);
+  appendRedactedFile(join(privateDir(home), 'notifications.log'), new Redactor().seal(`${JSON.stringify(notice)}\n`));
   const script = `display notification ${JSON.stringify(reason)} with title ${JSON.stringify(`Hornet Swarm ${project}`)} subtitle ${JSON.stringify(label)}`;
   try {
     execFileSync('osascript', ['-e', script], { stdio: 'ignore', timeout: 5_000 });
@@ -538,18 +537,18 @@ context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason
 sem.wait()
 exit(ok ? 0 : 1)
 `;
-  const file = join(tmpdir(), `hornet-swarm-touch-${process.pid}-${randomBytes(4).toString('hex')}.swift`);
-  writeFileSync(file, source, { mode: 0o600 });
+  const folder = privateTempDir('hornet-swarm-touch-');
+  const file = join(folder, 'touch.swift');
+  writePrivateFile(file, source);
   return new Promise((resolve) => {
     execFile('swift', [file], { timeout: 45_000, encoding: 'utf8' }, (error, _stdout, stderr) => {
-      rmSync(file, { force: true });
+      rmSync(folder, { recursive: true, force: true });
       if (!error) {
         resolve(true);
         return;
       }
       try {
-        ensureDir(join(logFile, '..'));
-        appendFileSync(logFile, `${new Date().toISOString()} ${stderr || error.message}\n`);
+        appendPrivateFile(logFile, `${new Date().toISOString()} ${stderr || error.message}\n`);
       } catch {
         // The log is a convenience. The refusal still stands.
       }
@@ -564,7 +563,7 @@ function touchLog(home: string): string {
 
 function notifyOwner(home: string, project: string, label: string, reason: string, port: number, token: string): void {
   const notice = { project, label, reason, url: `http://127.0.0.1:${port}/requests?token=${token}`, at: new Date().toISOString() };
-  appendFileSync(join(ensureDir(home), 'notifications.log'), `${JSON.stringify(notice)}\n`);
+  appendRedactedFile(join(privateDir(home), 'notifications.log'), new Redactor().seal(`${JSON.stringify(notice)}\n`));
   const script = `display notification ${JSON.stringify(reason)} with title ${JSON.stringify(`Hornet Swarm ${project}`)} subtitle ${JSON.stringify(label)}`;
   try {
     execFileSync('osascript', ['-e', script], { stdio: 'ignore', timeout: 5_000 });
@@ -650,13 +649,13 @@ function readRequests(home: string): CredentialRequest[] {
 
 /** Settled requests older than a week are dropped, so the file does not grow without end. */
 function updateRequests<T>(home: string, change: (requests: CredentialRequest[]) => T): T {
-  ensureDir(home);
+  privateDir(home);
   return withFileLock(home, 'credential-requests', () => {
     const requests = readRequests(home);
     const result = change(requests);
     const cutoff = Date.now() - 7 * DAY_MS;
     const kept = requests.filter((entry) => entry.status === 'pending' || entry.createdAt >= cutoff);
-    writeFileAtomic(join(home, 'credential-requests.json'), `${JSON.stringify(kept)}\n`);
+    writePrivateFile(join(home, 'credential-requests.json'), `${JSON.stringify(kept)}\n`);
     return result;
   });
 }

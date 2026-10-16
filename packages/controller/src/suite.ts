@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { basename, join } from 'node:path';
 import { parse } from 'yaml';
@@ -8,12 +8,15 @@ import {
   analysisSchema,
   CHAOS_PROFILES,
   chaosPermitted,
+  copyPrivateFile,
+  copyPrivateTree,
   chaosSequence,
   globalConfigSchema,
   parallelRunners,
   passiveOrigins,
   perRunnerRate,
   practiceLimits,
+  privateDir,
   productionGate,
   projectDomainsAuthorised,
   Redactor,
@@ -21,7 +24,10 @@ import {
   runResultSchema,
   type Analysis,
   signinBudget,
+  UnredactableError,
   validateJourneyYaml,
+  writePrivateFile,
+  writeRedactedFile,
   type Journey,
   type Project,
   type RunResult,
@@ -53,8 +59,8 @@ import { injectSecrets, injectTotp, listFields, projectSecretValues, registerPro
 import { HornetError } from './errors.js';
 import { ensureCredentialPage } from './credentials.js';
 import { runnerStatus, startStoppedRunner, stopRunners } from './env.js';
-import { aegisHome, ensureDir } from './home.js';
-import { acquireLease, heartbeatStoredLease, releaseStoredLease, withFileLock, writeFileAtomic } from './leases-store.js';
+import { aegisHome } from './home.js';
+import { acquireLease, heartbeatStoredLease, releaseStoredLease, withFileLock } from './leases-store.js';
 import { runWithToken, runnerFetch } from './runner-auth.js';
 
 
@@ -180,7 +186,7 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   const deadline = Date.now() + project.limits.max_run_duration_min * 60_000;
   const ttlMs = request.leaseTtlMs ?? 30 * 60 * 1000;
   const via = request.via ?? 'cli';
-  const runDir = ensureDir(join(home, 'runs', runId));
+  const runDir = privateDir(join(home, 'runs', runId));
   const rich: RichUser[] = [];
   let killed = false;
   let durationStop = false;
@@ -378,13 +384,12 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   });
   const summary = summaryMarkdown(rich, status, request.chaos);
   const artifacts = collectArtifacts(runDir);
-  writeRunReports(runDir, result, analysis, summary, undefined, artifacts);
-  writeFileSync(join(runDir, 'junit.xml'), junitXml(result));
   const redactor = new Redactor();
   registerProjectSecrets(project.id, redactor, home);
   for (const code of totpCodes) redactor.register('totp_code', code);
-  await redactTree(runDir, redactor);
-  const hits = await scanTree(runDir, redactor);
+  const withheld = writeRunReports(runDir, result, analysis, summary, redactor, artifacts);
+  withheld.push(...(await redactTree(runDir, redactor)));
+  const hits = [...withheld, ...(await scanTree(runDir, redactor))];
   if (hits.length > 0) {
     for (const hit of hits) quarantineHit(hit);
     const failedSummary = summaryMarkdown(rich, 'redaction_failure');
@@ -785,7 +790,7 @@ export function writeErrorOutcome(input: {
       authorisation_id: input.authorisationId,
       redaction: 'pass',
     });
-    writeFileSync(join(input.runDir, 'run.json'), redactor.redact(`${JSON.stringify(result, null, 2)}\n`));
+    writeRedactedFile(join(input.runDir, 'run.json'), redactor.seal(`${JSON.stringify(result, null, 2)}\n`));
     run = true;
   } catch {
     run = false;
@@ -810,10 +815,8 @@ export function writeErrorOutcome(input: {
       max_run_duration_min: input.maxRunDurationMin ?? 30,
       deadline: input.deadline ? new Date(input.deadline).toISOString() : '',
     };
-    let encoded = JSON.stringify(body, null, 2);
-    if (redactor.contains(encoded) || redactor.contains(input.message)) encoded = redactor.redact(encoded);
-    ensureDir(join(input.home, 'projects', input.projectId));
-    writeFileSync(packetPath, `${encoded}\n`);
+    privateDir(join(input.home, 'projects', input.projectId));
+    writeRedactedFile(packetPath, redactor.seal(`${JSON.stringify(body, null, 2)}\n`));
     packet = true;
   } catch {
     packet = false;
@@ -915,7 +918,7 @@ export function acceptBaseline(project: string, runId: string, home = aegisHome(
     if (!/^qa-user-\d+$/.test(user.label)) continue;
     for (const journey of user.journeys) {
       if (!/^[a-z0-9-]+$/.test(journey.id)) continue;
-      const dir = ensureDir(join(home, 'baselines', project, user.label, journey.id));
+      const dir = privateDir(join(home, 'baselines', project, user.label, journey.id));
       const timings: Record<string, number> = {};
       for (const step of journey.steps) {
         timings[String(step.index)] = step.duration_ms;
@@ -924,11 +927,11 @@ export function acceptBaseline(project: string, runId: string, home = aegisHome(
         // Only files inside this run are copied. The paths come from the run's own report.
         const shot = step.screenshot_paths?.[0];
         if (!shot || !shot.startsWith(`${runDir}/`) || !existsSync(shot)) continue;
-        copyFileSync(shot, join(dir, `${step.index}.png`));
+        copyPrivateFile(shot, join(dir, `${step.index}.png`));
         const text = shot.replace(/\.png$/, '.txt');
-        if (existsSync(text)) copyFileSync(text, join(dir, `${step.index}.txt`));
+        if (existsSync(text)) copyPrivateFile(text, join(dir, `${step.index}.txt`));
       }
-      writeFileSync(join(dir, 'timings.json'), `${JSON.stringify(timings)}\n`);
+      writePrivateFile(join(dir, 'timings.json'), `${JSON.stringify(timings)}\n`);
     }
   }
   return { ok: true };
@@ -938,7 +941,7 @@ export async function exportEvidence(project: string, runId: string, destination
   const redactor = new Redactor();
   registerProjectSecrets(project, redactor, home);
   const runDir = join(home, 'runs', runId);
-  await redactTree(runDir, redactor);
+  if ((await redactTree(runDir, redactor)).length > 0) throw new Error('evidence failed the redaction scan');
   await writeEvidenceZip(runDir, destination, redactor);
   return { ok: true, path: destination };
 }
@@ -1045,7 +1048,7 @@ export async function moveArtifacts(home: string, project: Project, label: strin
   // The run's folder is first moved out of the runner's reach in one rename. A rename moves a
   // link itself rather than what it points to, so a runner that put a link where its folder
   // belongs can never make the copy or the delete below reach a file elsewhere on this Mac.
-  const staged = join(ensureDir(join(home, 'staging')), `${label}-${runId}-${randomBytes(4).toString('hex')}`);
+  const staged = join(privateDir(join(home, 'staging')), `${label}-${runId}-${randomBytes(4).toString('hex')}`);
   renameSync(runEntry, staged);
   try {
     const source = join(staged, journeyId);
@@ -1055,9 +1058,11 @@ export async function moveArtifacts(home: string, project: Project, label: strin
       throw new HornetError('The runner wrote a link where its results belong. Nothing was copied, and the link was removed.', 4);
     }
     if (!lstatExists(source)) return;
-    const destination = ensureDir(join(home, 'runs', runId, label, journeyId));
-    cpSync(source, destination, { recursive: true, filter: (path) => !lstatSync(path).isSymbolicLink() });
-    await sanitizeNetworkLogs(destination, authEndpointPatterns(project));
+    const destination = privateDir(join(home, 'runs', runId, label, journeyId));
+    copyPrivateTree(source, destination);
+    const redactor = new Redactor();
+    registerProjectSecrets(project.id, redactor, home);
+    await sanitizeNetworkLogs(destination, authEndpointPatterns(project), redactor);
   } finally {
     if (lstatExists(staged) && lstatSync(staged).isSymbolicLink()) unlinkSync(staged);
     else rmSync(staged, { recursive: true, force: true });
@@ -1143,9 +1148,9 @@ export function saveAgentJourney(projectId: string, yamlText: string, home = aeg
     throw new HornetError(`A project journey already uses the id ${id}. Pick another id.`, 3);
   }
   const dir = agentJourneysDir(home, project.id);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  privateDir(dir);
   const path = join(dir, `${id}.journey.yaml`);
-  writeFileAtomic(path, yamlText.endsWith('\n') ? yamlText : `${yamlText}\n`);
+  writePrivateFile(path, yamlText.endsWith('\n') ? yamlText : `${yamlText}\n`);
   return { path, id };
 }
 
@@ -1201,12 +1206,12 @@ function regressionFiles(home: string, project: string): string[] {
  */
 function rememberRegression(home: string, project: string, entry: { file: string; journey?: Journey }, outcome: 'fail' | 'pass' | 'none'): void {
   if (!entry.journey || outcome === 'none') return;
-  const dir = ensureDir(join(home, 'regressions', project));
+  const dir = privateDir(join(home, 'regressions', project));
   const file = join(dir, `${entry.journey.id}.journey.yaml`);
   const ledgerPath = join(dir, `${entry.journey.id}.json`);
   if (outcome === 'fail') {
-    if (entry.file !== file) writeFileSync(file, readFileSync(entry.file));
-    writeFileSync(ledgerPath, `${JSON.stringify({ state: 'open', consecutive: 0 })}\n`);
+    if (entry.file !== file) writePrivateFile(file, readFileSync(entry.file));
+    writePrivateFile(ledgerPath, `${JSON.stringify({ state: 'open', consecutive: 0 })}\n`);
     return;
   }
   if (!existsSync(ledgerPath)) return;
@@ -1214,7 +1219,7 @@ function rememberRegression(home: string, project: string, entry: { file: string
   if (ledger.state !== 'open') return;
   const consecutive = ledger.consecutive + 1;
   const fixed = consecutive >= 3;
-  writeFileSync(ledgerPath, `${JSON.stringify({ state: fixed ? 'fixed' : 'open', consecutive })}\n`);
+  writePrivateFile(ledgerPath, `${JSON.stringify({ state: fixed ? 'fixed' : 'open', consecutive })}\n`);
   if (fixed) rmSync(file, { force: true });
 }
 
@@ -1257,7 +1262,7 @@ function recordSignin(home: string, project: string, label: string): void {
     const cutoff = Date.now() - 60 * 60 * 1000;
     const current = readSignins(home, project).filter((entry) => entry.at >= cutoff);
     current.push({ label, at: Date.now() });
-    writeFileAtomic(file, `${JSON.stringify(current)}\n`);
+    writePrivateFile(file, `${JSON.stringify(current)}\n`);
   });
 }
 
@@ -1371,20 +1376,34 @@ function totals(users: RichUser[]): RunResult['totals'] {
   };
 }
 
+/** Returns the files left unwritten because redaction could not clean them. The caller treats them as redaction hits. */
 function writeRunReports(
   runDir: string,
   result: RunResult,
   analysis: Analysis,
   summary: string,
-  redactor?: Redactor,
+  redactor: Redactor,
   artifacts?: { screenshots: string[]; traces: string[] },
-): void {
-  const emit = (text: string) => (redactor ? redactor.redact(text) : text);
-  writeFileSync(join(runDir, 'run.json'), emit(`${JSON.stringify(result, null, 2)}\n`));
-  writeFileSync(join(runDir, 'summary.md'), emit(summary));
-  writeFileSync(join(runDir, 'analysis.json'), emit(`${JSON.stringify(analysis, null, 2)}\n`));
-  writeFileSync(join(runDir, 'analysis.md'), emit(analysisMarkdown(analysis)));
-  writeFileSync(join(runDir, 'report.html'), emit(htmlReport(result, summary, artifacts)));
+): string[] {
+  const reports: [string, () => string][] = [
+    ['run.json', () => `${JSON.stringify(result, null, 2)}\n`],
+    ['summary.md', () => summary],
+    ['analysis.json', () => `${JSON.stringify(analysis, null, 2)}\n`],
+    ['analysis.md', () => analysisMarkdown(analysis)],
+    ['report.html', () => htmlReport(result, summary, artifacts)],
+    ['junit.xml', () => junitXml(result)],
+  ];
+  const withheld: string[] = [];
+  for (const [name, render] of reports) {
+    const file = join(runDir, name);
+    try {
+      writeRedactedFile(file, redactor.seal(render()));
+    } catch (error) {
+      if (!(error instanceof UnredactableError)) throw error;
+      withheld.push(file);
+    }
+  }
+  return withheld;
 }
 
 function collectArtifacts(runDir: string): { screenshots: string[]; texts: string[]; traces: string[] } {
@@ -1472,11 +1491,11 @@ export async function publishParent(input: {
     packet.trace_paths = [];
     packet.html_path = '';
     encoded = JSON.stringify(packet, null, 2);
-    if (input.redactor.contains(encoded)) encoded = input.redactor.redact(encoded);
   }
-  ensureDir(join(input.home, 'projects', input.projectId));
-  writeFileSync(packetPath, `${encoded}\n`);
-  return JSON.parse(encoded) as ParentPacket;
+  const sealed = input.redactor.seal(`${encoded}\n`);
+  privateDir(join(input.home, 'projects', input.projectId));
+  writeRedactedFile(packetPath, sealed);
+  return JSON.parse(sealed) as ParentPacket;
 }
 
 function failAnalysis(analysis: Analysis): Analysis {
@@ -1528,9 +1547,9 @@ export async function rescanRun(runDir: string, project: string, home = aegisHom
   const summary = summaryMarkdown([], 'redaction_failure');
   if (analysis) writeRunReports(runDir, result, failAnalysis(analysis), summary, redactor);
   else {
-    writeFileSync(file, redactor.redact(`${JSON.stringify(result, null, 2)}\n`));
-    writeFileSync(join(runDir, 'summary.md'), redactor.redact(summary));
-    writeFileSync(join(runDir, 'report.html'), redactor.redact(htmlReport(result, summary)));
+    writeRedactedFile(file, redactor.seal(`${JSON.stringify(result, null, 2)}\n`));
+    writeRedactedFile(join(runDir, 'summary.md'), redactor.seal(summary));
+    writeRedactedFile(join(runDir, 'report.html'), redactor.seal(htmlReport(result, summary)));
   }
   writeAudit({ interface: 'cli', action: 'redaction_failure', project, run_id: result.run_id, result: 'quarantined' }, redactor, home);
   return { ok: false, status: 'redaction_failure' };
