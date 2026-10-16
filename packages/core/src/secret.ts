@@ -20,7 +20,10 @@ export function credentialFieldOf(label: string): CredentialField | undefined {
   return CREDENTIAL_FIELDS.find((field) => label.endsWith(`.${field}`));
 }
 
-const values = new WeakMap<Secret, string>();
+type SecretRecord = { field: CredentialField; value: string };
+
+/** The field and value `Secret.parse` checked. Kept off the object so assigning `.field` or replacing `reveal` cannot relabel a short username as a password. */
+const records = new WeakMap<Secret, SecretRecord>();
 
 /**
  * A stored login field. `Secret.parse` is the only constructor, and it carries the length rule:
@@ -31,14 +34,19 @@ const values = new WeakMap<Secret, string>();
  * token, so a Secret that strays into a report or a log cannot leak. `reveal` is the only way out.
  */
 export class Secret {
-  private constructor(readonly field: CredentialField) {}
+  private constructor() {}
+
+  /** The field `parse` stored. An own property of the same name does not change what `valueForField` reads. */
+  get field(): CredentialField {
+    return records.get(this)?.field ?? 'username';
+  }
 
   static parse(field: CredentialField, value: string): { ok: true; secret: Secret } | { ok: false; error: string } {
     if (!CREDENTIAL_FIELDS.includes(field)) return { ok: false, error: 'unsupported field' };
     if (typeof value !== 'string' || value.length === 0) return { ok: false, error: 'empty secret' };
     if (field !== 'username' && !meetsSecretLength(value)) return { ok: false, error: SHORT_SECRET_ERROR };
-    const secret = new Secret(field);
-    values.set(secret, value);
+    const secret = new Secret();
+    records.set(secret, { field, value });
     return { ok: true, secret };
   }
 
@@ -50,7 +58,7 @@ export class Secret {
   }
 
   reveal(): string {
-    return values.get(this) ?? '';
+    return records.get(this)?.value ?? '';
   }
 
   toJSON(): string {
@@ -79,6 +87,19 @@ export function parseLogin(given: Partial<Record<CredentialField, string | undef
     secrets[field] = parsed.secret;
   }
   return { ok: true, secrets };
+}
+
+/**
+ * The value `parse` stored for `field`. This is what the secret store writes. It reads the private
+ * record, so a caller cannot relabel a short username as a password or replace `reveal` with a
+ * shorter string.
+ */
+export function valueForField(secret: Secret | undefined, field: CredentialField): string {
+  const record = secret instanceof Secret ? records.get(secret) : undefined;
+  if (!record || record.field !== field) throw new Error('A login field must be a Secret made by Secret.parse.');
+  if (!record.value) throw new Error('empty secret');
+  if (field !== 'username' && !meetsSecretLength(record.value)) throw new Error(SHORT_SECRET_ERROR);
+  return record.value;
 }
 
 /** The first error among optional password and TOTP inputs. Blank values are skipped. Never pass a username. */

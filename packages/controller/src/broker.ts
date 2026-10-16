@@ -3,7 +3,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
-import { CREDENTIAL_FIELDS, privateDir, privateTempDir, Redactor, Secret, writePrivateFile, type CredentialField } from '@hornet-swarm/core';
+import { CREDENTIAL_FIELDS, privateDir, privateTempDir, Redactor, Secret, valueForField, writePrivateFile, type CredentialField } from '@hornet-swarm/core';
 import { aegisHome } from './home.js';
 import { withFileLock } from './leases-store.js';
 import { RunnerSession } from './runner-session.js';
@@ -80,14 +80,14 @@ export function setSecrets(project: string, updates: Record<string, Partial<Reco
     if (!/^qa-user-\d+$/.test(label)) throw new Error('label must look like qa-user-1');
     for (const [field, value] of Object.entries(fields)) {
       if (!FIELDS.includes(field as SecretField)) throw new Error('unsupported field');
-      // A plain string from untyped code (a script) would skip the length rule, so only a parsed Secret is stored.
-      if (!(value instanceof Secret) || value.field !== field) throw new Error('A login field must be a Secret made by Secret.parse.');
+      // A plain string, or a Secret whose field was reassigned, would skip the length rule.
+      valueForField(value, field as SecretField);
     }
   }
   withFileLock(home, `secrets-${project}`, () => {
     const users = readUsers(home, project);
     for (const [label, fields] of Object.entries(updates)) {
-      const revealed = Object.fromEntries(Object.entries(fields).map(([field, secret]) => [field, secret.reveal()]));
+      const revealed = Object.fromEntries(Object.entries(fields).map(([field, secret]) => [field, valueForField(secret, field as SecretField)]));
       users[label] = { ...(users[label] ?? {}), ...revealed };
     }
     writeUsers(home, project, users);
