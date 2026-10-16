@@ -4,12 +4,16 @@ import { join } from 'node:path';
 
 export const REPO_ROOT = join(import.meta.dirname, '../..');
 
-/** Whether this checkout has `revision`. A shallow clone does not, and CI fetches full history for these proofs. */
+/**
+ * Whether this checkout has `revision`. A shallow clone does not, so a proof skips there, except
+ * under HORNET_REQUIRE_HISTORY (set in CI), where a missing revision fails instead of skipping.
+ */
 export function hasRevision(revision: string): boolean {
   try {
     execFileSync('git', ['cat-file', '-e', `${revision}^{commit}`], { cwd: REPO_ROOT, stdio: 'ignore' });
     return true;
   } catch {
+    if (process.env.HORNET_REQUIRE_HISTORY === '1') throw new Error(`${revision} is not in this checkout. Fetch full history (fetch-depth: 0) so the proof can run.`);
     return false;
   }
 }
