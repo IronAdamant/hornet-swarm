@@ -46,6 +46,7 @@ import {
   type RichJourney,
   type RichStep,
   type RichUser,
+  unsupportedPass,
 } from '@hornet-swarm/report';
 import { writeAudit } from './audit.js';
 import { loadAuthorisation, loadProject } from './authorisation.js';
@@ -627,7 +628,7 @@ async function executeIssued(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-    const report = (await response.json()) as JobReport;
+    const report = vouchedReport((await response.json()) as JobReport, journey.steps.length);
     await moveArtifacts(home, project, label, runId, journey.id);
     rewriteArtifacts(home, project.id, label, runId, journey.id, report);
     void injected;
@@ -1259,6 +1260,15 @@ function phaseRecord(report: JobReport): RichUser['phase1'] {
     ...(report.blocked_reason ? { blocked_reason: report.blocked_reason } : {}),
     ...(report.steps.find((step) => step.error)?.error ? { error: report.steps.find((step) => step.error)?.error } : {}),
   };
+}
+
+/** A pass the runner cannot show step by step becomes a harness error, with the reason as its last step. */
+export function vouchedReport(report: JobReport, sentSteps: number): JobReport {
+  const problem = unsupportedPass(report, sentSteps);
+  if (!problem) return report;
+  const now = new Date().toISOString();
+  const marker: RichStep = { index: report.steps.length, type: 'check', status: 'error', duration_ms: 0, started_at: now, finished_at: now, error: problem };
+  return { ...report, ok: false, status: 'error', steps: [...report.steps, marker] };
 }
 
 export function journeyFromJob(report: JobReport, meta: { id: string; name: string; tries: number }): RichJourney {

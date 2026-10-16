@@ -101,6 +101,7 @@ The script starts `labs/docker-compose.yml` and writes an `owner` authorisation 
 - `hornet-swarm creds serve` opens the private login page on `127.0.0.1`.
 - `hornet-swarm creds add <project> <label>` asks for a username and password without showing the password.
 - `hornet-swarm export-evidence <run id> --project <id> --out proof.zip` packs the proof for one run.
+- `hornet-swarm findings <file> [--out report.md]` checks a report's findings (YAML or JSON: `project`, then `findings` with `id`, `severity`, `title`, `claim`, and `evidence`) against the saved runs. It prints them with how often each happened, or lists the evidence that is missing and exits 3.
 - `hornet-swarm accept-baseline <run id> --project <id>` saves the current screenshots, and the words on each screenshotted page, as the comparison point. Each label has its own baseline, because some accounts are meant to look different.
 - `hornet-swarm auth check <id>` checks an authorisation and its signed document.
 - `hornet-swarm stats --project <id>` shows how reliable the site has been over recent runs: pass rate, p50 and p95 timings, retries, and failing streaks, per journey and for sign-in. `--last <n>` picks how many runs. `--json` prints the same for an agent.
