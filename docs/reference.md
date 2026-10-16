@@ -198,6 +198,10 @@ Docker Desktop on this Mac shows the folder to the container as root, and the ru
 
 If that folder already exists and other accounts can open it, startup stops and names the folder. Hornet Swarm does not change its mode.
 
+The same holds for every private file and folder: `~/.hornet-swarm` itself, the project, lease, credential, and token files, and the runner socket folder. Each one is created owner-only, and an existing one that other accounts can open, that is a symbolic link, or that another user owns is refused with the command that fixes it. A home made by an older version is often `0755`. Fix it once with `chmod -R go-rwx ~/.hornet-swarm`.
+
+Runners start on an internal Docker network with only their own control token mounted, read-only. The egress proxy refuses the control relay port (8899) and marks what it forwards, and the relay refuses anything so marked. A runner container that no longer matches these settings is replaced, not reused, the next time it is started.
+
 After each job the files are moved into the run folder, so nothing unredacted stays in the runner folder. Links written by a runner are not followed. Each runner sees only its own control token, read-only. The egress proxy allows only the exact host and port pairs of the project's origins, plus the credential page port on this Mac.
 
 
