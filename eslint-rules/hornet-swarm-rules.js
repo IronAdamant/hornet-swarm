@@ -1,5 +1,5 @@
-// Lint rules that keep three past mistake classes from coming back. AGENTS.md maps each rule to
-// the mistake it blocks.
+// Lint rules that keep three past mistake classes from coming back. AGENTS.md lists each rule
+// beside the checks that enforce it.
 
 const FS_MODULES = new Set(['fs', 'node:fs', 'fs/promises', 'node:fs/promises']);
 
