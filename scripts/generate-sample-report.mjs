@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Regenerates the sample client report and re-test comparison in docs/ from the fixture runs in
-// examples/sample-runs/, through the same code `hornet-swarm client-report` runs. Nothing is fetched.
+// Regenerates the fixture client report and re-test comparison in docs/fixture-sample-* from the
+// fixture runs in examples/sample-runs/, through the same code `hornet-swarm client-report` runs.
+// Nothing is fetched. The live sample, docs/sample-*-toolshop-live.*, is a real Toolshop run and
+// is not written here.
 //
 //   pnpm build && node scripts/generate-sample-report.mjs           # write the docs
 //   node scripts/generate-sample-report.mjs --check                 # exit 1 if the docs are stale
@@ -23,10 +25,12 @@ const core = await import(dist('core'));
 const report = await import(dist('report'));
 const controller = await import(dist('controller'));
 
+// The files docs/sample-*-toolshop-live.* are a real live Toolshop run, copied from that run.
+// They are not regenerated from the fixture, so a later fixture change cannot overwrite them.
 export const OUTPUTS = {
-  'docs/sample-client-report-toolshop-live.md': (first, second) => second.markdown,
-  'docs/sample-client-report-toolshop-live.html': (first, second) => readFileSync(second.paths.html, 'utf8'),
-  'docs/sample-retest-diff-toolshop-live.md': (first, second, diff) => diff.markdown,
+  'docs/fixture-sample-client-report.md': (first, second) => second.markdown,
+  'docs/fixture-sample-client-report.html': (first, second) => readFileSync(second.paths.html, 'utf8'),
+  'docs/fixture-sample-retest-diff.md': (first, second, diff) => diff.markdown,
 };
 
 const SAMPLE_NOTE = [

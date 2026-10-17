@@ -1,9 +1,10 @@
 /**
  * A client report lists issues found on the pages tested. It never says a site meets a standard,
- * because automated checks and a sample of pages cannot show that. These are the words that would
- * say it, in any form, including a denial such as "this is not a compliance certificate": a reader
- * skimming for the word still finds it.
+ * because automated checks and a sample of pages cannot show that. The one denial a report may
+ * use is NOT_A_CERTIFICATE. Every other use of these words, including "this is a certificate"
+ * or "the site is compliant", is refused.
  */
+export const NOT_A_CERTIFICATE = 'This report is not a compliance certificate.';
 const FORBIDDEN_CLAIMS: readonly { pattern: RegExp; why: string }[] = [
   { pattern: /\bcomplian(?:t|ce|cy)\b/i, why: 'claims or mentions compliance' },
   { pattern: /\bnon-?complian(?:t|ce)\b/i, why: 'claims or mentions compliance' },
@@ -28,7 +29,8 @@ export type ForbiddenClaim = { text: string; why: string; index: number };
 const QUOTED_EVIDENCE: readonly RegExp[] = [/<code>[\s\S]*?<\/code>/g, /`[^`\n]*`/g, /&quot;.*?&quot;/g, /"[^"\n]*"/g];
 
 export function withoutQuotedEvidence(text: string): string {
-  return QUOTED_EVIDENCE.reduce((rest, pattern) => rest.replace(pattern, (match) => ' '.repeat(match.length)), text);
+  const denied = text.split(NOT_A_CERTIFICATE).join(' '.repeat(NOT_A_CERTIFICATE.length));
+  return QUOTED_EVIDENCE.reduce((rest, pattern) => rest.replace(pattern, (match) => ' '.repeat(match.length)), denied);
 }
 
 export function forbiddenClaims(text: string): ForbiddenClaim[] {
