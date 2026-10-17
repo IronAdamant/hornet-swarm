@@ -18,6 +18,10 @@ axe-core gives each problem an impact: critical, serious, moderate, or minor. Th
 - **Medium:** they can carry on but miss something that matters, such as a quantity control with no name or a faint "Out of stock".
 - **Low:** they lose a little time or context, such as an icon button that only reveals a password.
 
+In a client report, the reviewer's grade goes in the job file's `severity_overrides`, by the issue's re-test key, with the reason. The report prints the reason beside the issue.
+
+The harness's own WCAG 2.2 checks start at: a focused control entirely hidden behind a banner (2.4.11) Medium, a password field that blocks pasting (3.3.8) Medium, and help links in a different order from page to page (3.2.6) Low. Dragging (2.5.7), a password field with autocomplete off or a puzzle (3.3.8), and a value typed twice (3.3.7) are listed for a person to review, not graded, because the check cannot tell whether an alternative exists.
+
 ## Planted faults
 
 A practice site's deliberate bugs are rated like any other fault. On a client's site, they would be real.

@@ -118,6 +118,46 @@ Ctrl-C, closing the terminal, and `kill <pid>` release the login a CLI run holds
 
 A macOS Shortcut can run `hornet-swarm kill` if you want a keyboard stop. Hornet Swarm does not register a global hotkey itself.
 
+## Client reports and monthly re-tests
+
+A client report is the plain-English report a business owner reads: a summary, each issue with its severity, where it happens, why it matters to customers, and how to fix it, the results of sign-up, log in, add to cart, and checkout, the WCAG 2.2 A and AA criteria table, a scope and limits statement, and an evidence appendix. It is built from one saved run of a job. [docs/sample-client-report-toolshop-live.md](sample-client-report-toolshop-live.md) and [the re-test comparison](sample-retest-diff-toolshop-live.md) show the form.
+
+A job file names the client, the project, the journeys and which of the four each covers, the branding, and the re-test cadence. `examples/jobs/toolshop-live-monthly.job.yaml` is a worked example:
+
+- `project` and `journeys`: the run uses the project's own authorisation. A job cannot widen it. A journey with `covers: sign_up`, `login`, `cart`, or `checkout` fills that row of the report; with no `login` journey, the sign-in check that starts every run stands in. Other journeys, such as the accessibility ones, are listed after.
+- `users`: the labels to run. All of the project's labels when left out.
+- `not_in_scope`: a journey left out on purpose, with the reason printed in the report.
+- `severity_overrides` and `withdrawn_issues`: a reviewer's grade or withdrawal, by the re-test key shown beside each issue (such as `a11y:image-alt` or `journey:checkout`), with the reason printed beside it. A withdrawn issue is listed as withdrawn, never dropped.
+- `branding`: `use: agency` (the default) or `use: iron_adamant`, with `agency: { name, logo, logo_alt, website, contact_email, contact_phone }`. The global `~/.hornet-swarm/config.yaml` can hold the same block; the job wins. A report with no agency named stops with an error rather than quietly carrying Iron Adamant's name. A logo is a PNG, JPEG, or SVG of at most 512 KB, read from beside the file that names it and embedded in the report.
+- `schedule.cadence`: `weekly`, `fortnightly`, or `monthly` (28 days).
+
+A brand name, business name, or reason that says compliant, certified, or similar is refused when the job is read. Every rendered report and comparison is checked again before it is saved, and a report that would claim a site is compliant, certified, or meets WCAG is not written. Words the report quotes from the site itself, in code spans or quotation marks, are not counted.
+
+- `hornet-swarm client-report --job <file> --run <run id>` writes `client-report.md`, `client-report.html`, and `client-report.json` into the run folder, then compares the run with the job's previous report and writes `retest-diff.md` and `retest-diff.json`. `--against <run id>` picks the run to compare with.
+- `hornet-swarm retest --job <file>` runs the job's journeys through the same authorised suite as any other run, then writes the report and the comparison. `--if-due` runs only when the cadence has passed since the job's last report, so it is safe to call every day. `--confirm-production` is needed for a production-looking target, as for `suite`. A run that failed its redaction check gets neither file.
+
+The comparison lists new issues, fixed issues, issues still open, and journeys that stopped working or work again. An issue counts as fixed only when every page it was on was checked again; otherwise it is listed as not re-checked. A journey that could not be finished this time is neither fixed nor broken.
+
+To run the monthly re-test on a schedule, have launchd call `retest --if-due` once a day, for example at 9 am:
+
+```xml
+<!-- ~/Library/LaunchAgents/com.ironadamant.hornet-swarm.retest.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.ironadamant.hornet-swarm.retest</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/zsh</string><string>-lc</string>
+    <string>cd ~/hornet-swarm &amp;&amp; pnpm hornet-swarm retest --job ~/hornet-swarm-jobs/client.job.yaml --if-due --json</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>/tmp/hornet-swarm-retest.log</string>
+  <key>StandardErrorPath</key><string>/tmp/hornet-swarm-retest.log</string>
+</dict></plist>
+```
+
+Load it with `launchctl load ~/Library/LaunchAgents/com.ironadamant.hornet-swarm.retest.plist`. The runners must be up (`hornet-swarm env up --project <id>`) and the logins stored. Read each report before sending it: a reviewer's grade, a withdrawal, and the criteria marked needs manual review are the parts no check can do.
+
+`node scripts/generate-sample-report.mjs` regenerates the sample report and comparison in `docs/` from the fixture runs in `examples/sample-runs/`, after `pnpm build`.
+
 ## Agents
 
 Open `http://127.0.0.1:7781/setup` to keep the website and up to ten logins. Each card is its own label: card 3 is always `qa-user-3`. A card with a stored login keeps it when its username and password are left blank, so a personality or rule can be changed without typing every password again. Saving changes only the website, the login selectors, the first `url_contains` success check, the labels, and the runner counts in `project.yaml`. Comments and other settings stay. The allowed origins are kept while the website stays on the same origin. Start that page with `hornet-swarm creds serve` if it is not already open. Fill the website first, then the cards in order: username, password, a personality, and rules for that sub-agent. A personality is who the sub-agent plays. Rules are what it must and must not do. Press Ready and confirm with Touch ID. The passwords stay in the encrypted store. The page only answers on `127.0.0.1`, and the form carries a token, so another site open in your browser cannot submit it.
