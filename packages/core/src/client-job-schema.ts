@@ -11,6 +11,13 @@ const brandText = (max: number) =>
     .max(max)
     .refine((text) => forbiddenClaims(text).length === 0, 'a brand field may not say compliant, certified, or similar, because it is printed on every report');
 
+/** A reviewer's reason is printed in the report as written, so it is held to the same rule. */
+const reasonText = z
+  .string()
+  .min(1)
+  .max(600)
+  .refine((text) => forbiddenClaims(text).length === 0, 'a reason may not say compliant, certified, or similar, because it is printed in the report');
+
 export const brandDetailsSchema = z
   .object({
     name: brandText(80),
@@ -69,11 +76,11 @@ export const clientJobSchema = z
     /** Labels to run. All of the project's labels when left out. */
     users: z.array(z.string().regex(/^qa-user-\d+$/)).optional(),
     /** A reported journey left out on purpose, and why, such as sign-up on a shared site. */
-    not_in_scope: z.array(z.object({ covers: z.enum(JOURNEY_KINDS), reason: z.string().min(1) }).strict()).default([]),
+    not_in_scope: z.array(z.object({ covers: z.enum(JOURNEY_KINDS), reason: reasonText }).strict()).default([]),
     /** A reviewer's grade for one issue, by the key shown beside it in the report, with the reason. */
-    severity_overrides: z.array(z.object({ issue: z.string().min(1), severity: z.enum(SEVERITY_LEVELS), reason: z.string().min(1) }).strict()).default([]),
+    severity_overrides: z.array(z.object({ issue: z.string().min(1), severity: z.enum(SEVERITY_LEVELS), reason: reasonText }).strict()).default([]),
     /** An automated finding a reviewer checked and found to be wrong. It is listed as withdrawn, with the reason, never dropped silently. */
-    withdrawn_issues: z.array(z.object({ issue: z.string().min(1), reason: z.string().min(1) }).strict()).default([]),
+    withdrawn_issues: z.array(z.object({ issue: z.string().min(1), reason: reasonText }).strict()).default([]),
     schedule: z.object({ cadence: z.enum(RETEST_CADENCES).default('monthly') }).strict().default({ cadence: 'monthly' }),
   })
   .strict()

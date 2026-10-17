@@ -22,7 +22,8 @@ export class BrandingError extends Error {
  * agency name is an error rather than a quiet fall back to Iron Adamant on an agency's report.
  */
 export function resolveBrand(job: BrandingConfig | undefined, global: BrandingConfig | undefined, readLogo: LogoReader): ResolvedBrand {
-  const use = job?.use ?? global?.use ?? 'agency';
+  // A job that names an agency means that agency, even when the global config prefers Iron Adamant.
+  const use = job?.use ?? (job?.agency ? 'agency' : undefined) ?? global?.use ?? 'agency';
   if (use === 'agency') {
     const agency = job?.agency ?? global?.agency;
     if (!agency) {

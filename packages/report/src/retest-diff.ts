@@ -14,7 +14,7 @@ export type RetestDiff = {
   new_issues: IssueLine[];
   fixed: IssueLine[];
   still_open: (IssueLine & { previous_severity: ClientIssue['severity']; places_before: number; places_now: number })[];
-  /** Open last time, but none of its pages or journeys was checked this time, so it is neither fixed nor open. */
+  /** Open last time, but not all of its pages, or not its journey, were checked this time, so it is neither fixed nor open. */
   not_rechecked: IssueLine[];
   withdrawn_since: IssueLine[];
   journey_regressions: JourneyChange[];
@@ -60,7 +60,7 @@ export function diffClientReports(previousInput: ClientReport, currentInput: Cli
       diff.withdrawn_since.push(line(issue));
       continue;
     }
-    const rechecked = issue.source === 'journey' ? journeyRechecked(issue, previous, journeysNow) : issue.where.some((entry) => pagesNow.has(entry.page));
+    const rechecked = issue.source === 'journey' ? journeyRechecked(issue, previous, journeysNow) : issue.where.every((entry) => pagesNow.has(entry.page));
     (rechecked ? diff.fixed : diff.not_rechecked).push(line(issue));
   }
   for (const journey of previous.journeys) {
@@ -120,7 +120,7 @@ export function retestDiffMarkdown(diff: RetestDiff, current: ClientReport): str
     ),
   );
   const unchecked = [
-    ...diff.not_rechecked.map((issue) => `- ${issue.title} (\`${issue.key}\`): its pages were not checked this time, so it is neither fixed nor confirmed.`),
+    ...diff.not_rechecked.map((issue) => `- ${issue.title} (\`${issue.key}\`): not all of its pages were checked this time, so it is neither fixed nor confirmed.`),
     ...diff.journey_not_rechecked.map((change) => `- ${change.title}: ${change.summary}`),
     ...diff.withdrawn_since.map((issue) => `- ${issue.title} (\`${issue.key}\`): withdrawn by the reviewer since the last run.`),
   ];
