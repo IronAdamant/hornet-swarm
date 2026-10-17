@@ -1356,6 +1356,7 @@ function stripStep(step: RichStep): StepResult {
     ...(step.network_errors ? { network_errors: step.network_errors } : {}),
     ...(step.http_status ? { http_status: step.http_status } : {}),
     ...(step.accessibility ? { accessibility: step.accessibility } : {}),
+    ...(step.redundant_entry ? { redundant_entry: step.redundant_entry } : {}),
   };
 }
 
