@@ -12,6 +12,7 @@ export type { LogoReader } from './client-report-branding.js';
 export { CLIENT_REPORT_SCHEMA_VERSION, clientReportSchema, JOURNEY_TITLES } from './client-report-model.js';
 export type { ClientCriterionRow, ClientIssue, ClientJourneyResult, ClientReport, ClientReviewItem, ResolvedBrand } from './client-report-model.js';
 export { clientReportHtml, clientReportMarkdown, renderClientReport } from './client-report-render.js';
+export { markdownToPdf } from './client-report-pdf.js';
 export { diffClientReports, retestDiffMarkdown } from './retest-diff.js';
 export type { RetestDiff } from './retest-diff.js';
 export { plainAxeRule, plainHarnessCheck } from './plain-language-rules.js';
