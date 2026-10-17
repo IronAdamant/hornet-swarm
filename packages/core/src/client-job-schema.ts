@@ -72,6 +72,8 @@ export const clientJobSchema = z
     not_in_scope: z.array(z.object({ covers: z.enum(JOURNEY_KINDS), reason: z.string().min(1) }).strict()).default([]),
     /** A reviewer's grade for one issue, by the key shown beside it in the report, with the reason. */
     severity_overrides: z.array(z.object({ issue: z.string().min(1), severity: z.enum(SEVERITY_LEVELS), reason: z.string().min(1) }).strict()).default([]),
+    /** An automated finding a reviewer checked and found to be wrong. It is listed as withdrawn, with the reason, never dropped silently. */
+    withdrawn_issues: z.array(z.object({ issue: z.string().min(1), reason: z.string().min(1) }).strict()).default([]),
     schedule: z.object({ cadence: z.enum(RETEST_CADENCES).default('monthly') }).strict().default({ cadence: 'monthly' }),
   })
   .strict()
