@@ -93,7 +93,7 @@ function signedInOrGuest(user: RichUser): boolean {
 }
 
 /** What a failed step means, in words a site owner reads. Playwright's own timeouts become plain English. */
-function plainFailure(step: RichUser['journeys'][number]['steps'][number]): string {
+export function plainFailure(step: RichUser['journeys'][number]['steps'][number]): string {
   const error = firstLine(step.error ?? '');
   // Keep the page's words that the runner added in brackets; only Playwright's own prefix changes.
   const waited = /^locator\.waitFor: Timeout \d+ms exceeded\.?\s*/i.exec(error);
@@ -308,7 +308,7 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   return `${paragraph}${chaosNote}\n\nFindings:\n${findings.map((line) => `- ${line}`).join('\n')}\n`;
 }
 
-const REASON_TEXT: Record<string, string> = {
+export const REASON_TEXT: Readonly<Record<string, string>> = {
   kill: 'the kill switch stopped it',
   duration: 'the run reached its time limit',
   captcha: 'the site showed a human check',
@@ -422,7 +422,7 @@ export function diagnose(users: RichUser[], status: RunResult['status']): { susp
   return { suspected, confidence, repro: first.repro, next };
 }
 
-function describeStep(step: RichStep): string {
+export function describeStep(step: RichStep): string {
   if (step.assertion) return `${step.type} ${step.assertion}`;
   if (step.selector) return `${step.type} ${step.selector}`;
   return step.type;
