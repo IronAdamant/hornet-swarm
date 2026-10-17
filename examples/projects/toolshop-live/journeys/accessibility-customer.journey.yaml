@@ -1,0 +1,27 @@
+version: 1
+id: accessibility-customer
+name: Pages a signed-in customer sees, checked against WCAG 2.2 AA
+description: Checks the account, profile, cart, and checkout pages with axe-core and the WCAG 2.2 checks, after signing in and adding a product.
+users: [qa-user-1]
+tags: [accessibility]
+steps:
+  - navigate: { url: "/#/auth/login" }
+  - fill: { selector: "[data-test='email']", credential: "self.username" }
+  - fill: { selector: "[data-test='password']", credential: "self.password" }
+  - click: { selector: "[data-test='login-submit']" }
+  - wait: { for: navigation }
+  - assert: { type: selector_visible, value: "[data-test='nav-user-menu']" }
+  - accessibility: { name: my-account }
+  - navigate: { url: "/#/account/profile" }
+  - wait: { for: selector, selector: "[data-test='first-name']" }
+  - accessibility: { name: profile }
+  - navigate: { url: "/#/product/1" }
+  - wait: { for: selector, selector: "[data-test='add-to-cart']" }
+  - click: { selector: "[data-test='add-to-cart']" }
+  - assert: { type: selector_visible, value: "[data-test='cart-quantity']" }
+  - click: { selector: "[data-test='nav-cart']" }
+  - assert: { type: selector_visible, value: "[data-test='product-quantity']" }
+  - accessibility: { name: cart }
+  - click: { selector: "[data-test='proceed-1']" }
+  - wait: { for: selector, selector: "[data-test='proceed-2']" }
+  - accessibility: { name: checkout-signed-in }

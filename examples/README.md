@@ -7,5 +7,7 @@
 - `authorisations/client-staging-contract.yaml` — contract-basis authorisation record (client staging under written authorisation).
 - `journeys/example-app/01-signin-dashboard.journey.yaml` — Phase 2 example A (basic).
 - `journeys/example-app/02-tenant-isolation.journey.yaml` — Phase 2 example B (multi-tenant data isolation).
+- `jobs/toolshop-live-monthly.job.yaml` — a saved client job: journeys, branding, and the monthly re-test cadence for `hornet-swarm retest` and `hornet-swarm client-report`.
+- `sample-runs/` — saved run folders made by hand from real Toolshop findings, used to generate the sample client report and re-test comparison in `docs/`. They are fixtures, not runs.
 
 See ../SPEC.md for the full specification.
