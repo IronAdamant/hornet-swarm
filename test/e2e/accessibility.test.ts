@@ -43,10 +43,11 @@ describe('the accessibility step', () => {
     expect(report.summary).not.toContain(secret);
     const file = findFile(report.dir, 'accessibility-planted-page.json');
     expect(file).toBeTruthy();
-    const saved = JSON.parse(readFileSync(file as string, 'utf8')) as { standard: string; violations: { id: string; nodes: { target: string; html: string }[] }[] };
-    expect(saved.standard).toBe('wcag21aa');
+    const saved = JSON.parse(readFileSync(file as string, 'utf8')) as { standard: string; violations: { id: string; nodes: { target: string; html: string }[] }[]; wcag22?: { focus_not_obscured: { checked: number } } };
+    expect(saved.standard).toBe('wcag22aa');
+    expect(saved.wcag22?.focus_not_obscured.checked).toBeGreaterThan(0);
     expect(saved.violations.find((violation) => violation.id === 'label')?.nodes[0]?.target).toBe('#nameless');
-    expect(readFileSync(join(report.dir, 'analysis.md'), 'utf8')).toContain('Accessibility: wcag21aa');
+    expect(readFileSync(join(report.dir, 'analysis.md'), 'utf8')).toContain('Accessibility: wcag22aa');
   });
 
   it('fails the step on fail_on and leaves out excluded parts of the page', () => {
