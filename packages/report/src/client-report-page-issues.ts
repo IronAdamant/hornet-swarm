@@ -5,6 +5,7 @@ import {
   type WcagCriterion,
   accessibilitySeverity,
   sortViolations,
+  wcagCriterion,
 } from '@hornet-swarm/core';
 import type { ClientIssue, ClientReviewItem } from './client-report-model.js';
 import { plainAxeRule, plainHarnessCheck } from './plain-language-rules.js';
@@ -17,6 +18,12 @@ export type PageCheck = { label: string; journey: string; step: number; result: 
 
 const IMPACT_RANK = { critical: 4, serious: 3, moderate: 2, minor: 1 } as const;
 const STANDARD_RANK: Readonly<Record<string, number>> = { wcag2a: 1, wcag2aa: 2, wcag21aa: 3, wcag22aa: 4 };
+
+/** A report covers the A and AA criteria. axe-core also cites a few AAA ones, such as 2.1.3, which are left off. */
+function isReportedCriterion(id: string): boolean {
+  const criterion = wcagCriterion(id);
+  return criterion !== undefined && !criterion.obsolete;
+}
 
 export function pageAddress(url: string): string {
   try {
@@ -67,7 +74,7 @@ export function accessibilityIssues(checks: readonly PageCheck[], hasFile: (path
       where: [...group.pages.values()],
       why_it_matters: plain.why,
       how_to_fix: plain.fix,
-      criteria: [...group.criteria].sort(compareCriteria),
+      criteria: [...group.criteria].filter(isReportedCriterion).sort(compareCriteria),
       evidence: [...group.evidence],
     };
   });
@@ -214,7 +221,7 @@ export function reviewItems(checks: readonly PageCheck[], run: RunResult): Clien
         if (!step.redundant_entry) continue;
         items.push({
           criterion: '3.3.7',
-          what: `Step ${step.index} typed a value that step ${step.redundant_entry.earlier_step} had already given on an earlier page, into an empty field (${step.redundant_entry.field}). Check whether the site could fill it in or offer it to choose.`,
+          what: `Step ${step.index + 1} typed a value that step ${step.redundant_entry.earlier_step + 1} had already given on an earlier page, into an empty field (${step.redundant_entry.field}). Check whether the site could fill it in or offer it to choose.`,
           where: `${journey.id} (${user.label})`,
         });
       }

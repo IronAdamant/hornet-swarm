@@ -1,4 +1,4 @@
-import { CRITERION_OUTCOMES, JOURNEY_KINDS, SEVERITY_LEVELS, savedOutcomeProblem } from '@hornet-swarm/core';
+import { CRITERION_OUTCOME_WORDS, CRITERION_OUTCOMES, JOURNEY_KINDS, SEVERITY_LEVELS, savedOutcomeProblem, wcagCriterion } from '@hornet-swarm/core';
 import { z } from 'zod';
 
 export const CLIENT_REPORT_SCHEMA_VERSION = 1;
@@ -75,6 +75,9 @@ export const criterionRowSchema = z
   .superRefine((row, context) => {
     const problem = savedOutcomeProblem(row.id, row.outcome);
     if (problem) context.addIssue({ code: z.ZodIssueCode.custom, path: ['outcome'], message: problem });
+    if (row.outcome_words !== CRITERION_OUTCOME_WORDS[row.outcome]) context.addIssue({ code: z.ZodIssueCode.custom, path: ['outcome_words'], message: `must read "${CRITERION_OUTCOME_WORDS[row.outcome]}" for ${row.outcome}` });
+    const criterion = wcagCriterion(row.id);
+    if (criterion && (criterion.automation !== row.automation || criterion.level !== row.level)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['automation'], message: `${row.id} is ${criterion.automation}, level ${criterion.level}` });
   });
 
 export type ClientCriterionRow = z.infer<typeof criterionRowSchema>;
