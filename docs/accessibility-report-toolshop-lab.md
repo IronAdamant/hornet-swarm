@@ -1,5 +1,7 @@
 # Accessibility report: Toolshop lab, 15 October 2026
 
+> **Checked at WCAG 2.1 AA, before the WCAG 2.2 AA upgrade.** These runs used the old default standard, so this report does not cover the 2.2 criteria (2.4.11, 2.5.7, 2.5.8, 3.2.6, 3.3.7, 3.3.8). Its results are left as recorded. To check the same pages against WCAG 2.2 AA, run `pnpm hornet-swarm suite --project toolshop-lab --journey accessibility-visitor accessibility-customer` on the Mac with the lab up.
+
 A practice deliverable, written the way a client report would be. Nine pages of the local Toolshop lab (Practice Software Testing, sprint 5 with deliberate bugs) were checked against WCAG 2.1 AA, the standard Australian clients usually name. The site runs on the tester's own Mac. No live service was touched. All accounts are made up. Severity follows `docs/severity.md`.
 
 ## Scope
