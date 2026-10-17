@@ -1,11 +1,12 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, join, resolve, sep } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { parse } from 'yaml';
-import { readRegularFile, Redactor, runResultSchema, writeRedactedFile } from '@hornet-swarm/core';
+import { Redactor, runResultSchema, writeRedactedFile } from '@hornet-swarm/core';
 import { findingsMarkdown, verifyFindings, type SavedRun } from '@hornet-swarm/report';
 import { registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
 import { aegisHome } from './home.js';
+import { readRunFile, runFileIsRegular } from './run-folder-files.js';
 
 export type FindingsReport = { ok: true; markdown: string; path?: string } | { ok: false; problems: string[] };
 
@@ -33,35 +34,6 @@ export function readFindingsFile(path: string): unknown {
   } catch (error) {
     throw new HornetError(`Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`, 3);
   }
-}
-
-/** A regular file inside the run folder. A link is not evidence and is not followed. */
-function runFileIsRegular(runDir: string, relativePath: string): boolean {
-  const file = pathInside(runDir, relativePath);
-  if (!file) return false;
-  try {
-    return lstatSync(file).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function readRunFile(runDir: string, relativePath: string): string | undefined {
-  const file = pathInside(runDir, relativePath);
-  if (!file) return undefined;
-  try {
-    if (!lstatSync(file).isFile()) return undefined;
-    return readRegularFile(file).toString('utf8');
-  } catch {
-    return undefined;
-  }
-}
-
-function pathInside(runDir: string, relativePath: string): string | undefined {
-  const root = resolve(runDir);
-  const file = resolve(runDir, relativePath);
-  if (file !== root && !file.startsWith(`${root}${sep}`)) return undefined;
-  return file;
 }
 
 function savedRuns(project: string, home: string): Map<string, SavedRun> {
