@@ -15,6 +15,8 @@ export { HornetError } from './errors.js';
 export { checkFindings, readFindingsFile } from './findings-report.js';
 export type { FindingsReport } from './findings-report.js';
 export { loadClientJob, savedJobReports, writeClientReport, writeRetestDiff } from './client-report-service.js';
+export { deleteAfterDelivery } from './delete-after-delivery.js';
+export { measureAiUsage, recordAiUsage } from './ai-usage.js';
 export type { LoadedJob, WrittenClientReport, WrittenRetestDiff } from './client-report-service.js';
 export { retestDue, runRetest } from './scheduled-retest.js';
 export type { RetestDue, RetestOutcome } from './scheduled-retest.js';

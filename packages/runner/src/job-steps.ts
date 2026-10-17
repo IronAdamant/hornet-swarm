@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from 'playwright';
-import { DEFAULT_ACCESSIBILITY_STANDARD, renderTemplate, resolveSelf, type Redactor, type Step, type TemplateContext } from '@hornet-swarm/core';
+import { DEFAULT_ACCESSIBILITY_STANDARD, PHONE_VIEWPORT, renderTemplate, resolveSelf, type Redactor, type Step, type TemplateContext } from '@hornet-swarm/core';
 import { runAccessibilityCheck } from './accessibility-step.js';
 import { pageKey, RedundantEntryTracker } from './redundant-entry-tracker.js';
 import type { JobRequest, SecretMap } from './job-types.js';
@@ -195,6 +195,17 @@ export async function runStep(
     screenshots.push(path);
     const map = await inspectPage(page);
     saveSealed(join(job.outDir, `inspect-${name}.json`), JSON.stringify(map, null, 2), redactor);
+    return { statusCode: 0 };
+  }
+  if ('viewport' in step) {
+    const size = step.viewport.preset === 'phone' ? PHONE_VIEWPORT : { width: step.viewport.width ?? 0, height: step.viewport.height ?? 0 };
+    if (!size.width || !size.height) throw new Error('a viewport step needs a phone preset or a width and a height');
+    await page.setViewportSize({ width: size.width, height: size.height });
+    return { statusCode: 0 };
+  }
+  if ('keyboard' in step) {
+    const times = step.keyboard.times ?? 1;
+    for (let i = 0; i < times; i += 1) await page.keyboard.press(step.keyboard.key);
     return { statusCode: 0 };
   }
   if ('storefront_password' in step) {

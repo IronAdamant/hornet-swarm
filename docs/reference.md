@@ -53,7 +53,7 @@ pnpm hornet-swarm suite --project fixture \
 
 Reports land in `~/.hornet-swarm/runs/<run id>/`. `summary.md` is the short version for a person. `analysis.json` is the detailed version for an agent. Its `suspected_cause` and `repro_steps` name the first real problem, step by step. Its `confidence` says how directly that evidence names the cause: high for a known stop such as a kill or a captcha, fairly high for one failed assertion, lower for a crash or several unrelated failures, and lowest for a check that passed only on a retry.
 
-Runs older than `results_retention_days` in `~/.hornet-swarm/config.yaml` (30 by default) are removed when the next run starts.
+Runs older than `results_retention_days` in `~/.hornet-swarm/config.yaml` (7 by default) are removed when the next run starts. Full-disk encryption is required. On this Mac that is FileVault. Turn FileVault on before a client job is stored on this machine.
 
 ## Practice sites
 
@@ -106,6 +106,7 @@ The script starts `labs/docker-compose.yml` and writes an `owner` authorisation 
 - `hornet-swarm auth check <id>` checks an authorisation and its signed document.
 - `hornet-swarm stats --project <id>` shows how reliable the site has been over recent runs: pass rate, p50 and p95 timings, retries, and failing streaks, per journey and for sign-in. `--last <n>` picks how many runs. `--json` prints the same for an agent.
 - `hornet-swarm cleanup --days <n>` removes old runs now.
+- `hornet-swarm delete-after-delivery --job <file>` removes that job's saved runs, page bodies, and evidence after the report is delivered. Another job's runs stay.
 - `hornet-swarm inspect --project <id> --user <label> --url <path>` maps one page for writing a journey: headings, fields, buttons, and links, each with a selector. `--guest` skips signing in. `--json` prints the whole map, with the page's visible words and a screenshot path.
 
 Ctrl-C, closing the terminal, and `kill <pid>` release the login a CLI run holds. Only `kill -9` leaves it until its 30 minute lease runs out.
@@ -225,6 +226,8 @@ Requests are paced, not dropped. Each runner may send `limits.request_burst_per_
 A captcha stops the journey only when a person could see it: a visible widget or challenge frame, or the words "verify you are human". Invisible reCAPTCHA v3, the reCAPTCHA badge, and a Turnstile script that never shows a widget are ignored. A second-code prompt needs a one-time-code field, a field named for a code, or wording that a code was sent. A postcode, promo code, or other short field is not a second code. An authenticator code is made with at least 15 seconds of its 30-second window left, waiting for the next window if needed, so a site that accepts only the current code does not see it expire between being made and being typed. A texted or emailed code waits for you on the local code page for up to `auth.operator_code_wait_sec` seconds (600 by default), and never past the run deadline.
 
 `inbox: { mailbox, selector }` is optional. It reads a 4 to 8 digit code from the newest `.txt` message in that mailbox of the test inbox (`AEGIS_INBOX_DIR`) and types it into `selector`. The mailbox name is lower-case letters, digits, and hyphens. A journey with no inbox step never opens the inbox, and a captcha still stops the journey even when an inbox step is present. If a journey does not use an inbox step, ask the client to pre-verify the test accounts and to turn captcha off on staging. The harness does not solve a captcha, and it does not read a verification email unless the journey has an inbox step that names a test inbox.
+
+`viewport: { preset: phone }` sets a phone-sized viewport, 390 by 844. `keyboard: { key: Tab }` presses a navigation key (Tab, Shift+Tab, Enter, Escape, the arrow keys, Home, End, PageUp, PageDown, or Space) and does not type text. `times` repeats it. Each suite run writes `ai-usage.json` in the run folder with the measured model-call count and the cost in USD. A run that made no model calls records 0 USD. The human pass uses `docs/wcag22-manual-checklist.md`.
 
 A runner that is missing or crashes becomes an error for that account only. The other accounts keep their results. A run where every account hit such an error is `error`, not `failed`, because the harness broke, not the site.
 
