@@ -22,3 +22,34 @@ export const inboxStep = z
       .strict(),
   })
   .strict();
+
+/** A phone-sized viewport is 390 by 844, about the size of a current phone. */
+export const PHONE_VIEWPORT = { width: 390, height: 844 } as const;
+
+export const viewportStep = z
+  .object({
+    viewport: z
+      .object({
+        preset: z.literal('phone').optional(),
+        width: z.number().int().positive().max(4000).optional(),
+        height: z.number().int().positive().max(4000).optional(),
+      })
+      .strict()
+      .refine((value) => value.preset === 'phone' || (value.width !== undefined && value.height !== undefined), 'a viewport step needs a phone preset or a width and a height'),
+  })
+  .strict();
+
+const NAV_KEYS = ['Tab', 'Shift+Tab', 'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Space'] as const;
+
+/** Keyboard-only navigation. It presses one of the navigation keys. It does not type text. */
+export const keyboardStep = z
+  .object({
+    keyboard: z
+      .object({
+        key: z.enum(NAV_KEYS),
+        times: z.number().int().positive().max(30).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+

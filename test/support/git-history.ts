@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const REPO_ROOT = join(import.meta.dirname, '../..');
@@ -29,6 +29,13 @@ export function fileAt(revision: string, path: string): string {
 export function folderAt(revision: string, folder: string, besideDir: string): { path: string; cleanup: () => void } {
   const target = mkdtempSync(join(besideDir, '.past-'));
   const archive = execFileSync('git', ['archive', revision, folder], { cwd: REPO_ROOT, maxBuffer: 64 * 1024 * 1024 });
-  execFileSync('tar', ['-x', '-C', target], { input: archive });
+  // Writing the archive to a file avoids EPIPE. Piping it to tar can close before the write finishes.
+  const archivePath = join(target, 'archive.tar');
+  writeFileSync(archivePath, archive);
+  try {
+    execFileSync('tar', ['-xf', archivePath, '-C', target]);
+  } finally {
+    rmSync(archivePath, { force: true });
+  }
   return { path: join(target, folder), cleanup: () => rmSync(target, { recursive: true, force: true }) };
 }

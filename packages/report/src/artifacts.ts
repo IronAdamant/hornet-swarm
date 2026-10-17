@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, unlinkSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { maskPersonalData } from './page-privacy.js';
 import JSZip from 'jszip';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
@@ -345,7 +346,10 @@ function sanitizeEntry(entry: HarLike, authEndpoints: string[], sha1s: Set<strin
     if (side.cookies) side.cookies = [];
   }
   const url = entry.request?.url ?? '';
-  if (!authEndpoints.some((pattern) => matchGlob(pattern, url))) return 0;
+  if (!authEndpoints.some((pattern) => matchGlob(pattern, url))) {
+    maskStoredResponse(entry);
+    return 0;
+  }
   const request = entry.request;
   if (request?.postData) {
     if (typeof request.postData._sha1 === 'string') sha1s.add(request.postData._sha1);
@@ -357,4 +361,11 @@ function sanitizeEntry(entry: HarLike, authEndpoints: string[], sha1s: Set<strin
     response.content = { size: 0, mimeType: response.content.mimeType ?? '', text: AUTH_BODY };
   }
   return 1;
+}
+
+/** Personal data in a page response that is kept. Auth endpoints drop the body instead. */
+function maskStoredResponse(entry: HarLike): void {
+  const content = entry.response?.content;
+  if (!content || typeof content.text !== 'string') return;
+  content.text = maskPersonalData(content.text);
 }

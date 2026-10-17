@@ -350,6 +350,16 @@ document.getElementById('pay-now').addEventListener('click', () => {
 </script>`));
   });
 
+  app.get('/keys', (_req, res) => {
+    res.type('html').send(page('Keys', `<button id="one">One</button><button id="two">Two</button><p id="focus">focused none</p><p id="size">width 0</p>
+<script>
+function showSize() { document.getElementById('size').textContent = 'width ' + window.innerWidth; }
+showSize();
+window.addEventListener('resize', showSize);
+document.addEventListener('focusin', (event) => { document.getElementById('focus').textContent = 'focused ' + (event.target.id || 'body'); });
+</script>`));
+  });
+
   app.get('/emailed-code', (_req, res) => {
     res.type('html').send(page('Code', '<p>We emailed you a code</p><form method="post" action="/emailed-code"><label>Code <input name="code" autocomplete="one-time-code" maxlength="6"></label><button type="submit">Continue</button></form>'));
   });
