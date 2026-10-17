@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import type { Page } from 'playwright';
 import {
   DEFAULT_ACCESSIBILITY_STANDARD,
@@ -36,7 +36,7 @@ let axeSource: string | undefined;
 
 /** axe-core from the runner's own files. The page never loads it from the network. */
 function axeScript(): string {
-  axeSource ??= readFileSync(fileURLToPath(import.meta.resolve('axe-core/axe.min.js')), 'utf8');
+  axeSource ??= readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
   return axeSource;
 }
 
