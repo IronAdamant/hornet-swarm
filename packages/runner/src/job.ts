@@ -1,24 +1,22 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chromium, type BrowserContext, type Locator, type Page, type Request } from 'playwright';
+import { runAccessibilityCheck } from './accessibility-step.js';
 import { browserLaunchOptions } from './launch.js';
+import { pageKey, RedundantEntryTracker } from './redundant-entry-tracker.js';
 import {
   DEFAULT_ACCESSIBILITY_STANDARD,
   PAGE_MAP_LIMITS,
   Redactor,
-  accessibilityTags,
-  atLeast,
   chosenDir,
   fixedText,
   renderTemplate,
   resolveSelf,
   runnerOverload,
-  sortViolations,
-  type AccessibilityImpact,
   type AccessibilityResult,
   type PageMap,
+  type RedundantEntry,
   type Step,
   type StepResult,
   type TemplateContext,
@@ -300,6 +298,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
       });
     });
     const fillsTotp = journeyFillsTotp(job.steps);
+    const entries = new RedundantEntryTracker();
 
     for (let index = 0; index < job.steps.length; index += 1) {
       if (isAborted()) {
@@ -330,7 +329,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         const navBefore = nav.count;
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
         if (!('wait' in step) && !('assert' in step) && !('screenshot' in step) && !('accessibility' in step) && !('inspect' in step)) nav.mark = nav.count;
-        const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted, chaosEffect.doubleClick, found);
+        const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted, chaosEffect.doubleClick, found, entries, index);
         // Typed-in values stay on the page until it navigates away. Chaos must not refresh them away.
         if ('fill' in step || 'select' in step) formInProgress = true;
         if ('navigate' in step || nav.count !== navBefore) formInProgress = false;
@@ -354,7 +353,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           const code = secrets.get('operator_code') ?? '';
           await fillVisibleCode(page, code);
         }
-        steps.push(finishStep(index, kind, 'pass', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, undefined, outcome.httpStatus, undefined, found.accessibility));
+        steps.push(finishStep(index, kind, 'pass', started, selectors, assertions, screenshots, consoleLogs.slice(beforeConsole), networkErrors.slice(beforeNetwork), redactor, undefined, outcome.httpStatus, undefined, found));
       } catch (error) {
         if (error instanceof AbortJob) {
           status = 'blocked';
@@ -389,7 +388,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
             reason,
             undefined,
             message,
-            found.accessibility,
+            found,
           ),
         );
         if (reason) break;
@@ -453,6 +452,8 @@ async function runStep(
   isAborted: () => boolean,
   doubleClick = false,
   found: StepFindings = {},
+  entries?: RedundantEntryTracker,
+  stepIndex = 0,
 ): Promise<{ statusCode: number; httpStatus?: number }> {
   if ('navigate' in step) {
     const url = absolute(renderTemplate(step.navigate.url, template), job.baseUrl);
@@ -487,7 +488,14 @@ async function runStep(
       if (!value) throw new Error('missing totp code');
       text = value;
     }
-    await locate(page, fillSelector).fill(text, { timeout: 15_000 });
+    const field = locate(page, fillSelector);
+    if (entries && !step.fill.credential && !step.fill.totp) {
+      const before = await field.inputValue({ timeout: 1_000 }).catch(() => '');
+      const isPassword = await field.evaluate((element) => element instanceof HTMLInputElement && element.type === 'password', undefined, { timeout: 1_000 }).catch(() => false);
+      const repeated = isPassword ? undefined : entries.observe({ step: stepIndex, page: pageKey(page.url()), field: redactor.redact(fillSelector), value: text, before });
+      if (repeated) found.redundantEntry = repeated;
+    }
+    await field.fill(text, { timeout: 15_000 });
     return { statusCode: 0 };
   }
   if ('select' in step) {
@@ -598,34 +606,11 @@ async function runStep(
   }
   if ('accessibility' in step) {
     const check = step.accessibility;
-    const standard = check.standard ?? DEFAULT_ACCESSIBILITY_STANDARD;
     const exclude = (check.exclude ?? []).map((selector) => renderTemplate(selector, template));
-    assertions.push(`accessibility ${check.name} (${standard})`);
-    const raw = await checkAccessibility(page, accessibilityTags(standard), exclude);
-    // The full findings, with each element's markup, go beside the screenshots. The markup can
-    // hold what a customer typed, so it is masked like every other saved file.
-    saveSealed(join(job.outDir, `accessibility-${check.name}.json`), JSON.stringify({ name: check.name, standard, ...raw }, null, 2), redactor);
-    const result: AccessibilityResult = {
-      name: check.name,
-      url: redactor.redact(raw.url),
-      standard,
-      violations: sortViolations(
-        raw.violations.map((violation) => ({
-          rule: violation.id,
-          impact: violation.impact,
-          help: violation.help,
-          count: violation.count,
-          example: redactor.redact(violation.nodes[0]?.target ?? ''),
-        })),
-      ),
-      needs_review: raw.incomplete,
-    };
-    found.accessibility = result;
-    const failOn = check.fail_on;
-    const serious = failOn ? result.violations.filter((violation) => atLeast(violation.impact, failOn)) : [];
-    if (serious.length > 0) {
-      throw new Error(`accessibility: ${serious.length} ${serious.length === 1 ? 'problem' : 'problems'} at or above ${failOn} (${serious.map((violation) => `${violation.rule}: ${violation.help}`).slice(0, 3).join('; ')})`);
-    }
+    assertions.push(`accessibility ${check.name} (${check.standard ?? DEFAULT_ACCESSIBILITY_STANDARD})`);
+    const outcome = await runAccessibilityCheck(page, check, exclude, redactor, (fileName, text) => saveSealed(join(job.outDir, fileName), text, redactor));
+    found.accessibility = outcome.result;
+    if (outcome.failure) throw new Error(outcome.failure);
     return { statusCode: 0 };
   }
   if ('inspect' in step) {
@@ -788,56 +773,7 @@ export async function inspectPage(page: Page): Promise<PageMap> {
 }
 
 /** What a step found besides pass or fail, carried into its result. */
-type StepFindings = { accessibility?: AccessibilityResult };
-
-type AxeFinding = {
-  id: string;
-  impact: AccessibilityImpact;
-  help: string;
-  helpUrl: string;
-  /** Every element with the problem. `nodes` keeps the first 20. */
-  count: number;
-  nodes: { target: string; html: string; summary: string }[];
-};
-
-let axeSource: string | undefined;
-
-/** axe-core from the runner's own files. The page never loads it from the network. */
-function axeScript(): string {
-  axeSource ??= readFileSync(fileURLToPath(import.meta.resolve('axe-core/axe.min.js')), 'utf8');
-  return axeSource;
-}
-
-export async function checkAccessibility(page: Page, tags: string[], exclude: string[]): Promise<{ url: string; violations: AxeFinding[]; incomplete: number }> {
-  await page.waitForLoadState('networkidle', { timeout: 3_000 }).catch(() => undefined);
-  await page.evaluate(axeScript());
-  return page.evaluate(
-    async ({ tags, exclude }) => {
-      type AxeNode = { target: unknown[]; html: string; failureSummary?: string };
-      type AxeRule = { id: string; impact?: string | null; help: string; helpUrl: string; nodes: AxeNode[] };
-      const axe = (globalThis as unknown as { axe: { run: (context: unknown, options: unknown) => Promise<{ violations: AxeRule[]; incomplete: AxeRule[] }> } }).axe;
-      const context = exclude.length > 0 ? { exclude: exclude.map((selector) => [selector]) } : document;
-      const results = await axe.run(context, { runOnly: { type: 'tag', values: tags }, resultTypes: ['violations', 'incomplete'] });
-      return {
-        url: location.href,
-        incomplete: results.incomplete.length,
-        violations: results.violations.map((rule) => ({
-          id: rule.id,
-          impact: (rule.impact ?? 'minor') as AccessibilityImpact,
-          help: rule.help,
-          helpUrl: rule.helpUrl,
-          count: rule.nodes.length,
-          nodes: rule.nodes.slice(0, 20).map((node) => ({
-            target: node.target.map(String).join(' '),
-            html: node.html.slice(0, 300),
-            summary: (node.failureSummary ?? '').slice(0, 500),
-          })),
-        })),
-      };
-    },
-    { tags, exclude },
-  );
-}
+type StepFindings = { accessibility?: AccessibilityResult; redundantEntry?: RedundantEntry };
 
 function finishStep(
   index: number,
@@ -853,7 +789,7 @@ function finishStep(
   blocked?: JobReport['blocked_reason'],
   httpStatus?: number,
   error?: string,
-  accessibility?: AccessibilityResult,
+  found: StepFindings = {},
 ): JobReport['steps'][number] {
   const finished = Date.now();
   return {
@@ -871,7 +807,8 @@ function finishStep(
     console_error_count: consoleLogs.length,
     ...(network.length > 0 ? { network_errors: network.map((entry) => ({ ...entry, url: redactor.redact(entry.url) })) } : {}),
     ...(httpStatus ? { http_status: httpStatus } : {}),
-    ...(accessibility ? { accessibility } : {}),
+    ...(found.accessibility ? { accessibility: found.accessibility } : {}),
+    ...(found.redundantEntry ? { redundant_entry: found.redundantEntry } : {}),
     console_logs: consoleLogs.map((line) => redactor.redact(line)),
     selectors: selectors.map((selector) => redactor.redact(selector)),
     assertions: assertions.map((assertion) => redactor.redact(assertion)),

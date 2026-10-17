@@ -1,6 +1,6 @@
 version: 1
 id: accessibility-visitor
-name: Pages a visitor sees meet WCAG 2.1 AA
+name: Pages a visitor sees, checked against WCAG 2.2 AA
 description: Checks the catalogue, a product, sign-in, sign-up, and contact pages with axe-core. Needs no sign-in.
 users: [qa-user-2]
 requires_phase1: false

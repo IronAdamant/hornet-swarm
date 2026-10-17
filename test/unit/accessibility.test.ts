@@ -18,7 +18,7 @@ const contrast = { rule: 'color-contrast', impact: 'serious', help: 'Elements mu
 const alt = { rule: 'image-alt', impact: 'critical', help: 'Images must have alternative text', count: 1, example: 'img' } as const;
 const label = { rule: 'label', impact: 'critical', help: 'Form elements must have labels', count: 2, example: '#nameless' } as const;
 
-function checked(label: string, violations: unknown[], url = 'http://localhost:8080/a11y', needs_review = 0): Users[number] {
+function checked(label: string, violations: unknown[], url = 'http://localhost:8080/a11y', needs_review = 0, standard = 'wcag22aa'): Users[number] {
   return {
     label,
     phase1: { status: 'pass', duration_ms: 1 },
@@ -28,7 +28,7 @@ function checked(label: string, violations: unknown[], url = 'http://localhost:8
         name: 'A11y',
         status: 'pass',
         duration_ms: 1,
-        steps: [{ index: 1, type: 'accessibility', status: 'pass', duration_ms: 1, started_at: '', finished_at: '', accessibility: { name: 'shop-page', url, standard: 'wcag21aa', violations, needs_review } }],
+        steps: [{ index: 1, type: 'accessibility', status: 'pass', duration_ms: 1, started_at: '', finished_at: '', accessibility: { name: 'shop-page', url, standard, violations, needs_review } }],
       },
     ],
   } as unknown as Users[number];
@@ -45,8 +45,9 @@ describe('the accessibility step', () => {
 
   it('includes the lower levels in each standard', () => {
     expect(accessibilityTags('wcag2a')).toEqual(['wcag2a']);
-    expect(accessibilityTags()).toEqual(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']);
-    expect(accessibilityTags('wcag22aa')).toContain('wcag22aa');
+    expect(accessibilityTags('wcag21aa')).toEqual(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']);
+    expect(accessibilityTags()).toEqual(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']);
+    expect(accessibilityTags('wcag22aa')).toEqual(accessibilityTags());
   });
 
   it('ranks impacts, sorts worst first, and starts each on the shared scale', () => {
@@ -68,7 +69,7 @@ describe('accessibility in the summary', () => {
   it('merges one page checked by several accounts, worst first, keeping the most places', () => {
     const lines = accessibilityFindings([checked('qa-user-1', [contrast]), checked('qa-user-2', [{ ...contrast, count: 5 }, alt], 'http://localhost:8080/a11y', 2)]);
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('Accessibility · shop-page (/a11y): 2 problems against WCAG 2.1 AA, the worst critical (High to start).');
+    expect(lines[0]).toContain('Accessibility · shop-page (/a11y): 2 problems against WCAG 2.2 AA, the worst critical (High to start).');
     expect(lines[0]).toContain('Images must have alternative text (critical, 1 place');
     expect(lines[0]).toContain('(serious, 5 places, such as `.faint`)');
     expect(lines[0]?.indexOf('alternative text')).toBeLessThan(lines[0]?.indexOf('contrast') ?? 0);
@@ -84,8 +85,13 @@ describe('accessibility in the summary', () => {
 
   it('reports a clean page and keeps the passing wording', () => {
     const text = summaryMarkdown([checked('qa-user-1', [])], 'passed');
-    expect(text).toContain('Accessibility · shop-page (/a11y): no problems found against WCAG 2.1 AA.');
+    expect(text).toContain('Accessibility · shop-page (/a11y): no problems found against WCAG 2.2 AA.');
     expect(text).toContain('Nothing needs a change.');
+  });
+
+  it('names the standard an older run was checked against, not the new default', () => {
+    const text = summaryMarkdown([checked('qa-user-1', [], 'http://localhost:8080/a11y', 0, 'wcag21aa')], 'passed');
+    expect(text).toContain('no problems found against WCAG 2.1 AA.');
   });
 
   it('keeps a single-page app route in the page address', () => {

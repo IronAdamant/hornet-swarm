@@ -36,7 +36,7 @@ Rehearse each new kind of site on the local labs first (`node scripts/setup-lab.
 
 - `suite` for the journeys. Run it several times across the agreed window, not once, so `stats` can give pass rates, p50 and p95 timings, retries, and failing streaks.
 - `suite --chaos default --seed <name>`, only if resilience testing is in `activities`. Run the same journeys without chaos too, and compare.
-- An `accessibility` step on each key page, if the client wants accessibility in scope. It needs no extra activity, because it only reads the page. Agree the standard first: WCAG 2.1 AA unless they name another. Say in the report that automated checks catch only some problems, and offer a keyboard and screen-reader pass for a full audit. `docs/accessibility-report-toolshop-lab.md` is the form.
+- An `accessibility` step on each key page, if the client wants accessibility in scope. It needs no extra activity, because it only reads the page. Agree the standard first: WCAG 2.2 AA unless they name another. Say in the report that automated checks catch only some problems, and offer a keyboard and screen-reader pass for a full audit. The client report marks every criterion a person has to judge as needs manual review.
 - For pages no journey covers yet, `pnpm hornet-swarm inspect --project <id> --user <label> --url <path>` maps the page, and the journey is drafted from the map.
 - Watch the first run. If the site answers 429 or 503, or anything looks wrong on their side, stop with `pnpm hornet-swarm kill --project <id>` and tell your contact.
 - Check every failure's screenshot before you call it a bug. Toolshop's planted bugs are good practice for this.
@@ -54,6 +54,10 @@ Each run folder in `~/.hornet-swarm/runs/<run id>/` holds:
 | `evidence.zip` | Redacted screenshots, network logs, and traces. Every run checks that no password or code is left in them. Never share a run marked `redaction_failure`. |
 
 `pnpm hornet-swarm stats --project <id>` gives the reliability figures across runs.
+
+For a business owner, or an agency reselling under its own name, save the job as a job file and run `pnpm hornet-swarm client-report --job <file> --run <run id>`. It writes `client-report.md` and `client-report.html` into the run folder: a plain-English summary, each issue with where it happens, why it matters to customers, and how to fix it, the sign-up, log in, cart, and checkout results, the WCAG 2.2 criteria table, the scope and limits, and an evidence appendix, under the agency's brand by default. Read it, grade or withdraw issues in the job file where your judgement differs, and run it again. `docs/sample-client-report-toolshop-live.md` is the form. For a monthly subscription, `pnpm hornet-swarm retest --job <file> --if-due` runs the job again and writes `retest-diff.md`: new, fixed, and still-open issues, and journeys that stopped working. See "Client reports and monthly re-tests" in `docs/reference.md`.
+
+Never write that a site is compliant, certified, or meets WCAG. Write "issues found against WCAG 2.2 AA in tested pages", and say what was not tested. The client report enforces this, and refuses to save a report that breaks it.
 
 Write the report as a findings table, worst first. For each finding:
 

@@ -1,6 +1,6 @@
 version: 1
 id: accessibility-visitor
-name: Pages a visitor sees meet WCAG 2.1 AA
+name: Pages a visitor sees, checked against WCAG 2.2 AA
 description: Checks the shop front, a product dialog, sign-in, and sign-up. The customer feedback form asks for a captcha, so it is left out. The welcome banner and cookie notice are closed before the page checks, because they cover a first visit.
 users: [qa-user-2]
 requires_phase1: false

@@ -20,6 +20,7 @@ Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. R
 4. Every result is a packet with `validation_required: true`. Check each sub-agent's report against its packet: the status, every `Failed:` line in the summary, and the page text. Then tell the owner the outcome with the run ids.
    - `gate_passed: true` only means every account signed in. It says nothing about the journeys.
    - "qa-user-5 is busy until ..." means another agent holds that login. It is not a site failure. Run it again after that time.
+   - A report for a business owner comes from `hornet-swarm client-report --job <file> --run <run id>`, which the owner runs. Never write that a site is compliant, certified, or meets WCAG, in a report, a note, or a reply. Say "issues found against WCAG 2.2 AA in tested pages", and treat criteria marked needs manual review as not checked.
    - A finding goes in a report only after `check_findings` (or `hornet-swarm findings <file>`) accepts it. Each one cites the run, step, and status it rests on, or the exact words from that step's saved page text. Severity is High, Medium, or Low from `docs/severity.md`. The output says how often the cited outcome happened across every saved run.
 5. After several runs, `get_reliability` gives pass rates, p50 and p95 timings, retries, and failing streaks. Call a site reliable only from that, not from one run. Chaos runs are left out of those figures. Pass `chaos: true` to see them alone.
 
@@ -71,7 +72,7 @@ steps:
 - A label with no stored login whose journeys all have `requires_phase1: false` runs as a guest. The summary names it as a guest, not a failed sign-in.
 - `self.username` and `self.password` mean the label running the journey. One journey can serve every label.
 - Each journey runs in a fresh browser, so it signs in itself.
-- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label`, `value`, or `index`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`, `accessibility` (checks the page against WCAG 2.1 AA and records problems; `fail_on: serious` makes it fail), and `inspect` (saves a map of the page).
+- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label`, `value`, or `index`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`, `accessibility` (checks the page against WCAG 2.2 AA and records problems, with criteria a check cannot decide kept as needs manual review; `fail_on: serious` makes it fail), and `inspect` (saves a map of the page).
 - Assertions: `url_contains`, `text_visible`, `selector_visible`, `selector_absent`, `http_status`, `access_denied`, and `field_value` (with a `selector`, for what a form field holds). `url_contains`, `text_visible`, `selector_visible`, and `field_value` wait up to 10 seconds.
 - Templates: `{{run.id}}` (a fresh made-up email per run, such as `nova.{{run.id}}@example.com`), `{{run.tag}}` (its short last part, for a username length limit), `{{run.label}}`, `{{self.vars.city}}` (the running label's own value from the project), and `{{date.+30}}`.
 - Assert what a working site does. A planted or real bug then shows up as a failed step with the page's own words.

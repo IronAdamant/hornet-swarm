@@ -2,7 +2,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { HornetError, acceptBaseline, assertAuthorisationUsable, checkFindings, documentPath, readFindingsFile, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, inspectPage, measureResources, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
+import { HornetError, acceptBaseline, assertAuthorisationUsable, checkFindings, documentPath, readFindingsFile, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, inspectPage, loadClientJob, measureResources, runRetest, writeAudit, writeClientReport, writeRetestDiff, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
 import { Command } from 'commander';
 
 const program = new Command();
@@ -345,6 +345,62 @@ program
       else process.stdout.write(result.markdown);
     } catch (error) {
       fail(opts.json, messageOf(error), 3);
+    }
+  });
+
+program
+  .command('client-report')
+  .description('Write the plain-English client report for a saved run of a job, and compare it with the previous report')
+  .requiredOption('--job <file>', 'saved job file')
+  .requiredOption('--run <id>', 'run id')
+  .option('--against <id>', 'compare with this run instead of the previous report')
+  .option('--json', 'print machine-readable JSON')
+  .action((opts: { job: string; run: string; against?: string; json?: boolean }) => {
+    try {
+      const home = aegisHomeForCli();
+      const job = loadClientJob(opts.job);
+      const report = writeClientReport({ job, runId: opts.run, home });
+      const diff = writeRetestDiff({ job, runId: opts.run, home, ...(opts.against ? { against: opts.against } : {}) });
+      writeAudit({ interface: 'cli', action: 'client_report', project: job.job.project, run_id: opts.run, result: 'written' }, undefined, home);
+      if (opts.json) writeJson({ ok: true, report: report.paths, diff: diff.diff ? diff.paths : { skipped: diff.reason } });
+      else process.stdout.write(`${report.paths.markdown}\n${report.paths.html}\n${diff.diff ? diff.paths.markdown : diff.reason}\n`);
+    } catch (error) {
+      fail(opts.json, messageOf(error), error instanceof HornetError ? error.exitCode : 3);
+    }
+  });
+
+program
+  .command('retest')
+  .description('Re-run a saved job, write its client report, and compare it with the previous run')
+  .requiredOption('--job <file>', 'saved job file')
+  .option('--if-due', 'run only when the job\'s cadence has passed since its last report')
+  .option('--against <id>', 'compare with this run instead of the previous report')
+  .option('--confirm-production', 'allow a production-looking target')
+  .option('--json', 'print machine-readable JSON')
+  .action(async (opts: { job: string; ifDue?: boolean; against?: string; confirmProduction?: boolean; json?: boolean }) => {
+    try {
+      const outcome = await runRetest({
+        job: loadClientJob(opts.job),
+        home: aegisHomeForCli(),
+        ifDue: Boolean(opts.ifDue),
+        confirmProduction: Boolean(opts.confirmProduction),
+        agentId: `cli-${process.pid}`,
+        ...(opts.against ? { against: opts.against } : {}),
+      });
+      if (!outcome.ran) {
+        if (opts.json) writeJson({ ok: true, ran: false, due: outcome.due });
+        else process.stdout.write(`${outcome.due.reason}\n`);
+        return;
+      }
+      if (outcome.not_reported) {
+        if (opts.json) writeJson({ ok: false, ran: true, run_id: outcome.run_id, status: outcome.status, error: outcome.not_reported });
+        else process.stderr.write(`${outcome.run_id}\n${outcome.not_reported}\n`);
+        process.exit(1);
+      }
+      if (opts.json) writeJson({ ok: true, ran: true, run_id: outcome.run_id, status: outcome.status, report: outcome.report?.paths, diff: outcome.diff?.diff ? outcome.diff.paths : { skipped: outcome.diff && !outcome.diff.diff ? outcome.diff.reason : undefined } });
+      else process.stdout.write(`${outcome.run_id}\n${outcome.status}\n${outcome.report?.paths.markdown ?? ''}\n${outcome.diff?.diff ? outcome.diff.paths.markdown : outcome.diff?.reason ?? ''}\n`);
+    } catch (error) {
+      fail(opts.json, messageOf(error), error instanceof HornetError ? error.exitCode : 4);
     }
   });
 
