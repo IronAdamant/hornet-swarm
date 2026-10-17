@@ -112,7 +112,7 @@ function coveredResult(
     const first = failed[0] as Outcome;
     const step = first.journey.steps.find((entry) => entry.status !== 'pass' && entry.status !== 'skipped');
     const flakyOnly = failed.every((outcome) => outcome.journey.status === 'flaky');
-    const detail = flakyOnly ? 'it worked only when tried a second time' : step ? `at step ${step.index + 1} of ${first.journey.steps.length}, ${plainFailure(step)}` : 'it stopped before its first step';
+    const detail = flakyOnly ? 'it worked only when tried a second time' : step ? `at step ${step.index + 1} of ${first.journey.steps.length}, ${plainJourneyFailure(step)}` : 'it stopped before its first step';
     const evidence = failed
       .flatMap((outcome) => {
         const failing = outcome.journey.steps.find((entry) => entry.status !== 'pass' && entry.status !== 'skipped');
@@ -147,6 +147,29 @@ function coveredResult(
     return { result: { kind, title, status: 'not_tested', summary: 'It was not run, because sign-in did not work for the accounts that would have run it.', journeys: named, evidence: [] } };
   }
   return { result: { kind, title, status: 'worked', summary: `Worked for ${countWords(worked.length, outcomes.length)}.`, journeys: named, evidence: [] } };
+}
+
+const SAID_INSTEAD = /closest text on the page: "([^"]+)"/;
+
+/** The failed step in words an owner follows: what the page should have shown, what it showed, and any server error behind it. */
+export function plainJourneyFailure(step: RunJourney['steps'][number]): string {
+  const expected = step.assertion?.startsWith('text_visible ') ? step.assertion.slice('text_visible '.length) : undefined;
+  let words = plainFailure(step);
+  if (expected && /^text was not visible/.test(step.error ?? '')) {
+    const instead = SAID_INSTEAD.exec(step.error ?? '')?.[1];
+    words = `the page should have said "${expected}" but ${instead ? `said "${instead}" instead` : 'did not'}`;
+  }
+  const server = (step.network_errors ?? []).find((entry) => entry.status >= 500);
+  if (server) words += `, after the site's server answered ${server.status} (an error on its side) to ${server.method} ${pathOf(server.url)}`;
+  return words;
+}
+
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
 }
 
 function countWords(count: number, of: number): string {

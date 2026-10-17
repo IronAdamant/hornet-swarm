@@ -84,6 +84,11 @@ function journeyRechecked(issue: ClientIssue, previous: ClientReport, journeysNo
 }
 
 /** The re-test comparison an owner reads each month, under the same brand as the report. */
+function permissionLine(auth: ClientReport['authorisation']): string {
+  if (auth.basis === 'public_practice') return `Testing was done under the site's published permission for test practice${auth.public_statement_url ? ` (${auth.public_statement_url})` : ''}, record ${auth.id}.`;
+  return `Testing was done with the site owner's written authorisation${auth.authoriser ? `, given by ${auth.authoriser}` : ''}, record ${auth.id}, in force until ${auth.valid_until}.`;
+}
+
 export function retestDiffMarkdown(diff: RetestDiff, current: ClientReport): string {
   const lines: string[] = [];
   if (current.brand.logo_data_uri) lines.push(`![${current.brand.logo_alt ?? current.brand.name}](${current.brand.logo_data_uri})`, '');
@@ -125,7 +130,8 @@ export function retestDiffMarkdown(diff: RetestDiff, current: ClientReport): str
     '',
     '- This comparison lists issues found against WCAG 2.2 AA in tested pages, in both runs. It covers only the pages and journeys in those runs.',
     '- "Fixed" means the automated checks no longer find the issue on pages that were checked again. Criteria that need a person still need one.',
-    '- This is not a security test.',
+    '- This is not a security test. Nothing was done to look for vulnerabilities, and the results say nothing about how secure the site is.',
+    `- ${permissionLine(current.authorisation)}`,
     `- The full report for this run is \`client-report.md\` in \`${diff.current_run}\`.`,
     '',
   );
