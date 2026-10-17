@@ -24,4 +24,16 @@ $drop chmod 0777 /tmp/.X11-unix/X99
 export DISPLAY=:99
 export AEGIS_BROWSER_USER=browser
 export AEGIS_BROWSER_LAUNCH=/opt/runner/browser-launch
+# Linux Docker keeps the host uid on a bind mount, so the runner user cannot read a
+# host-owned mode-0600 token. Root opens it here. setpriv keeps the descriptor, and a
+# pre-set AEGIS_CONTROL_TOKEN_FD is replaced so only this descriptor is used.
+if [ -z "${AEGIS_CONTROL_TOKEN_FILE:-}" ]; then
+  echo "hornet-swarm-runner needs AEGIS_CONTROL_TOKEN_FILE." >&2
+  exit 1
+fi
+if ! exec 3<"$AEGIS_CONTROL_TOKEN_FILE"; then
+  echo "hornet-swarm-runner could not open the control token file." >&2
+  exit 1
+fi
+export AEGIS_CONTROL_TOKEN_FD=3
 exec $drop node /opt/runner/main.js
