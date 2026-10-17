@@ -15,3 +15,4 @@ export { clientReportHtml, clientReportMarkdown, renderClientReport } from './cl
 export { diffClientReports, retestDiffMarkdown } from './retest-diff.js';
 export type { RetestDiff } from './retest-diff.js';
 export { plainAxeRule, plainHarnessCheck } from './plain-language-rules.js';
+export { journeyResults, plainJourneyFailure } from './client-report-journeys.js';

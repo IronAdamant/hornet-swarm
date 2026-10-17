@@ -140,7 +140,7 @@ function executiveSummary(job: ClientJob, run: RunResult, issues: ClientIssue[],
       : `${plural(issues.length, 'issue', 'issues')} found against WCAG 2.2 AA in tested pages${high > 0 ? `, ${high} of them high severity` : ''}`;
   const paragraphs: string[] = [];
   paragraphs.push(
-    `On ${reportDate(run.finished_at ?? run.started_at)} we tested ${plural(pageCount, 'page', 'pages')} of ${job.client.site_name} (${job.client.site_url}) with ${plural(run.users.length, 'test account', 'test accounts')}. We checked the pages against WCAG 2.2 level AA, the current accessibility guidelines, and checked whether customers can sign up, log in, add to cart, and check out.`,
+    `On ${reportDate(run.finished_at ?? run.started_at)} we tested ${plural(pageCount, 'page', 'pages')} of ${job.client.site_name}, at ${job.client.site_url}, with ${plural(run.users.length, 'test account', 'test accounts')}. We checked the pages against WCAG 2.2 level AA, the current accessibility guidelines, and checked whether customers can sign up, log in, add to cart, and check out.`,
   );
   const core = journeys.filter((journey) => journey.kind !== 'other');
   const said = (status: ClientJourneyResult['status']) => core.filter((journey) => journey.status === status).map((journey) => journey.title.toLowerCase());

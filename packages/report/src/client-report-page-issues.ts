@@ -171,22 +171,23 @@ function uniquePages(checks: readonly PageCheck[]): PageCheck[] {
 /** What a person must look at: checks that could not decide, and signs of a WCAG 2.2 problem the harness cannot confirm. */
 export function reviewItems(checks: readonly PageCheck[], run: RunResult): ClientReviewItem[] {
   const items: ClientReviewItem[] = [];
-  const undecided = new Map<string, { criteria: Set<string>; count: number; pages: Set<string> }>();
+  // The same page checked by two accounts counts once: its larger count.
+  const undecided = new Map<string, { criteria: Set<string>; pages: Map<string, number> }>();
   for (const check of checks) {
     for (const rule of check.result.review_rules ?? []) {
-      const entry = undecided.get(rule.rule) ?? { criteria: new Set<string>(), count: 0, pages: new Set<string>() };
+      const entry = undecided.get(rule.rule) ?? { criteria: new Set<string>(), pages: new Map<string, number>() };
       for (const id of rule.criteria) entry.criteria.add(id);
-      entry.count = Math.max(entry.count, rule.count);
-      entry.pages.add(check.result.name);
+      entry.pages.set(check.result.name, Math.max(entry.pages.get(check.result.name) ?? 0, rule.count));
       undecided.set(rule.rule, entry);
     }
   }
   for (const [rule, entry] of undecided) {
     const plain = plainAxeRule(rule, rule);
+    const count = [...entry.pages.values()].reduce((sum, places) => sum + places, 0);
     items.push({
       criterion: [...entry.criteria].sort(compareCriteria).join(', ') || 'unmapped',
-      what: `The automated check could not decide ${entry.count} ${entry.count === 1 ? 'place' : 'places'} for "${plain.title}". A person should look at each one.`,
-      where: [...entry.pages].join(', '),
+      what: `The automated check could not decide ${count} ${count === 1 ? 'place' : 'places'} for "${plain.title}". A person should look at each one.`,
+      where: [...entry.pages.keys()].join(', '),
     });
   }
   for (const check of uniquePages(checks)) {
