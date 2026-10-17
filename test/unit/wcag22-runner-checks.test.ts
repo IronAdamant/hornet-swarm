@@ -31,7 +31,7 @@ const PAGES: Record<string, string> = {
   <form><label for="pw">Password</label><input type="password" id="pw" autocomplete="current-password"></form>
   <button id="save">Save</button>
 </main>
-<style>nav a{display:inline-block;padding:8px}</style>`,
+<style>nav a{display:inline-block;padding:8px}input,button{min-width:24px;min-height:24px}</style>`,
   '/delivery': `<main><h1>Delivery</h1><form action="/billing"><label for="postcode">Postcode</label><input id="postcode" name="postcode"><button>Next</button></form></main>`,
   '/billing': `<main><h1>Billing</h1><form><label for="billing-postcode">Billing postcode</label><input id="billing-postcode"><button>Pay</button></form></main>`,
 };

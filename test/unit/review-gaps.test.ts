@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { request as httpRequest, createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -104,6 +104,17 @@ describe('trace and HAR handling', () => {
     redactor.register('qa-user-1.password', 'secretpw1');
     await redactTree(dir, redactor);
     expect(createHash('sha256').update(readFileSync(join(dir, 'trace.zip'))).digest('hex')).toBe(createHash('sha256').update(bytes).digest('hex'));
+  });
+
+  it('drops a half-written trace instead of failing the run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hornet-zip-'));
+    writeFileSync(join(dir, 'trace.zip'), Buffer.from('PK\x03\x04not-a-finished-zip'));
+    const redactor = new Redactor();
+    redactor.register('qa-user-1.password', 'secretpw1');
+    await expect(redactTree(dir, redactor)).resolves.toEqual([]);
+    expect(existsSync(join(dir, 'trace.zip'))).toBe(false);
+    expect(readFileSync(join(dir, 'trace.zip.dropped'), 'utf8')).toContain('could not be read');
+    expect(await scanTree(dir, redactor)).toEqual([]);
   });
 
   it('drops auth endpoint bodies and masks session headers in a HAR and a trace', async () => {
