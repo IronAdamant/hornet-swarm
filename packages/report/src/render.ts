@@ -1,4 +1,4 @@
-import { accessibilitySeverity, analysisSchema, sortViolations, type AccessibilityResult, type Analysis, type RunResult, type StepResult } from '@hornet-swarm/core';
+import { STANDARD_NAMES, accessibilitySeverity, analysisSchema, sortViolations, type AccessibilityResult, type Analysis, type RunResult, type StepResult } from '@hornet-swarm/core';
 
 export type RichStep = StepResult & {
   console_logs?: string[];
@@ -131,8 +131,6 @@ export function writeErrorsOnPassingSteps(users: RichUser[]): string[] {
   }
   return [...new Set(notes)].slice(0, 5);
 }
-
-const STANDARD_NAMES: Record<string, string> = { wcag2a: 'WCAG 2.0 A', wcag2aa: 'WCAG 2.0 AA', wcag21aa: 'WCAG 2.1 AA', wcag22aa: 'WCAG 2.2 AA' };
 
 /**
  * One line per checked page. Several accounts and journeys often check the same page, so a page's
@@ -476,6 +474,7 @@ export function buildAnalysis(input: {
           ...(step.network_errors ? { network_errors: step.network_errors } : {}),
           ...(step.http_status ? { http_status: step.http_status } : {}),
           ...(step.accessibility ? { accessibility: step.accessibility } : {}),
+          ...(step.redundant_entry ? { redundant_entry: step.redundant_entry } : {}),
           timings: { started_at: step.started_at, finished_at: step.finished_at, duration_ms: step.duration_ms },
           selectors: step.selectors ?? (step.selector ? [step.selector] : []),
           assertions: step.assertions ?? (step.assertion ? [step.assertion] : []),
