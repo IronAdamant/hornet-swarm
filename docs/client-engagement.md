@@ -27,7 +27,7 @@ Ask the client to create the test accounts and send the logins through the priva
 3. Run `pnpm hornet-swarm auth check <id>`. It confirms the record is in force and that the PDF is the one it names.
 4. Write the project file: base address, allowed origins, sign-in selectors and success check, limits, and one user per test account. Start from `examples/projects/toolshop-lab/project.yaml`.
 5. Store the logins: `pnpm hornet-swarm creds serve`, or `pnpm hornet-swarm creds add <project> <label>`.
-6. Write the journeys. Assert what a working site does. Use `self.username` and `self.password`, `example.com` addresses, and test card or bank numbers the client gives you.
+6. Write the journeys. Assert what a working site does. Use `self.username` and `self.password`, `example.com` addresses, and test card or bank numbers the client gives you. If a journey does not use an inbox step, ask the client to pre-verify the test accounts and to turn captcha off on staging. The harness does not solve a captcha, and it does not read a verification email unless the journey has an inbox step that names a test inbox.
 7. `pnpm hornet-swarm env up --project <id>`, then `pnpm hornet-swarm sign-in --project <id>` to prove every account gets in before anything else runs.
 
 Rehearse each new kind of site on the local labs first (`node scripts/setup-lab.mjs`).
