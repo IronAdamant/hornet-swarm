@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { inboxStep, storefrontPasswordStep } from './extra-steps.js';
+import { inboxStep, keyboardStep, storefrontPasswordStep, viewportStep } from './extra-steps.js';
 import { brandingSchema } from './client-job-schema.js';
 import { redundantEntrySchema, wcag22PageSignalsSchema } from './wcag22-page-signals.js';
 
@@ -7,7 +7,7 @@ export const globalConfigSchema = z
   .object({
     runtime: z.enum(['auto', 'orbstack', 'colima']).default('auto'),
     default_project: z.string().default('example-app'),
-    results_retention_days: z.number().int().positive().default(30),
+    results_retention_days: z.number().int().positive().default(7),
     ocr_screenshot_check: z.boolean().default(true),
     log_level: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
     /** The default brand on client reports. A job's own branding overrides it field by field. */
@@ -315,6 +315,8 @@ export const stepSchema = z.union([
   inspectStep,
   storefrontPasswordStep,
   inboxStep,
+  viewportStep,
+  keyboardStep,
 ]);
 
 export type Step = z.infer<typeof stepSchema>;

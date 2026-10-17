@@ -1,7 +1,7 @@
 # ~/.hornet-swarm/config.yaml  (global)
 runtime: auto                 # auto | orbstack | colima
 default_project: example-app
-results_retention_days: 30
+results_retention_days: 7
 ocr_screenshot_check: true    # OCR screenshots for leaked secrets
 log_level: info
 # Who client reports are from, unless a job says otherwise. The agency brand is the default:

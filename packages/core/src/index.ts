@@ -12,6 +12,7 @@ export * from './report-wording-guard.js';
 export * from './secret.js';
 export * from './secure-fs.js';
 export * from './schemas.js';
+export { PHONE_VIEWPORT } from './extra-steps.js';
 export * from './template.js';
 export * from './wcag22-criteria.js';
 export * from './wcag22-page-signals.js';
