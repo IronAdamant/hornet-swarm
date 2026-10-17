@@ -1,4 +1,4 @@
-import { CriterionVerdict, WCAG22_AA_CRITERIA, decideAllCriteria, type Authorisation, type ClientJob, type RunResult } from '@hornet-swarm/core';
+import { CriterionVerdict, NOT_A_CERTIFICATE, WCAG22_AA_CRITERIA, decideAllCriteria, type Authorisation, type ClientJob, type RunResult } from '@hornet-swarm/core';
 import { CLIENT_REPORT_SCHEMA_VERSION, clientReportSchema, type ClientCriterionRow, type ClientIssue, type ClientJourneyResult, type ClientReport, type ResolvedBrand } from './client-report-model.js';
 import { journeyResults } from './client-report-journeys.js';
 import { accessibilityIssues, collectPageChecks, criterionEvidence, reviewItems, wcag22Issues, type DraftIssue, type PageCheck } from './client-report-page-issues.js';
@@ -172,6 +172,9 @@ function scopeAndLimits(job: ClientJob, auth: Authorisation, run: RunResult, cri
   const lines = [
     `This report lists issues found against WCAG 2.2 AA in tested pages. It covers only the pages and journeys named in it, as they were on ${reportDate(run.finished_at ?? run.started_at)}. Pages that are not listed were not tested, and later changes to the site are not covered.`,
     'It is not a statement that the site has no other accessibility issues, and it is not legal advice.',
+    'Automated checks plus a 1-2 hour manual pass cover roughly 50-55% of WCAG 2.2 AA.',
+    'No screen-reader testing was done.',
+    NOT_A_CERTIFICATE,
     'This is not a security test. Nothing was done to look for vulnerabilities or to break into the site, and the results say nothing about how secure it is.',
     permission,
     'Only test accounts were used. Passwords, codes, and personal details are hidden in every saved file.',

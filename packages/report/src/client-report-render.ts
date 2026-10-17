@@ -1,4 +1,4 @@
-import { assertNoComplianceClaim } from '@hornet-swarm/core';
+import { assertNoComplianceClaim, wcagCriterion } from '@hornet-swarm/core';
 import { reportDate } from './client-report-builder.js';
 import { clientReportSchema, type ClientIssue, type ClientJourneyResult, type ClientReport } from './client-report-model.js';
 
@@ -48,7 +48,13 @@ function whereWords(issue: ClientIssue): string[] {
 }
 
 function criteriaWords(issue: ClientIssue): string {
-  return issue.criteria.length > 0 ? issue.criteria.join(', ') : 'None. This is a journey that did not work, not an accessibility criterion.';
+  if (issue.criteria.length === 0) return 'None. This is a journey that did not work, not an accessibility criterion.';
+  return issue.criteria
+    .map((id) => {
+      const level = wcagCriterion(id)?.level;
+      return level ? `${id} (${level})` : id;
+    })
+    .join(', ');
 }
 
 export function clientReportMarkdown(report: ClientReport): string {

@@ -363,7 +363,7 @@ program
       const diff = writeRetestDiff({ job, runId: opts.run, home, ...(opts.against ? { against: opts.against } : {}) });
       writeAudit({ interface: 'cli', action: 'client_report', project: job.job.project, run_id: opts.run, result: 'written' }, undefined, home);
       if (opts.json) writeJson({ ok: true, report: report.paths, diff: diff.diff ? diff.paths : { skipped: diff.reason } });
-      else process.stdout.write(`${report.paths.markdown}\n${report.paths.html}\n${diff.diff ? diff.paths.markdown : diff.reason}\n`);
+      else process.stdout.write(`${report.paths.markdown}\n${report.paths.html}\n${report.paths.pdf}\n${diff.diff ? diff.paths.markdown : diff.reason}\n`);
     } catch (error) {
       fail(opts.json, messageOf(error), error instanceof HornetError ? error.exitCode : 3);
     }

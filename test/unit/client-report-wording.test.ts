@@ -2,8 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ForbiddenClaimError, assertNoComplianceClaim, brandingSchema, clientJobSchema, forbiddenClaims, withoutQuotedEvidence } from '../../packages/core/src/index.ts';
+import { ForbiddenClaimError, NOT_A_CERTIFICATE, assertNoComplianceClaim, brandingSchema, clientJobSchema, forbiddenClaims, withoutQuotedEvidence } from '../../packages/core/src/index.ts';
 import { BrandingError, IRON_ADAMANT_NAME, LOGO_MAX_BYTES, resolveBrand } from '../../packages/report/src/client-report-branding.ts';
+import { markdownToPdf } from '../../packages/report/src/client-report-pdf.ts';
 import { renderClientReport } from '../../packages/report/src/client-report-render.ts';
 import { diffClientReports, retestDiffMarkdown } from '../../packages/report/src/retest-diff.ts';
 import { CONTRAST, IMAGE_ALT, TARGET_SIZE, fixtureAuthorisation, fixtureJob, fixtureReport } from '../support/client-report-fixture.ts';
@@ -41,6 +42,10 @@ describe('the forbidden wording', () => {
 
   it('allows the wording a report uses', () => {
     for (const text of ALLOWED) expect(forbiddenClaims(text), text).toEqual([]);
+    expect(forbiddenClaims(withoutQuotedEvidence(NOT_A_CERTIFICATE))).toEqual([]);
+    expect(() => assertNoComplianceClaim(NOT_A_CERTIFICATE, 'The report says')).not.toThrow();
+    expect(() => assertNoComplianceClaim(`${NOT_A_CERTIFICATE} The site is certified.`, 'The report says')).toThrow(ForbiddenClaimError);
+    expect(() => assertNoComplianceClaim('This report is a compliance certificate.', 'The report says')).toThrow(ForbiddenClaimError);
   });
 
   it('lets a report quote the site\'s own words, but not say them itself', () => {
@@ -92,9 +97,23 @@ describe('a rendered client report', () => {
   });
 
   it('says the testing was done with the owner\'s written authorisation', () => {
-    const { markdown } = renderClientReport(scenarios().busy);
+    const { markdown, html } = renderClientReport(scenarios().busy);
     expect(markdown).toContain("Testing was done with the site owner's written authorisation, given by Pat Owner (Owner), record fixture-owner");
     expect(renderClientReport(scenarios().publicPractice).markdown).toContain('published permission');
+    expect(markdown).toContain('2.5.8 (AA)');
+    expect(html).toContain('2.5.8 (AA)');
+    for (const text of [markdown, html]) {
+      expect(text).toContain('Automated checks plus a 1-2 hour manual pass cover roughly 50-55% of WCAG 2.2 AA.');
+      expect(text).toContain('No screen-reader testing was done.');
+      expect(text).toContain(NOT_A_CERTIFICATE);
+    }
+    const pdf = Buffer.from(markdownToPdf(markdown));
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(pdf.includes(Buffer.from('%%EOF'))).toBe(true);
+    expect(pdf.toString('latin1')).toContain('50-55% of WCAG 2.2 AA');
+    expect(pdf.toString('latin1')).toContain('No screen-reader testing was done.');
+    expect(pdf.toString('latin1')).toContain('This report is not a compliance certificate.');
+    expect(pdf.toString('latin1')).toContain('2.5.8 \\(AA\\)');
   });
 
   it('marks every criterion that needs a person as needs manual review, and none as passed', () => {
