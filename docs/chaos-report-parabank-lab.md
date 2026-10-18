@@ -173,7 +173,6 @@ The kill switch stayed off. The lab was not reset.
 - Cross-account access.
 - ParaBank's Initialize, Clean, and JMS controls.
 - Restful Booker.
-- Toolshop, which is a separate report when that comparison is run.
 
 ## Reliability
 

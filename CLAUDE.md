@@ -15,5 +15,5 @@ A local harness that checks websites through isolated Chromium containers, one p
 - `.mcp.json` registers the MCP server as `hornet-swarm`. `.claude/agents/hornet-swarm-tester.md` is the sub-agent for one label. The playbook is `docs/agents.md`.
 - Test a live site only when an authorisation file covers it (`owner`, `contract`, or `public_practice`) and the owner has asked for that site. Never widen an authorisation yourself.
 - Practice sites: `node scripts/setup-practice.mjs the-internet` or `saucedemo`, then `pnpm hornet-swarm env up --project <id>`.
-- Local labs: `node scripts/setup-lab.mjs`, then `pnpm hornet-swarm env up --project toolshop-lab` (or `parabank-lab`, `booker-lab`). They run on this Mac only. Use made-up details only.
+- Local labs: `node scripts/setup-lab.mjs`, then `pnpm hornet-swarm env up --project juice-shop-lab` (or `parabank-lab`, `booker-lab`). They run on this Mac only. Use made-up details only.
 - Never put a password, TOTP secret, or age key in a reply, a note, a journey, or a commit. Never solve a captcha or a second code. Only release the kill switch when the owner asks.

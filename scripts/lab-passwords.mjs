@@ -8,7 +8,7 @@ function fromLetters(length) {
   return body;
 }
 
-/** Toolshop's sign-up rules ask for a symbol. The symbol is sent in a JSON body, not a URL. */
+/** A password with a letter, a digit, and a `#`, for a sign-up form that asks for a symbol. The symbol is sent in a JSON body, not a URL. */
 export function strongPassword() {
   return `${fromLetters(16)}#${randomInt(10)}a`;
 }

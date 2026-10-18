@@ -89,7 +89,7 @@ describe('accessibility in the summary', () => {
   });
 
   it('keeps a single-page app route in the page address', () => {
-    expect(accessibilityFindings([checked('qa-user-1', [], 'http://localhost:4300/#/checkout')])[0]).toContain('shop-page (/#/checkout)');
+    expect(accessibilityFindings([checked('qa-user-1', [], 'http://localhost:3010/#/checkout')])[0]).toContain('shop-page (/#/checkout)');
   });
 
   it('points to the full file when a page has more than four problems', () => {

@@ -38,7 +38,7 @@ const NAME = /^[a-z0-9-]+$/;
 export function inspectionName(url: string): string {
   let path = url;
   try {
-    // A single-page app routes after the #, as in /#/account/invoices.
+    // A single-page app routes after the #, as in /#/order-history.
     const parsed = new URL(url, 'http://placeholder');
     path = `${parsed.pathname}${parsed.hash.replace(/^#/, '')}`;
   } catch {

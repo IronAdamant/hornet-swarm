@@ -92,7 +92,7 @@ describe('example projects and journeys', () => {
   });
 
   it('keeps practice passwords out of the repo: journeys use handles and the setup script reads the site', () => {
-    for (const site of ['the-internet', 'saucedemo', 'toolshop-live']) {
+    for (const site of ['the-internet', 'saucedemo']) {
       const config = project(site);
       const dir = join(root, 'examples/projects', site, 'journeys');
       for (const file of readdirSync(dir)) {

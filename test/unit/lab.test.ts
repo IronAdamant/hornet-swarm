@@ -37,10 +37,11 @@ describe('the local labs', () => {
     expect(juiceSignIn[1]).toEqual({ click: { selector: "button[aria-label='Close Welcome Banner']" } });
     expect(juiceSignIn[2]).toEqual({ click: { selector: "role=button[name='dismiss cookie message']" } });
     expect('fill' in (juiceSignIn[3] ?? {})).toBe(true);
-    expect(signInSteps(project('toolshop-lab'), 'qa-user-1')[1]).toEqual({ fill: { selector: "[data-test='email']", credential: 'qa-user-1.username' } });
+    expect(signInSteps(project('parabank-lab'), 'qa-user-1')[0]).toEqual({ navigate: { url: 'index.htm' } });
+    expect(signInSteps(project('parabank-lab'), 'qa-user-1')[1]).toEqual({ fill: { selector: "input[name='username']", credential: 'qa-user-1.username' } });
     const clicks = journey.steps.flatMap((step) => ('click' in step ? [step.click.selector] : []));
     expect(clicks).toEqual(["a:has-text('Admin Page')"]);
-    for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab', 'juice-shop-lab']) {
+    for (const id of ['booker-lab', 'parabank-lab', 'juice-shop-lab']) {
       const config = project(id);
       expect(config.authorisation_id).toBe('lab-owner');
       for (const origin of [config.targets.base_url, ...config.targets.allowed_origins]) expect(new URL(origin).hostname).toMatch(/^(127\.0\.0\.1|host\.docker\.internal)$/);
@@ -56,7 +57,7 @@ describe('the local labs', () => {
   });
 
   it('keep passwords out of journeys and the setup script', () => {
-    for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab', 'juice-shop-lab']) {
+    for (const id of ['booker-lab', 'parabank-lab', 'juice-shop-lab']) {
       const config = project(id);
       const dir = join(root, 'examples/projects', id, 'journeys');
       for (const file of readdirSync(dir)) {
@@ -102,7 +103,7 @@ describe('journey templates and steps', () => {
   });
 
   it('checks select and field_value steps, and never lets field_value read the password', () => {
-    const config = project('toolshop-lab');
+    const config = project('juice-shop-lab');
     const check = (steps: unknown[]) => validateJourneyDocument({ version: 1, id: 'x', name: 'x', users: ['qa-user-1'], steps }, config).errors;
     expect(check([{ select: { selector: '#c', label: 'Australia' } }])).toEqual([]);
     expect(check([{ select: { selector: '#c', index: 1 } }])).toEqual([]);
@@ -118,14 +119,14 @@ describe('journey templates and steps', () => {
 describe('reports list every failure', () => {
   const step = (index: number, status: string, extra: Record<string, unknown> = {}) => ({ index, type: 'assert', status, duration_ms: 1, started_at: '', finished_at: '', ...extra });
   const users = [
-    { label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'cart', name: 'Cart', status: 'fail', duration_ms: 1, steps: [step(0, 'pass'), step(1, 'fail', { assertion: 'text_visible Related products', error: 'text was not visible' })] }] },
-    { label: 'qa-user-3', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'cart', name: 'Cart', status: 'fail', duration_ms: 1, steps: [step(0, 'pass'), step(1, 'fail', { assertion: 'text_visible Related products', error: 'text was not visible' })] }, { id: 'cod', name: 'Cash on delivery', status: 'fail', duration_ms: 1, steps: [step(0, 'fail', { assertion: "selector_visible [data-test='finish']:enabled", error: 'locator.waitFor: Timeout 10000ms exceeded.\nCall log:' })] }] },
+    { label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'basket', name: 'Basket', status: 'fail', duration_ms: 1, steps: [step(0, 'pass'), step(1, 'fail', { assertion: 'text_visible Apple Juice', error: 'text was not visible' })] }] },
+    { label: 'qa-user-3', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'basket', name: 'Basket', status: 'fail', duration_ms: 1, steps: [step(0, 'pass'), step(1, 'fail', { assertion: 'text_visible Apple Juice', error: 'text was not visible' })] }, { id: 'pay', name: 'Payment', status: 'fail', duration_ms: 1, steps: [step(0, 'fail', { assertion: 'selector_visible #place-order:enabled', error: 'locator.waitFor: Timeout 10000ms exceeded.\nCall log:' })] }] },
   ] as unknown as Parameters<typeof failureList>[0];
 
   it('merges one failure seen on several accounts and puts timeouts in plain words', () => {
     const list = failureList(users);
     expect(list).toHaveLength(2);
-    expect(list[0]).toBe('qa-user-1, qa-user-3 · Cart · step 1 (assert text_visible Related products): text was not visible');
+    expect(list[0]).toBe('qa-user-1, qa-user-3 · Basket · step 1 (assert text_visible Apple Juice): text was not visible');
     expect(list[1]).toContain('it did not appear within 10 seconds');
     expect(list.join('\n')).not.toContain('Call log');
   });
@@ -206,19 +207,19 @@ describe('the runner on a real page', () => {
       if (req.url === '/form') {
         res.end(`<!doctype html><html><body>
 <label for="subject">Subject</label>
-<select id="subject"><option value="">Select a subject</option><option value="cs" selected>Customer service</option><option value="e101">Error 101: Subject not found</option></select>
-<p>Contact us</p>
+<select id="subject"><option value="">Select a subject</option><option value="cs" selected>General help</option><option value="e12">Error 12: Topic not found</option></select>
+<p>Write to us</p>
 </body></html>`);
         return;
       }
       if (req.url === '/shop') {
         res.end(`<!doctype html><html><body>
-<h2>Reltded products</h2>
-<div class="toast-message">Oeps, something went wrong.</div>
-<label for="postcode">Postcode</label><input id="postcode" value="missing value">
-<p>Errror 304 - Missing Payment Gateway</p>
-<button data-test="finish" disabled>Confirm</button>
-<button data-test="search">Serch</button>
+<h2>Releated items</h2>
+<div class="toast-message">Whoops, something went wrong.</div>
+<label for="postcode">Postcode</label><input id="postcode" value="not filled">
+<p>Error: missing checkout total</p>
+<button id="confirm" disabled>Confirm</button>
+<button id="find">Seach</button>
 </body></html>`);
         return;
       }
@@ -300,36 +301,36 @@ describe('the runner on a real page', () => {
   }, 60_000);
 
   it('quotes the page when a check fails: the closest heading, the toast, and other error lines', async () => {
-    const request = job([{ navigate: { url: '/shop' } }, { assert: { type: 'text_visible', value: 'Related products' } }], 'quote');
+    const request = job([{ navigate: { url: '/shop' } }, { assert: { type: 'text_visible', value: 'Related items' } }], 'quote');
     const report = await executeJob(request, new Map(), () => false);
     const error = report.steps.at(-1)?.error ?? '';
-    expect(error).toContain('closest text on the page: "Reltded products"');
-    expect(error).toContain('page said: "Oeps, something went wrong."');
-    expect(error).toContain('Errror 304 - Missing Payment Gateway');
+    expect(error).toContain('closest text on the page: "Releated items"');
+    expect(error).toContain('page said: "Whoops, something went wrong."');
+    expect(error).toContain('Error: missing checkout total');
     // The failed step leaves its own picture and the page's words, form values included.
     const text = readFileSync(join(request.outDir, 'failed-step-1.txt'), 'utf8');
-    expect(text).toContain('Reltded products');
-    expect(text).toContain('- Postcode: missing value');
+    expect(text).toContain('Releated items');
+    expect(text).toContain('- Postcode: not filled');
     expect(text).toContain('- Confirm (disabled)');
     expect(report.steps.at(-1)?.screenshot_paths?.some((path) => path.endsWith('failed-step-1.png'))).toBe(true);
   }, 60_000);
 
   it('says a control is disabled, or what a button actually reads', async () => {
-    const disabled = await executeJob(job([{ navigate: { url: '/shop' } }, { assert: { type: 'selector_visible', value: "[data-test='finish']:enabled" } }], 'disabled'), new Map(), () => false);
+    const disabled = await executeJob(job([{ navigate: { url: '/shop' } }, { assert: { type: 'selector_visible', value: '#confirm:enabled' } }], 'disabled'), new Map(), () => false);
     expect(disabled.steps.at(-1)?.error).toContain('it is on the page but disabled');
-    expect(disabled.steps.at(-1)?.error).toContain('Errror 304 - Missing Payment Gateway');
-    const label = await executeJob(job([{ navigate: { url: '/shop' } }, { assert: { type: 'selector_visible', value: "[data-test='search']:has-text('Search')" } }], 'label'), new Map(), () => false);
-    expect(label.steps.at(-1)?.error).toContain('it reads "Serch"');
+    expect(disabled.steps.at(-1)?.error).toContain('Error: missing checkout total');
+    const label = await executeJob(job([{ navigate: { url: '/shop' } }, { assert: { type: 'selector_visible', value: "#find:has-text('Search')" } }], 'label'), new Map(), () => false);
+    expect(label.steps.at(-1)?.error).toContain('it reads "Seach"');
   }, 60_000);
 
   it('leaves dropdown options out of the page text and the clues, and shows the chosen one', async () => {
     const request = job([{ navigate: { url: '/form' } }, { assert: { type: 'text_visible', value: 'Thanks for your message' } }], 'options');
     const report = await executeJob(request, new Map(), () => false);
-    expect(report.steps.at(-1)?.error).not.toContain('Error 101');
+    expect(report.steps.at(-1)?.error).not.toContain('Error 12');
     const text = readFileSync(join(request.outDir, 'failed-step-1.txt'), 'utf8');
-    expect(text).not.toContain('Error 101: Subject not found');
-    expect(text).toContain('Contact us');
-    expect(text).toContain('- Subject: Customer service');
+    expect(text).not.toContain('Error 12: Topic not found');
+    expect(text).toContain('Write to us');
+    expect(text).toContain('- Subject: General help');
   }, 60_000);
 
   it('fills in templates in selectors too, such as a row named for this run', async () => {
@@ -368,7 +369,7 @@ describe('the runner on a real page', () => {
 
 describe('small helpers behind the clearer reports', () => {
   it('finds the closest words on the page, and nothing when no line is close', () => {
-    expect(closestText(['Home', 'Reltded products', 'Contakt'], 'Related products')).toBe('Reltded products');
+    expect(closestText(['Home', 'Releated items', 'Contact'], 'Related items')).toBe('Releated items');
     expect(closestText(['Thanks for shopping'], 'Payment declined')).toBeUndefined();
   });
 
@@ -380,9 +381,9 @@ describe('small helpers behind the clearer reports', () => {
 
   it('notes a passing step whose write was refused', () => {
     const users = [
-      { label: 'qa-user-4', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'favourites', name: 'Favourites', status: 'pass', duration_ms: 1, steps: [{ index: 7, type: 'click', status: 'pass', duration_ms: 1, started_at: '', finished_at: '', network_errors: [{ method: 'POST', url: 'http://host.docker.internal:8091/favorites', status: 409 }, { method: 'GET', url: 'http://host.docker.internal:8091/users/me', status: 401 }] }] }] },
+      { label: 'qa-user-4', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'basket', name: 'Basket', status: 'pass', duration_ms: 1, steps: [{ index: 7, type: 'click', status: 'pass', duration_ms: 1, started_at: '', finished_at: '', network_errors: [{ method: 'POST', url: 'http://127.0.0.1:3010/api/BasketItems', status: 409 }, { method: 'GET', url: 'http://127.0.0.1:3010/rest/user/whoami', status: 401 }] }] }] },
     ] as unknown as Parameters<typeof writeErrorsOnPassingSteps>[0];
-    expect(writeErrorsOnPassingSteps(users)).toEqual(['qa-user-4 · Favourites · step 7 passed, but POST /favorites answered 409.']);
+    expect(writeErrorsOnPassingSteps(users)).toEqual(['qa-user-4 · Basket · step 7 passed, but POST /api/BasketItems answered 409.']);
   });
 
   it('spots a build older than its source, and a rebuild that changed the code', () => {
@@ -407,22 +408,22 @@ describe('small helpers behind the clearer reports', () => {
 
 describe('the summary explains the sign-in gate', () => {
   it('says a passed gate does not mean the journeys passed', () => {
-    const users = [{ label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'cart', name: 'Cart', status: 'fail', duration_ms: 1, steps: [{ index: 3, type: 'assert', status: 'fail', duration_ms: 1, started_at: '', finished_at: '', error: 'text was not visible' }] }] }] as unknown as Parameters<typeof summaryMarkdown>[0];
+    const users = [{ label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'basket', name: 'Basket', status: 'fail', duration_ms: 1, steps: [{ index: 3, type: 'assert', status: 'fail', duration_ms: 1, started_at: '', finished_at: '', error: 'text was not visible' }] }] }] as unknown as Parameters<typeof summaryMarkdown>[0];
     expect(summaryMarkdown(users, 'failed')).toContain('Sign-in gate: passed, because every account signed in. It does not mean the journeys passed.');
   });
 });
 
 describe('chaos summaries', () => {
   it('turns one cause across many journeys into one line', () => {
-    const failed = (name: string) => ({ id: name, name, status: 'fail', duration_ms: 1, steps: [{ index: 5, type: 'assert', status: 'fail', duration_ms: 1, started_at: '', finished_at: '', assertion: "selector_visible [data-test='nav-user-menu']", error: 'locator.waitFor: Timeout 10000ms exceeded.' }] });
+    const failed = (name: string) => ({ id: name, name, status: 'fail', duration_ms: 1, steps: [{ index: 5, type: 'assert', status: 'fail', duration_ms: 1, started_at: '', finished_at: '', assertion: 'selector_visible #account', error: 'locator.waitFor: Timeout 10000ms exceeded.' }] });
     const users = [
-      { label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [failed('Cart'), failed('Checkout')] },
+      { label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [failed('Basket'), failed('Checkout')] },
       { label: 'qa-user-4', phase1: { status: 'pass', duration_ms: 1 }, journeys: [failed('Profile')] },
     ] as unknown as Parameters<typeof chaosFailureGroups>[0];
     const lines = chaosFailureGroups(users);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('the same failure stopped 3 journeys');
-    expect(lines[0]).toContain('qa-user-1 · Cart (step 5); qa-user-1 · Checkout (step 5); qa-user-4 · Profile (step 5)');
+    expect(lines[0]).toContain('qa-user-1 · Basket (step 5); qa-user-1 · Checkout (step 5); qa-user-4 · Profile (step 5)');
     expect(summaryMarkdown(users, 'failed', { profile: 'default', seed: 'lab-1' })).toContain('Failed: the same failure stopped 3 journeys');
   });
 });

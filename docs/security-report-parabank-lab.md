@@ -10,7 +10,7 @@ Written from runs on the local ParaBank lab. The site is on this Mac only. No ot
 | Authorisation | `lab-owner` (owner basis): `signin_smoke`, `functional_e2e`, `chaos`, and, since the owner's written approval on 14 October 2026, `access_control_checks`. The approval covers reading the Admin Page. It does not cover pressing Initialize, Clean, or JMS, or cross-account checks. |
 | Accounts | Five made-up customers. qa-user-5 is the one whose password contains a symbol, so the profile journey can show the update fault. |
 | Runs used | `run_20261014-170842_e1c117` for the Admin Page. Profile runs `run_20261014-165938_fd3ea3`, `run_20261014-170017_580e8d`, `run_20261014-170115_d27842`, and chaos run `run_20261014-170308_52cc01`. An earlier profile run, `run_20261014-163126_a9b11a`, has the same saved-request shape. |
-| Not in this pass | Toolshop and Restful Booker. Their runners were stopped. No security pass was made on them. |
+| Not in this pass | Restful Booker. Its runners were stopped. No security pass was made on it. |
 
 ## Summary
 
@@ -62,7 +62,7 @@ None on the findings. P-01 already says the update request carries a 16-characte
 - Any host other than this lab on 127.0.0.1.
 - Captchas and second codes. None were solved.
 - Whether a staff login exists that would be the right gate for the Admin Page. The page was only read.
-- Toolshop and Restful Booker.
+- Restful Booker.
 - A fresh suite after the redactor change. Existing run files were masked in place. A new run is the check that a future HAR is clean, and that run was not started in this pass.
 
 ## How this was produced

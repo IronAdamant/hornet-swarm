@@ -28,10 +28,10 @@ Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. R
 2. `run_signin_check` with `users: [<label>]`.
 3. `run_journey` with `users: [<label>]`, and `journey_id` or `journey_yaml`.
 4. Quote the page, not your reading of the picture. A failed step's error already quotes what the page showed: its message or toast, whether the control was disabled or what it reads, the closest words to the text the check expected, and other error lines. Every failed step also saves `failed-step-<n>.png` and `failed-step-<n>.txt`. `page_text_paths` in the packet lists each `.txt` beside its screenshot.
-   - A `.txt` holds the page's visible words, then `Form fields:` (what each field holds, such as `- Postcode: missing value`) and `Disabled buttons:`. Password fields are never read, and stored logins are masked. Dropdown options are left out of the visible words; the field line shows the chosen one.
-   - A field's name in `Form fields:` is the label the page attaches to it. If a label looks wrong for its value, such as `Country: NSW`, the page has attached its labels to the wrong fields. That is a finding about the page.
-   - Not every error-looking word is an error. A misspelled dropdown option or a heading is page text, not a message the site showed. A request answered 401 while a page loads, such as `GET /users/me` before sign-in, is the site asking who is signed in; that is normal, not a finding.
-   - Copy spellings from the `.txt`. A screenshot is easy to misread: "Reltded" is not "Relteded", and "Oeps" is not "Oops".
+   - A `.txt` holds the page's visible words, then `Form fields:` (what each field holds, such as `- City: Testville`) and `Disabled buttons:`. Password fields are never read, and stored logins are masked. Dropdown options are left out of the visible words; the field line shows the chosen one.
+   - A field's name in `Form fields:` is the label the page attaches to it. If a label looks wrong for its value, such as a postcode sitting in the city field, the page has attached its labels to the wrong fields. That is a finding about the page.
+   - Not every error-looking word is an error. A misspelled dropdown option or a heading is page text, not a message the site showed. A request answered 401 while a page loads, when the site is asking who is signed in, is normal, not a finding.
+   - Copy spellings from the `.txt`. A screenshot is easy to misread.
 5. `add_agent_note` for what you learned, then `release_test_user`.
 
 ## What a status means
@@ -66,7 +66,7 @@ steps:
   - screenshot: { name: "search" }
 ```
 
-- Templates work in selectors too: `tr:has-text('Lab Brand {{run.tag}}')` finds a row this run created.
+- Templates work in selectors too: `tr:has-text('Room {{run.tag}}')` finds a row this run created.
 - A label with no stored login whose journeys all have `requires_phase1: false` runs as a guest. The summary names it as a guest, not a failed sign-in.
 - `self.username` and `self.password` mean the label running the journey. One journey can serve every label.
 - Each journey runs in a fresh browser, so it signs in itself.
@@ -94,10 +94,9 @@ The Internet and Sauce Demo are public sites built for test-automation practice.
 
 ## Local labs
 
-`node scripts/setup-lab.mjs` starts Toolshop (`toolshop-lab`), Restful Booker (`booker-lab`), ParaBank (`parabank-lab`), and OWASP Juice Shop (`juice-shop-lab`) in Docker on this Mac. An `owner` authorisation covers them, so chaos is allowed and nothing touches a live service. Use made-up details only: `example.com` addresses, Testville, and test bank numbers. Juice Shop's scoreboard and challenge pages are out of scope, and its customer feedback form asks for a captcha, so that page is left out.
+`node scripts/setup-lab.mjs` starts Restful Booker (`booker-lab`), ParaBank (`parabank-lab`), and OWASP Juice Shop (`juice-shop-lab`) in Docker on this Mac. An `owner` authorisation covers them, so chaos is allowed and nothing touches a live service. Use made-up details only: `example.com` addresses, Testville, and test bank numbers. Juice Shop's scoreboard and challenge pages are out of scope, and its customer feedback form asks for a captcha, so that page is left out.
 
-- Toolshop is the edition with deliberate bugs. A failed journey there is usually a real finding, not a broken test. Check the screenshot, then say which bug it is.
 - Agents run chaos themselves: pass `chaos: { profile: "default", seed: "bank-2" }` to `run_suite` or `run_journey`. Profiles: `default`, `latency`, `drop`, `offline`, `double-click`, `history`, `slow-api`. The authorisation must list `chaos`; a public practice site never allows it. The same seed repeats the same pattern.
 - Under chaos, compare with a normal run of the same journeys. Journeys that stopped at the same step with the same page words share one `Failed:` line, which is one finding, not several. Chaos never drops the page load itself; `drop:spared the page load` in the analysis records it. It never refreshes a half-filled form or a page that a sent form produced; the analysis records each skip.
-- Under chaos, the same journeys still meet the same planted bugs. Only a journey that passes normally and fails under chaos shows a recovery problem. A check that passes normally but fails under chaos shows where the site does not recover. The analysis lists every chaos action, including those skipped because a form was half filled.
+- Under chaos, a journey that fails the same way on a normal run is a fault the site already has. Only a journey that passes normally and fails under chaos shows where the site does not recover. The analysis lists every chaos action, including those skipped because a form was half filled.
 

@@ -120,7 +120,7 @@ describe('a fresh MCP server serves the current journey rules and reliability sp
 name: Shop
 authorisation_id: shop-owner
 environment: test
-targets: { base_url: "http://127.0.0.1:4300", allowed_origins: ["http://127.0.0.1:4300"] }
+targets: { base_url: "http://127.0.0.1:3010", allowed_origins: ["http://127.0.0.1:3010"] }
 auth:
   signin_url: /login
   selectors: { username: "#email", password: "#password", submit: "#submit" }
