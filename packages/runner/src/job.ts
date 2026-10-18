@@ -359,7 +359,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           break;
         }
         const raw = error instanceof Error ? error.message : String(error);
-        // The page's own words tell an agent why, such as "this user has been locked out", so the
+        // The page's own words tell an agent why, such as an account the site refused, so the
         // error quotes them instead of leaving the agent to read a screenshot.
         const clues = await failureClues(page, step, contextTemplate);
         const message = redactor.redact(clues.length > 0 ? raw.replace(/^([^\n]*)/, `$1 (${clues.join('; ')})`) : raw);
@@ -880,7 +880,7 @@ const MESSAGE_SELECTORS =
 
 /**
  * The page's visible words without the options inside dropdowns. A page's text lists every option
- * of every dropdown, such as "Error 101: Subject not found" in a subject list, which reads like an
+ * of every dropdown, such as "Error 12: Topic not found" in a subject list, which reads like an
  * error on the page when it is only a choice nobody made. `Form fields:` shows the chosen option.
  */
 export async function visibleWords(page: Page): Promise<string> {
@@ -986,7 +986,7 @@ export function similarity(left: string, right: string): number {
   return 1 - (previous[b.length] ?? 0) / Math.max(a.length, b.length);
 }
 
-/** The words on the page closest to what a check expected, such as "Reltded products" for "Related products". */
+/** The words on the page closest to what a check expected, such as "Releated items" for "Related items". */
 export function closestText(lines: string[], expected: string): string | undefined {
   const want = expected.trim();
   const size = want.split(/\s+/).length;

@@ -24,4 +24,4 @@ valid_until: "2027-01-12"
 document:
   path: lab-owner-statement.txt
   sha256: "set-by-setup-lab"
-notes: Toolshop (sprint 5 with deliberate bugs), Restful Booker Platform, ParaBank, and OWASP Juice Shop, run from Docker Hub images on this Mac. Juice Shop's scoreboard and challenge pages are out of scope.
+notes: Restful Booker Platform, ParaBank, and OWASP Juice Shop, run from Docker Hub images on this Mac. Juice Shop's scoreboard and challenge pages are out of scope.

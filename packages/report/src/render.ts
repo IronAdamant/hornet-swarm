@@ -107,8 +107,8 @@ function plainFailure(step: RichUser['journeys'][number]['steps'][number]): stri
 }
 
 /**
- * A step can pass while a write behind it was refused, such as a favourite that was already saved
- * (409). That is not a failure, but a reader should know, so each one gets a short note.
+ * A step can pass while a write behind it was refused (409). That is not a failure, but a reader
+ * should know, so each one gets a short note.
  */
 export function writeErrorsOnPassingSteps(users: RichUser[]): string[] {
   const notes: string[] = [];

@@ -114,7 +114,6 @@ describe('authorisation activities are enforced', () => {
   it('lets every shipped example journey run under its own authorisation', () => {
     const pairs: Array<[string, string, string]> = [
       ['the-internet', 'the-internet-practice', 'examples/projects/the-internet/journeys'],
-      ['saucedemo', 'saucedemo-practice', 'examples/projects/saucedemo/journeys'],
       ['example-app', 'example-app-owner', 'examples/journeys/example-app'],
     ];
     for (const [, authId, dir] of pairs) {
@@ -125,7 +124,7 @@ describe('authorisation activities are enforced', () => {
 });
 
 function journeySchemaParse(path: string): Journey {
-  const checked = validateJourneyDocument(readYaml(path), example(path.includes('saucedemo') ? 'saucedemo' : path.includes('the-internet') ? 'the-internet' : 'example-app'));
+  const checked = validateJourneyDocument(readYaml(path), example(path.includes('the-internet') ? 'the-internet' : 'example-app'));
   if (!checked.journey) throw new Error(`${path}: ${checked.errors.join('; ')}`);
   return checked.journey;
 }
@@ -192,10 +191,14 @@ describe('passive third parties', () => {
 
 describe('the request total holds across runners', () => {
   it('gives each runner that can work at once an equal share of the total', () => {
-    const saucedemo = example('saucedemo');
-    expect(parallelRunners(saucedemo)).toBe(6);
-    expect(perRunnerRate(saucedemo).rps).toBeCloseTo(10 / 6);
-    expect(perRunnerRate(saucedemo).rps * parallelRunners(saucedemo)).toBeLessThanOrEqual(saucedemo.limits.max_requests_per_second_total + 1e-9);
+    const shared = project({
+      users: Array.from({ length: 6 }, (_, index) => ({ label: `qa-user-${index + 1}`, role: 'r', tenant: 't', vars: {} })),
+      runners: { count: 6 },
+      limits: { max_parallel_runners: 6, max_requests_per_second_total: 10, max_requests_per_second_per_runner: 5, request_burst_per_runner: 20 },
+    });
+    expect(parallelRunners(shared)).toBe(6);
+    expect(perRunnerRate(shared).rps).toBeCloseTo(10 / 6);
+    expect(perRunnerRate(shared).rps * parallelRunners(shared)).toBeLessThanOrEqual(shared.limits.max_requests_per_second_total + 1e-9);
     const internet = example('the-internet');
     expect(perRunnerRate(internet)).toEqual({ rps: 2, burst: 10 });
     const one = project({ limits: { max_parallel_runners: 10 } });
@@ -205,8 +208,9 @@ describe('the request total holds across runners', () => {
 
   it('refuses a practice project that could run more than six runners at once', () => {
     const users = Array.from({ length: 7 }, (_, index) => ({ label: `qa-user-${index + 1}`, role: 'r', tenant: 't', vars: {} }));
-    const config = { ...example('saucedemo'), users, runners: { ...example('saucedemo').runners, count: 6 }, limits: { ...example('saucedemo').limits, max_parallel_runners: 7 } };
-    const record = { ...exampleAuth('saucedemo-practice'), valid_from: '2026-01-01', valid_until: '2099-01-01' };
+    const base = example('the-internet');
+    const config = { ...base, users, runners: { ...base.runners, count: 6 }, limits: { ...base.limits, max_parallel_runners: 7 } };
+    const record = { ...exampleAuth('the-internet-practice'), valid_from: '2026-01-01', valid_until: '2099-01-01' };
     expect(practiceLimits(config, record)).toEqual({ ok: false, reason: 'public_practice_limit:max_parallel_runners<=6' });
   });
 
@@ -261,8 +265,11 @@ describe('redaction', () => {
   });
 
   it('always drops the sign-in page bodies, as the site and as the container sees it', () => {
-    const config = example('saucedemo');
-    expect(authEndpointPatterns(config)).toContain('https://www.saucedemo.com/');
+    const rootSignIn = project({
+      targets: { base_url: 'http://127.0.0.1:4173', allowed_origins: ['http://127.0.0.1:4173'], allowed_third_party: [] },
+      auth: { ...project().auth, signin_url: '/', auth_endpoints: [] },
+    });
+    expect(authEndpointPatterns(rootSignIn)).toContain('http://127.0.0.1:4173/');
     const local = project({ targets: { base_url: 'http://127.0.0.1:4173', allowed_origins: ['http://127.0.0.1:4173'], allowed_third_party: [] }, auth: { ...project().auth, auth_endpoints: ['**/session'] } });
     expect(authEndpointPatterns(local)).toEqual(['**/session', 'http://127.0.0.1:4173/login', 'http://host.docker.internal:4173/login']);
   });

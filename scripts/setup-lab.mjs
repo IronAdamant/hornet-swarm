@@ -1,19 +1,17 @@
 #!/usr/bin/env node
-// Sets up the local practice labs: Toolshop (sprint 5 with deliberate bugs), Restful Booker
-// Platform, ParaBank, and OWASP Juice Shop, running in Docker on this Mac and bound to 127.0.0.1.
-// Run `pnpm build` first.
+// Sets up the local practice labs: Restful Booker Platform, ParaBank, and OWASP Juice Shop,
+// running in Docker on this Mac and bound to 127.0.0.1. Run `pnpm build` first.
 //
 //   node scripts/setup-lab.mjs            start the labs and install their projects
 //   node scripts/setup-lab.mjs --reset    also wipe every lab's data back to the seed
 //
-// It builds the shop's front end once, starts labs/docker-compose.yml, writes an owner
-// authorisation for this Mac only, installs the toolshop-lab, booker-lab, parabank-lab, and
-// juice-shop-lab projects, signs up made-up Toolshop, ParaBank, and Juice Shop customers with random passwords,
-// and stores every login in the encrypted store. The shop admin's login is read from Toolshop's README, so no
-// password is kept in this repo. No password is printed.
+// It starts labs/docker-compose.yml, writes an owner authorisation for this Mac only, installs
+// the booker-lab, parabank-lab, and juice-shop-lab projects, signs up made-up ParaBank and Juice
+// Shop customers with random passwords, and stores every login in the encrypted store. No password
+// is kept in this repo. No password is printed.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
@@ -21,11 +19,8 @@ import { bankPassword, strongPassword } from './lab-passwords.mjs';
 
 const root = join(import.meta.dirname, '..');
 const home = process.env.AEGIS_HOME ?? join(homedir(), '.hornet-swarm');
-const labsDir = join(homedir(), '.hornet-swarm', 'labs');
 const compose = ['compose', '-f', join(root, 'labs', 'docker-compose.yml')];
 const reset = process.argv.includes('--reset');
-const SHOP = 'http://127.0.0.1:4300';
-const SHOP_API = 'http://127.0.0.1:8091';
 const BOOKER = 'http://127.0.0.1:3300';
 const BANK = 'http://127.0.0.1:8095/parabank';
 const JUICE = 'http://127.0.0.1:3010';
@@ -56,14 +51,6 @@ const JUICE_CUSTOMERS = {
   'qa-user-5': { first_name: 'Sam', last_name: 'Wicker', personality: 'A customer who updates their profile and checks the shop kept the new name.' },
 };
 
-const TOOLSHOP_CUSTOMERS = {
-  'qa-user-1': { first_name: 'Mara', last_name: 'Quill', personality: 'A careful first-time shopper. The control account: if this one fails, the shop is broken for everyone.' },
-  'qa-user-2': { first_name: 'Tobin', last_name: 'Reyes', personality: 'A bargain hunter who searches and filters before buying anything, and signs up new accounts.' },
-  'qa-user-3': { first_name: 'Iris', last_name: 'Calloway', personality: 'A rushed buyer who double-clicks, refreshes, and tries every payment method.' },
-  'qa-user-4': { first_name: 'Dev', last_name: 'Okafor', personality: 'A tidy account keeper who checks the profile and favourites match what was entered.' },
-  'qa-user-5': { first_name: 'Lena', last_name: 'Marsh', personality: 'A customer who writes to support and expects a clear reply on screen.' },
-};
-
 let setSecret;
 let listFields;
 try {
@@ -90,30 +77,7 @@ async function waitFor(url, test = (response) => response.ok, seconds = 180) {
   return false;
 }
 
-async function readmeLogin(url, pattern) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
-  return (await response.text()).match(pattern)?.[1]?.trim();
-}
-
-// 1. The shop's front end, built once with its API at the address runners use.
-const uiDir = join(labsDir, 'toolshop-ui');
-if (!existsSync(join(uiDir, 'index.html'))) {
-  say('Building the Toolshop front end (one time, a few minutes)...');
-  mkdirSync(uiDir, { recursive: true });
-  const envFile = join(labsDir, 'toolshop-env.ts');
-  writeFileSync(envFile, "export const environment = {\n  production: true,\n  apiUrl: 'http://host.docker.internal:8091'\n};\n");
-  docker([
-    'run', '--rm', '--platform', 'linux/amd64', '-m', '3g',
-    '-v', `${envFile}:/app/src/environments/environment.ts:ro`,
-    '-v', `${envFile}:/app/src/environments/environment.prod.ts:ro`,
-    '-v', `${uiDir}:/out`,
-    '--entrypoint', 'sh', 'testsmith/practice-software-testing-sprint5-with-bugs-ui',
-    '-c', 'npx ng build --configuration production --output-path /tmp/dist >/tmp/build.log 2>&1 || { tail -20 /tmp/build.log; exit 1; }; cp -r /tmp/dist/. /out/',
-  ], { timeout: 900_000 });
-}
-
-// 2. The labs.
+// 1. The labs.
 say('Starting the labs...');
 docker([...compose, 'up', '-d'], { timeout: 600_000 });
 if (reset) {
@@ -123,15 +87,6 @@ if (reset) {
   // so reset replaces the container and the image's seed data comes back.
   say('Resetting Juice Shop (a new container, so its data is fresh)...');
   docker([...compose, 'up', '-d', '--force-recreate', '--no-deps', 'juice-shop'], { timeout: 300_000 });
-}
-if (!(await waitFor(`${SHOP_API}/status`, (response) => response.status < 500)) && !(await waitFor(`${SHOP_API}/brands`, (response) => response.status < 500, 60))) {
-  say('The Toolshop API did not answer. See: docker compose -f labs/docker-compose.yml logs laravel-api');
-  process.exit(5);
-}
-const seeded = await waitFor(`${SHOP_API}/products?page=1`, async (response) => response.ok && ((await response.json()).data ?? []).length > 0, 10);
-if (!seeded || reset) {
-  say('Seeding the Toolshop database...');
-  docker([...compose, 'exec', '-T', 'laravel-api', 'php', 'artisan', 'migrate:fresh', '--seed', '--force'], { timeout: 300_000 });
 }
 if (!(await waitFor(`${BOOKER}/api/room/1`))) {
   say('The booker did not answer. See: docker compose -f labs/docker-compose.yml logs rbp-site');
@@ -169,7 +124,7 @@ if (reset) {
   await bank('db.htm', { action: 'INIT' });
 }
 
-// 3. The owner's statement and authorisation. Covers this Mac only.
+// 2. The owner's statement and authorisation. Covers this Mac only.
 const docsDir = join(home, 'authorisations', 'docs');
 mkdirSync(docsDir, { recursive: true, mode: 0o700 });
 // UTC, as the harness reads authorisation dates.
@@ -178,9 +133,8 @@ const until = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10);
 const statement = [
   `Owner statement for the Hornet Swarm practice labs, ${today}.`,
   '',
-  'Iron Adamant runs local copies of four testing-practice apps in Docker on its own Mac:',
-  'Practice Software Testing (Toolshop, sprint 5 with deliberate bugs), Restful Booker Platform,',
-  'ParaBank, a demo bank, and OWASP Juice Shop, a demo shop.',
+  'Iron Adamant runs local copies of three testing-practice apps in Docker on its own Mac:',
+  'Restful Booker Platform, ParaBank, a demo bank, and OWASP Juice Shop, a demo shop.',
   'Their ports are bound to 127.0.0.1 and reached by the runners as host.docker.internal.',
   'Iron Adamant authorises sign-in checks, functional journeys, chaos runs, and access-control',
   `checks against these copies, from ${today} to ${until}. No other host is covered. Only made-up`,
@@ -199,8 +153,8 @@ authorisation.valid_until = until;
 authorisation.document = { path: statementFile, sha256: createHash('sha256').update(statement).digest('hex') };
 writeFileSync(join(home, 'authorisations', 'lab-owner.yaml'), stringify(authorisation));
 
-// 4. Projects and journeys.
-for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab', 'juice-shop-lab']) {
+// 3. Projects and journeys.
+for (const id of ['booker-lab', 'parabank-lab', 'juice-shop-lab']) {
   const projectDir = join(home, 'projects', id);
   mkdirSync(join(projectDir, 'journeys'), { recursive: true });
   const source = join(root, 'examples/projects', id);
@@ -210,57 +164,7 @@ for (const id of ['toolshop-lab', 'booker-lab', 'parabank-lab', 'juice-shop-lab'
   }
 }
 
-// 5. Logins. Made-up Toolshop customers are signed up through the shop's own API.
-let signedUp = 0;
-let kept = 0;
-for (const [label, person] of Object.entries(TOOLSHOP_CUSTOMERS)) {
-  const email = `${person.first_name}.${person.last_name}.lab@example.com`.toLowerCase();
-  const password = strongPassword();
-  const response = await fetch(`${SHOP_API}/users/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      first_name: person.first_name,
-      last_name: person.last_name,
-      dob: '1990-01-01',
-      address: '1 Test Street',
-      city: 'Testville',
-      state: 'NSW',
-      country: 'AU',
-      postcode: '2000',
-      phone: '0412345678',
-      email,
-      password,
-    }),
-  });
-  if (response.status === 201 || response.status === 200) {
-    setSecret('toolshop-lab', label, 'username', email, home);
-    setSecret('toolshop-lab', label, 'password', password, home);
-    signedUp += 1;
-  } else if (response.status === 409 || (response.status === 422 && JSON.stringify(await response.json()).includes('already'))) {
-    // Signed up on an earlier run. The stored login still holds, if there is one.
-    if (!listFields('toolshop-lab', label, home).includes('password')) {
-      say(`${label} exists in the shop but has no stored login. Run again with --reset.`);
-      process.exit(6);
-    }
-    kept += 1;
-  } else {
-    say(`Could not sign up ${label} (HTTP ${response.status}).`);
-    process.exit(6);
-  }
-}
-
-const shopAdmin =
-  process.env.HORNET_TOOLSHOP_ADMIN_PASSWORD ??
-  (await readmeLogin('https://raw.githubusercontent.com/testsmith-io/practice-software-testing/main/README.md', /\|\s*admin\s*\|\s*admin@practicesoftwaretesting\.com\s*\|\s*([^|\s]+)\s*\|/));
-if (!shopAdmin) {
-  say('Could not read the Toolshop admin login from its README. Set HORNET_TOOLSHOP_ADMIN_PASSWORD and run this again.');
-  process.exit(5);
-}
-setSecret('toolshop-lab', 'qa-user-6', 'username', 'admin@practicesoftwaretesting.com', home);
-setSecret('toolshop-lab', 'qa-user-6', 'password', shopAdmin, home);
-
-// The booker's published admin password is a common word that also appears in its own pages and
+// 4. Logins. The booker's published admin password is a common word that also appears in its own pages and
 // field names, so redacting it would blank out ordinary text. Its admin login is stored only when
 // the owner sets HORNET_BOOKER_ADMIN_PASSWORD. Until then, booker-lab runs its guest journeys.
 let bookerLogins = false;
@@ -362,12 +266,8 @@ for (const [label, person] of Object.entries(JUICE_CUSTOMERS)) {
   }
 }
 
-// 6. Swarm boards.
+// 5. Swarm boards.
 const boards = {
-  'toolshop-lab': [
-    ...Object.entries(TOOLSHOP_CUSTOMERS).map(([label, person]) => ({ label, personality: person.personality, rules: SHARED_RULES })),
-    { label: 'qa-user-6', personality: 'The shop admin, who keeps the catalogue and orders in order.', rules: `${SHARED_RULES} Change only records you created in this run.` },
-  ],
   'parabank-lab': Object.entries(PARABANK_CUSTOMERS).map(([label, person]) => ({
     label,
     personality: person.personality,
@@ -391,16 +291,15 @@ for (const [id, agents] of Object.entries(boards)) {
 
 say(
   [
-    `Labs ready. Toolshop: ${SHOP}  Booker: ${BOOKER}  ParaBank: ${BANK}/  Juice Shop: ${JUICE}/  (this Mac only)`,
-    `toolshop-lab: ${signedUp} customers signed up${kept ? `, ${kept} kept from before` : ''}, plus the shop admin.`,
+    `Labs ready. Booker: ${BOOKER}  ParaBank: ${BANK}/  Juice Shop: ${JUICE}/  (this Mac only)`,
     bookerLogins ? 'booker-lab: 3 labels share the booker admin login.' : 'booker-lab: guest journeys only. Its admin login is not stored yet (see the script header).',
     `parabank-lab: ${bankSignedUp} customers signed up${bankKept ? `, ${bankKept} kept from before` : ''}.`,
     `juice-shop-lab: ${juiceSignedUp} customers signed up${juiceKept ? `, ${juiceKept} kept from before` : ''}.`,
     `Authorisation: lab-owner, ${today} to ${until}, this Mac only.`,
     '',
     'Next:',
-    '  pnpm hornet-swarm env up --project toolshop-lab',
-    '  pnpm hornet-swarm suite --project toolshop-lab',
+    '  pnpm hornet-swarm env up --project juice-shop-lab',
+    '  pnpm hornet-swarm suite --project juice-shop-lab',
     '  pnpm hornet-swarm env up --project parabank-lab',
     '  pnpm hornet-swarm suite --project parabank-lab',
     '  pnpm hornet-swarm env up --project booker-lab',

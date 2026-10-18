@@ -25,7 +25,7 @@ Ask the client to create the test accounts and send the logins through the priva
 1. Save the signed letter as `~/.hornet-swarm/authorisations/docs/<client>-signed.pdf`.
 2. Copy `examples/authorisations/client-staging-contract.yaml` to `~/.hornet-swarm/authorisations/<id>.yaml`. Fill it in from the letter, and set `document.sha256` to the output of `shasum -a 256 <the pdf>`.
 3. Run `pnpm hornet-swarm auth check <id>`. It confirms the record is in force and that the PDF is the one it names.
-4. Write the project file: base address, allowed origins, sign-in selectors and success check, limits, and one user per test account. Start from `examples/projects/toolshop-lab/project.yaml`.
+4. Write the project file: base address, allowed origins, sign-in selectors and success check, limits, and one user per test account. Start from `examples/projects/juice-shop-lab/project.yaml`.
 5. Store the logins: `pnpm hornet-swarm creds serve`, or `pnpm hornet-swarm creds add <project> <label>`.
 6. Write the journeys. Assert what a working site does. Use `self.username` and `self.password`, `example.com` addresses, and test card or bank numbers the client gives you.
 7. `pnpm hornet-swarm env up --project <id>`, then `pnpm hornet-swarm sign-in --project <id>` to prove every account gets in before anything else runs.
@@ -36,10 +36,10 @@ Rehearse each new kind of site on the local labs first (`node scripts/setup-lab.
 
 - `suite` for the journeys. Run it several times across the agreed window, not once, so `stats` can give pass rates, p50 and p95 timings, retries, and failing streaks.
 - `suite --chaos default --seed <name>`, only if resilience testing is in `activities`. Run the same journeys without chaos too, and compare.
-- An `accessibility` step on each key page, if the client wants accessibility in scope. It needs no extra activity, because it only reads the page. Agree the standard first: WCAG 2.1 AA unless they name another. Say in the report that automated checks catch only some problems, and offer a keyboard and screen-reader pass for a full audit. `docs/accessibility-report-toolshop-lab.md` is the form.
+- An `accessibility` step on each key page, if the client wants accessibility in scope. It needs no extra activity, because it only reads the page. Agree the standard first: WCAG 2.1 AA unless they name another. Say in the report that automated checks catch only some problems, and offer a keyboard and screen-reader pass for a full audit. `docs/accessibility-report-juice-shop-lab.md` is the form.
 - For pages no journey covers yet, `pnpm hornet-swarm inspect --project <id> --user <label> --url <path>` maps the page, and the journey is drafted from the map.
 - Watch the first run. If the site answers 429 or 503, or anything looks wrong on their side, stop with `pnpm hornet-swarm kill --project <id>` and tell your contact.
-- Check every failure's screenshot before you call it a bug. Toolshop's planted bugs are good practice for this.
+- Check every failure's screenshot before you call it a bug. Rehearse that on the local labs first.
 
 ## 4. What to hand back
 
@@ -59,12 +59,12 @@ Write the report as a findings table, worst first. For each finding:
 
 | Field | Example |
 |---|---|
-| ID and title | F-03 · An order is paid but never confirmed |
-| Severity | High: customers pay and get no order |
-| Where | Checkout, payment step |
-| Steps to reproduce | From `analysis.md`: sign in, add a product, pay by bank transfer, press Confirm twice |
-| Expected and actual | Expected "Thanks for your order!"; the page stays on "Payment was successful" and the invoice request returns 500 |
-| How often | 5 of 5 runs, both accounts (from `stats`) |
+| ID and title | P-01 · Updating contact details breaks sign-in for a password with a symbol |
+| Severity | High: the customer is locked out |
+| Where | Update Contact Info |
+| Steps to reproduce | From `analysis.md`: sign up with a password that contains `#`, open Update Contact Info, change the phone number, press Update Profile, then sign in again |
+| Expected and actual | Expected the same password still signs in; the page says "The username and password could not be verified." |
+| How often | Every run (from `stats`) |
 | Evidence | Run id, screenshot name, network entry |
 
 Finish with what you could not check and why, such as an exclusion, a captcha, or a page the test accounts could not reach. Say plainly what passed.

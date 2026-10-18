@@ -7,7 +7,7 @@ It is for sites you own, or sites someone has authorised you in writing to test.
 ## What it does
 
 - **Signs every account in, then runs journeys.** A journey is a short YAML script: search, add to cart, check out, update a profile, book a room. Each account runs it in a fresh browser, so a fault that hits one kind of customer shows up as that customer.
-- **Quotes the page when something fails.** A failed step names what the customer would have seen ("page said: Sorry, this user has been locked out.", "it reads Serch", "closest text on the page: Reltded products") and saves a screenshot and the page's words.
+- **Quotes the page when something fails.** A failed step names what the customer would have seen ("page said: Your account is locked out.", "it reads Seach", "closest text on the page: Releated items") and saves a screenshot and the page's words.
 - **Tells the site's faults from its own.** A crashed browser, a deleted account, a rate limit, and a stalled API each get their own verdict, so a report never blames the site for the harness.
 - **Measures reliability over time.** `stats` gives pass rates, median and slowest timings, retries, and failing streaks per journey. Failed journeys keep running in later suites until they pass three times in a row.
 - **Checks accessibility inside the journeys.** An `accessibility` step checks the page against WCAG 2.1 AA with axe-core, including pages behind the login that most scanners never reach. Each problem is named in plain words, with how many places it occurs and an example.
@@ -24,19 +24,16 @@ It is for sites you own, or sites someone has authorised you in writing to test.
 
 ## Sample reports
 
-Every report below came from real runs. The labs run on one Mac, and the live site is a public demo built for testing practice. All accounts are made up. Findings use one severity scale, [docs/severity.md](docs/severity.md).
+Every report below came from real runs. The labs run on one Mac. All accounts are made up. Findings use one severity scale, [docs/severity.md](docs/severity.md).
 
 | Report | What it shows |
 |---|---|
-| [Toolshop lab](docs/sample-report-toolshop-lab.md) | An online shop with planted bugs: an order paid but never confirmed, cash on delivery that cannot be confirmed, swapped profile names, and more, each with the page's own words |
 | [ParaBank lab](docs/sample-report-parabank-lab.md) | An online bank: a profile update that breaks sign-in for passwords with a symbol, and checks that every balance adds up after transfers and bill payments |
-| [Live Toolshop](docs/live-report-toolshop.md) | The same shop on the public internet: an order fault that happens only some of the time, an API stall, Cloudflare's bot check, and a site that wipes its accounts about once an hour |
-| [Accessibility: Toolshop](docs/accessibility-report-toolshop-lab.md) | Nine pages, visitor and signed-in, against WCAG 2.1 AA: unnamed quantity controls, unlabelled search, missing image descriptions, and faint text |
-| [Chaos: Toolshop](docs/chaos-report-toolshop-lab.md), [Chaos: ParaBank](docs/chaos-report-parabank-lab.md) | How each site recovers when requests are lost or slow |
+| [Chaos: ParaBank](docs/chaos-report-parabank-lab.md) | How the bank recovers when requests are lost or slow |
 | [Juice Shop lab](docs/sample-report-juice-shop-lab.md) | A local shop: sign-up, search, basket, checkout, order history, a review, and a username. The feedback form is left out because it asks for a captcha |
 | [Accessibility: Juice Shop](docs/accessibility-report-juice-shop-lab.md) | The shop front, a product, sign-in, sign-up, and the signed-in basket, checkout, and profile, against WCAG 2.1 AA |
 | [Security: Juice Shop](docs/security-report-juice-shop-lab.md) | A light pass over the same customer journeys, on the security scale |
-| [Security: ParaBank](docs/security-report-parabank-lab.md), [Security: live Toolshop](docs/security-report-toolshop-live.md) | Security passes run by a separate swarm, on their own severity scale |
+| [Security: ParaBank](docs/security-report-parabank-lab.md) | A security pass run by a separate swarm, on its own severity scale |
 
 ## Quick start
 
@@ -60,13 +57,13 @@ pnpm hornet-swarm suite --project fixture \
   --journey examples/journeys/example-app/02-tenant-isolation.journey.yaml
 ```
 
-Or run it hard against a local lab, with made-up customers it creates itself. `setup-lab` starts Toolshop, Restful Booker, ParaBank, and OWASP Juice Shop, all on this Mac:
+Or run it hard against a local lab, with made-up customers it creates itself. `setup-lab` starts Restful Booker, ParaBank, and OWASP Juice Shop, all on this Mac:
 
 ```bash
 node scripts/setup-lab.mjs
-pnpm hornet-swarm env up --project toolshop-lab
-pnpm hornet-swarm suite --project toolshop-lab
-pnpm hornet-swarm stats --project toolshop-lab
+pnpm hornet-swarm env up --project juice-shop-lab
+pnpm hornet-swarm suite --project juice-shop-lab
+pnpm hornet-swarm stats --project juice-shop-lab
 ```
 
 Reports land in `~/.hornet-swarm/runs/<run id>/`: `summary.md` for a person, `analysis.json` for an agent.
