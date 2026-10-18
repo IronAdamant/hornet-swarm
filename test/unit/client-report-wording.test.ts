@@ -129,7 +129,7 @@ describe('a rendered client report', () => {
 });
 
 describe('the sample reports in docs', () => {
-  const samples = ['docs/sample-client-report-toolshop-live.md', 'docs/sample-client-report-toolshop-live.html', 'docs/sample-retest-diff-toolshop-live.md'];
+  const samples = ['docs/fixture-sample-client-report.md', 'docs/fixture-sample-client-report.html', 'docs/fixture-sample-retest-diff.md'];
 
   it('carry no claim and say WCAG 2.2 AA', () => {
     for (const path of samples) {

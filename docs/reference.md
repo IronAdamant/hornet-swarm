@@ -114,9 +114,9 @@ A macOS Shortcut can run `hornet-swarm kill` if you want a keyboard stop. Hornet
 
 ## Client reports and monthly re-tests
 
-A client report is the plain-English report a business owner reads: a summary, each issue with its severity, where it happens, why it matters to customers, and how to fix it, the results of sign-up, log in, add to cart, and checkout, the WCAG 2.2 A and AA criteria table, a scope and limits statement, and an evidence appendix. It is built from one saved run of a job. [docs/sample-client-report-toolshop-live.md](sample-client-report-toolshop-live.md) and [the re-test comparison](sample-retest-diff-toolshop-live.md) show the form.
+A client report is the plain-English report a business owner reads: a summary, each issue with its severity, where it happens, why it matters to customers, and how to fix it, the results of sign-up, log in, add to cart, and checkout, the WCAG 2.2 A and AA criteria table, a scope and limits statement, and an evidence appendix. It is built from one saved run of a job. [docs/fixture-sample-client-report.md](fixture-sample-client-report.md) and [the re-test comparison](fixture-sample-retest-diff.md) show the form.
 
-A job file names the client, the project, the journeys and which of the four each covers, the branding, and the re-test cadence. `examples/jobs/toolshop-live-monthly.job.yaml` is a worked example:
+A job file names the client, the project, the journeys and which of the four each covers, the branding, and the re-test cadence. `examples/jobs/fixture-shop-monthly.job.yaml` is a worked example:
 
 - `project` and `journeys`: the run uses the project's own authorisation. A job cannot widen it. A journey with `covers: sign_up`, `login`, `cart`, or `checkout` fills that row of the report; with no `login` journey, the sign-in check that starts every run stands in. Other journeys, such as the accessibility ones, are listed after.
 - `users`: the labels to run. All of the project's labels when left out.

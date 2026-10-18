@@ -31,7 +31,7 @@ Every report below came from real runs. The labs run on one Mac. All accounts ar
 |---|---|
 | [ParaBank lab](docs/sample-report-parabank-lab.md) | An online bank: a profile update that breaks sign-in for passwords with a symbol, and checks that every balance adds up after transfers and bill payments |
 | [Chaos: ParaBank](docs/chaos-report-parabank-lab.md) | How the bank recovers when requests are lost or slow |
-| [Client report](docs/sample-client-report-toolshop-live.md), [monthly re-test](docs/sample-retest-diff-toolshop-live.md) | The plain-English, white-label report a business owner reads, checked against WCAG 2.2 AA, and the next month's comparison. Generated from fixture runs. |
+| [Client report](docs/fixture-sample-client-report.md), [monthly re-test](docs/fixture-sample-retest-diff.md) | The plain-English, white-label report a business owner reads, checked against WCAG 2.2 AA, and the next month's comparison. Generated from fixture runs. |
 | [Juice Shop lab](docs/sample-report-juice-shop-lab.md) | A local shop: sign-up, search, basket, checkout, order history, a review, and a username. The feedback form is left out because it asks for a captcha |
 | [Accessibility: Juice Shop](docs/accessibility-report-juice-shop-lab.md) | The shop front, a product, sign-in, sign-up, and the signed-in basket, checkout, and profile, checked against WCAG 2.1 AA before the 2.2 upgrade |
 | [Security: Juice Shop](docs/security-report-juice-shop-lab.md) | A light pass over the same customer journeys, on the security scale |

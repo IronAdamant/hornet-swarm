@@ -112,11 +112,11 @@ Controller and CLI:
 
 Examples, docs, and scripts:
 
-- `examples/jobs/toolshop-live-monthly.job.yaml` and an example agency logo.
-- Accessibility journeys for `toolshop-live`.
+- `examples/jobs/fixture-shop-monthly.job.yaml` and an example agency logo.
+- Accessibility journeys for the labs that remain, including Juice Shop.
 - `examples/sample-runs/`: fixture runs.
 - `scripts/generate-sample-report.mjs`.
-- Sample outputs: `docs/sample-client-report-toolshop-live.{md,html}` and `docs/sample-retest-diff-toolshop-live.md`.
+- Sample outputs: `docs/fixture-sample-client-report.{md,html}` and `docs/fixture-sample-retest-diff.md`.
 - `docs/reference.md` has a new section, "Client reports and monthly re-tests", with a launchd example. README, `docs/agents.md`, `docs/client-engagement.md`, and `docs/severity.md` are updated, and `AGENTS.md` has four new rules in its table.
 - Every "WCAG 2.1 AA" in code, docs, and journey names now says 2.2. Journey names no longer say pages "meet" the standard.
 
@@ -130,16 +130,16 @@ Examples, docs, and scripts:
 
 ## Judgement calls for Aron
 
-- **The sample report comes from fixtures, not a live run.** Toolshop live needs Docker runners and stored logins, so I could not run it from this VM. The fixture runs in `examples/sample-runs/` are modelled on findings the harness actually recorded: the 15 October lab accessibility run and the 14 October live checkout fault. Three parts are illustrative and labelled as such:
+- **The sample report comes from fixtures, not a live run.** The fixture runs in `examples/sample-runs/` are shaped like saved runs so the real report code reads them. Three parts are illustrative and labelled as such:
   - the target-size finding
   - the filter lists being "fixed" in month two
   - which month the checkout failed in
 
-  The steps below regenerate it from a real live run.
+  `node scripts/generate-sample-report.mjs` rebuilds the sample from those fixtures. It does not fetch a site.
 - **The historical lab accessibility reports were left as recorded.** `docs/accessibility-report-*-lab.md` were 2.1 runs. Rewriting them to say 2.2 would misstate what was run, so each now opens with a dated note and the command to re-run at 2.2.
 - **Quoted page words are exempt from the wording guard** (see above). If you would rather refuse any report that contains those words anywhere, delete the quote stripping in `assertNoComplianceClaim`. Expect it to block reports for shops whose own copy uses them.
 - **Automated grades start from axe-core's impact** (critical → High). The sample job shows reviewer grades in `severity_overrides`, with reasons taken from the lab accessibility report.
-- **The Toolshop live job leaves sign-up out on purpose** ("not in scope"), so a shared practice site doesn't fill up with accounts. The report says so.
+- **The sample job leaves sign-up out on purpose** ("not in scope"), because sign-up creates a new account on every run. The report says so.
 - **No MCP tool for client reports yet.** Agents use the CLI, and only the owner should send a report. Adding `client_report` and `retest` MCP tools would be a small follow-up.
 - **File size.** `controller/src/suite.ts` (1,390 lines) and `runner/src/job.ts` (1,173) were already over 600 lines on the base branch. `job.ts` is smaller here because the axe code moved out. Splitting them was out of scope.
 
@@ -156,21 +156,15 @@ pnpm image                                   # the runner changed
 pnpm typecheck && pnpm lint && pnpm test     # doctor tests should pass with Docker up
 pnpm test:e2e                                # includes the updated accessibility e2e
 
-# Real 2.2 check on the local labs (made-up details only):
+# Real 2.2 check on a local lab (made-up details only):
 node scripts/setup-lab.mjs
-pnpm hornet-swarm env reset --project toolshop-lab
-pnpm hornet-swarm suite --project toolshop-lab --journey accessibility-visitor accessibility-customer
+pnpm hornet-swarm env reset --project juice-shop-lab
+pnpm hornet-swarm suite --project juice-shop-lab --journey accessibility-visitor accessibility-customer
 
-# Live Toolshop (public_practice authorisation toolshop-live-practice, valid to 2027-01-12):
-node scripts/setup-practice.mjs toolshop-live
-pnpm hornet-swarm env up --project toolshop-live
-pnpm hornet-swarm retest --job examples/jobs/toolshop-live-monthly.job.yaml
-#   -> prints the run id and the paths of client-report.md and client-report.html
-pnpm hornet-swarm retest --job examples/jobs/toolshop-live-monthly.job.yaml   # a second run gives retest-diff.md
-# Or rebuild a report for a run that already exists:
-pnpm hornet-swarm client-report --job examples/jobs/toolshop-live-monthly.job.yaml --run <run id>
+# Rebuild the fixture sample, which fetches nothing:
+node scripts/generate-sample-report.mjs
 ```
 
-To replace the fixture sample with a live one, copy that run's `client-report.md`, `client-report.html`, and `retest-diff.md` over the files in `docs/`. Then remove `docs/sample-*-toolshop-live.*` from `OUTPUTS` in `scripts/generate-sample-report.mjs`, or keep the fixture sample under a different name. Otherwise the sample check test will flag the difference.
+To replace the fixture sample with a run from a lab the owner has up, copy that run's `client-report.md`, `client-report.html`, and `retest-diff.md` over the files in `docs/` and point `OUTPUTS` in `scripts/generate-sample-report.mjs` at them, or keep the fixture sample under its current name. Otherwise the sample check test will flag the difference.
 
 For the monthly subscription, install the launchd agent from "Client reports and monthly re-tests" in `docs/reference.md`, pointed at the client's job file. Read each report before sending it.

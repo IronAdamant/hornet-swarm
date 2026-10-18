@@ -1,11 +1,9 @@
 // Fixture runs for the sample client report and re-test comparison in docs/. They are not real
-// runs: they are made by hand from findings the harness recorded on Toolshop (the lab accessibility
-// run of 15 October 2026 and the live run of 14 October 2026), shaped exactly like saved runs so the
-// real report code reads them. The target-size finding and the month-two changes (the filter lists
-// fixed, checkout failing the way it failed live) are illustrative. `scripts/generate-sample-report.mjs`
-// writes them to a private temporary home and builds the reports from them.
+// runs: they are shaped exactly like saved runs so the real report code reads them. The target-size
+// finding and the month-two changes (the filter lists fixed, checkout failing) are illustrative.
+// `scripts/generate-sample-report.mjs` writes them to a private temporary home and builds the reports.
 
-const SITE = 'https://with-bugs.practicesoftwaretesting.com';
+const SITE = 'http://127.0.0.1:4173';
 const STANDARD = 'wcag22aa';
 
 const CRITERIA = {
@@ -45,73 +43,73 @@ function signals({ focusable, dragging = [], passwordFields = 0 }) {
   };
 }
 
-const LOGO = violation('image-alt', 1, '<img src="assets/img/broken.png" class="navbar-brand">');
+const LOGO = violation('image-alt', 1, '<img src="assets/img/logo.png" class="site-logo">');
 
 /** Each page as a visitor or customer sees it in month one. */
 function monthOnePages() {
   return {
     catalogue: {
-      path: '/#/',
+      path: '/',
       violations: [
-        violation('image-alt', 11, '<img class="card-img-top" src="assets/img/products/pliers01.avif">'),
+        violation('image-alt', 11, '<img class="card-img-top" src="assets/img/products/widget-01.png">'),
         violation('color-contrast', 4, '<span data-test="out-of-stock" class="text-danger">Out of stock</span>'),
         violation('label', 1, '<input data-test="search-query" class="form-control">'),
         violation('select-name', 1, '<select data-test="sort" class="form-select">'),
         violation('list', 2, '<ul class="list-unstyled">'),
       ],
       review: [{ rule: 'color-contrast', criteria: ['1.4.3'], count: 1 }],
-      wcag22: signals({ focusable: 38, dragging: [{ target: '.ngx-slider-pointer-min', reason: 'a custom slider (role="slider")' }, { target: '.ngx-slider-pointer-max', reason: 'a custom slider (role="slider")' }] }),
+      wcag22: signals({ focusable: 38, dragging: [{ target: '.price-range-min', reason: 'a custom slider (role="slider")' }, { target: '.price-range-max', reason: 'a custom slider (role="slider")' }] }),
     },
     'product-page': {
-      path: '/#/product/1',
+      path: '/product/1',
       violations: [
         LOGO,
-        violation('color-contrast', 2, '<span class="badge rounded-pill bg-secondary">Pliers</span>'),
-        violation('button-name', 2, '<button id="btn-decrease-quantity" class="btn btn-link"><fa-icon icon="minus"></fa-icon></button>'),
+        violation('color-contrast', 2, '<span class="badge">Hardware</span>'),
+        violation('button-name', 2, '<button id="decrease-quantity" class="btn btn-link">-</button>'),
         violation('label', 1, '<input data-test="quantity" type="number" value="1">'),
-        violation('target-size', 2, '<button id="btn-increase-quantity" class="btn btn-link"><fa-icon icon="plus"></fa-icon></button>'),
+        violation('target-size', 2, '<button id="increase-quantity" class="btn btn-link">+</button>'),
       ],
       review: [{ rule: 'color-contrast', criteria: ['1.4.3'], count: 1 }],
       wcag22: signals({ focusable: 21 }),
     },
     'sign-in': {
-      path: '/#/auth/login',
-      violations: [LOGO, violation('color-contrast', 1, '<a class="footer-link">Privacy Policy</a>'), violation('button-name', 1, '<button class="btn btn-outline-secondary"><fa-icon icon="eye"></fa-icon></button>')],
+      path: '/login',
+      violations: [LOGO, violation('color-contrast', 1, '<a class="footer-link">Privacy Policy</a>'), violation('button-name', 1, '<button class="btn btn-outline-secondary"></button>')],
       review: [],
       wcag22: signals({ focusable: 12, passwordFields: 1 }),
     },
     'sign-up': {
-      path: '/#/auth/register',
-      violations: [LOGO, violation('color-contrast', 1, '<a class="footer-link">Privacy Policy</a>'), violation('button-name', 1, '<button class="btn btn-outline-secondary"><fa-icon icon="eye"></fa-icon></button>')],
+      path: '/register',
+      violations: [LOGO, violation('color-contrast', 1, '<a class="footer-link">Privacy Policy</a>'), violation('button-name', 1, '<button class="btn btn-outline-secondary"></button>')],
       review: [],
       wcag22: signals({ focusable: 19, passwordFields: 1 }),
     },
     contact: {
-      path: '/#/contact',
+      path: '/contact',
       violations: [LOGO, violation('color-contrast', 1, '<a class="footer-link">Privacy Policy</a>')],
       review: [],
       wcag22: signals({ focusable: 14 }),
     },
     'my-account': {
-      path: '/#/account',
+      path: '/account',
       violations: [LOGO, violation('color-contrast', 1, '<a class="footer-link">Privacy Policy</a>')],
       review: [],
       wcag22: signals({ focusable: 16 }),
     },
     profile: {
-      path: '/#/account/profile',
+      path: '/account/profile',
       violations: [LOGO, violation('color-contrast', 1, '<a class="footer-link">Privacy Policy</a>')],
       review: [],
       wcag22: signals({ focusable: 22, passwordFields: 3 }),
     },
     cart: {
-      path: '/#/checkout',
+      path: '/checkout',
       violations: [LOGO, violation('color-contrast', 2, '<li class="current"><a><span class="label">Cart</span></a></li>'), violation('label', 1, '<input data-test="product-quantity" type="number">')],
       review: [{ rule: 'color-contrast', criteria: ['1.4.3'], count: 1 }],
       wcag22: signals({ focusable: 17 }),
     },
     'checkout-signed-in': {
-      path: '/#/checkout',
+      path: '/checkout',
       violations: [LOGO, violation('color-contrast', 2, '<li class="current"><a><span class="label">Sign in</span></a></li>')],
       review: [],
       wcag22: signals({ focusable: 15 }),
@@ -190,7 +188,7 @@ function checkoutJourney(tick, orderConfirmed) {
       assertion: 'text_visible Thanks for your order!',
       error: 'text was not visible (closest text on the page: "Payment was successful")',
       screenshot: 'failed-step-25.png',
-      network_errors: [{ method: 'POST', url: 'https://api-with-bugs.practicesoftwaretesting.com/invoices', status: 500 }],
+      network_errors: [{ method: 'POST', url: 'http://127.0.0.1:4173/api/orders', status: 500 }],
     };
     steps.length = last + 1;
   }
@@ -226,4 +224,4 @@ export function accessibilityFile(result) {
 }
 
 /** The page words the runner saves for a failed step. */
-export const CHECKOUT_FAILURE_TEXT = ['Payment was successful', '', 'Form fields:', '[data-test="payment-method"]: Bank Transfer', '[data-test="account-name"]: Lab Tester', '', 'Disabled buttons:', ''].join('\n');
+export const CHECKOUT_FAILURE_TEXT = ['Payment was successful', '', 'Form fields:', '#payment-method: Bank Transfer', '#account-name: Ada Tester', '', 'Disabled buttons:', ''].join('\n');

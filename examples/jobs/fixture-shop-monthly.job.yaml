@@ -1,17 +1,17 @@
 # A saved client job: what `hornet-swarm retest --job <file>` runs every month, and how its
-# report is branded. Toolshop live is a public practice site, so this job is a worked example;
-# "Harbour Lane Digital" is a made-up agency standing in for a reseller.
+# report is branded. This job is a worked example against the offline fixture; "Harbour Lane
+# Digital" is a made-up agency standing in for a reseller, and "Northwind Fixtures" is a made-up client.
 #
-#   pnpm hornet-swarm retest --job examples/jobs/toolshop-live-monthly.job.yaml --if-due
+#   pnpm hornet-swarm retest --job examples/jobs/fixture-shop-monthly.job.yaml --if-due
 #
-# The run uses the project's own authorisation (toolshop-live-practice). A job cannot widen it.
+# The run uses the project's own authorisation. A job cannot widen it.
 version: 1
-id: toolshop-live-monthly
-project: toolshop-live
+id: fixture-shop-monthly
+project: fixture-shop
 client:
-  business_name: Practice Software Testing (Testsmith)
-  site_name: Toolshop (sprint 5 with deliberate bugs)
-  site_url: https://with-bugs.practicesoftwaretesting.com
+  business_name: Northwind Fixtures
+  site_name: Northwind Fixtures
+  site_url: http://127.0.0.1:4173
 standard: wcag22aa
 branding:
   use: agency
@@ -30,7 +30,7 @@ journeys:
   - { id: checkout, covers: checkout }
 not_in_scope:
   - covers: sign_up
-    reason: Toolshop live is shared with other testers. Signing up a new account every month would fill it with test accounts, so sign-up is checked on the local lab copy instead.
+    reason: Sign-up creates a new account on every run, so it is left out of the monthly check.
 # The automated grade is a starting point. A reviewer grades by what a customer can still do,
 # following docs/severity.md, and the reason is printed beside the issue.
 severity_overrides:
