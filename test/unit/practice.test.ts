@@ -49,22 +49,17 @@ describe('public practice authorisations', () => {
   });
 
   it('passes the production gate on its own statement, covers its domain, and never allows chaos', () => {
-    for (const [site, auth] of [
-      ['the-internet', 'the-internet-practice'],
-      ['saucedemo', 'saucedemo-practice'],
-    ] as const) {
-      const record = { ...authorisation(auth), valid_from: '2026-01-01', valid_until: '2099-01-01' };
-      const config = project(site);
-      expect(projectDomainsAuthorised(config, record).ok, site).toBe(true);
-      expect(productionGate(config, record, false).ok, site).toBe(true);
-      expect(practiceLimits(config, record).ok, site).toBe(true);
-      expect(chaosPermitted(record, config).ok, site).toBe(false);
-    }
+    const record = { ...authorisation('the-internet-practice'), valid_from: '2026-01-01', valid_until: '2099-01-01' };
+    const config = project('the-internet');
+    expect(projectDomainsAuthorised(config, record).ok).toBe(true);
+    expect(productionGate(config, record, false).ok).toBe(true);
+    expect(practiceLimits(config, record).ok).toBe(true);
+    expect(chaosPermitted(record, config).ok).toBe(false);
   });
 
   it('refuses a practice project that would push the shared site too hard', () => {
-    const record = authorisation('saucedemo-practice');
-    const config = project('saucedemo');
+    const record = authorisation('the-internet-practice');
+    const config = project('the-internet');
     const louder = { ...config, limits: { ...config.limits, max_requests_per_second_total: PUBLIC_PRACTICE_LIMITS.requestsPerSecondTotal + 1 } };
     expect(practiceLimits(louder, record)).toEqual({ ok: false, reason: 'public_practice_limit:max_requests_per_second_total<=10' });
     expect(practiceLimits({ ...config, runners: { ...config.runners, count: 7 } }, record).ok).toBe(false);
@@ -92,17 +87,15 @@ describe('example projects and journeys', () => {
   });
 
   it('keeps practice passwords out of the repo: journeys use handles and the setup script reads the site', () => {
-    for (const site of ['the-internet', 'saucedemo']) {
-      const config = project(site);
-      const dir = join(root, 'examples/projects', site, 'journeys');
-      for (const file of readdirSync(dir)) {
-        const steps = (readYaml(join(dir, file)) as { steps: Record<string, { selector?: string; value?: string; credential?: string }>[] }).steps;
-        for (const fill of steps.flatMap((step) => (step.fill ? [step.fill] : []))) {
-          if (fill.selector === config.auth.selectors.password) {
-            // A literal is only allowed as a deliberately wrong password.
-            if (fill.value !== undefined) expect(fill.value, `${site}/${file}`).toMatch(/not-the-password/);
-            else expect(fill.credential, `${site}/${file}`).toMatch(/^self\.|^qa-user-\d+\./);
-          }
+    const config = project('the-internet');
+    const dir = join(root, 'examples/projects', 'the-internet', 'journeys');
+    for (const file of readdirSync(dir)) {
+      const steps = (readYaml(join(dir, file)) as { steps: Record<string, { selector?: string; value?: string; credential?: string }>[] }).steps;
+      for (const fill of steps.flatMap((step) => (step.fill ? [step.fill] : []))) {
+        if (fill.selector === config.auth.selectors.password) {
+          // A literal is only allowed as a deliberately wrong password.
+          if (fill.value !== undefined) expect(fill.value, file).toMatch(/not-the-password/);
+          else expect(fill.credential, file).toMatch(/^self\.|^qa-user-\d+\./);
         }
       }
     }
@@ -139,30 +132,35 @@ describe('self credential handles', () => {
 });
 
 describe('setup-practice script', () => {
-  it('installs Sauce Demo into a fresh home with six stored logins and a ready swarm board', () => {
+  it('installs The Internet into a fresh home with two stored logins and a ready swarm board', () => {
     const placeholder = 'practice-placeholder-pass';
     const swarmHome = join(homedir(), '.hornet-swarm');
     const home = mkdtempSync(join(swarmHome, 'work-practice-'));
-    const out = execFileSync(process.execPath, [join(root, 'scripts/setup-practice.mjs'), 'saucedemo', '--no-statement'], {
+    const out = execFileSync(process.execPath, [join(root, 'scripts/setup-practice.mjs'), 'the-internet', '--no-statement'], {
       cwd: root,
       encoding: 'utf8',
       env: { ...process.env, AEGIS_HOME: home, HORNET_PRACTICE_PASSWORD: placeholder },
     });
-    expect(out).toContain('Installed saucedemo with 6 logins.');
+    expect(out).toContain('Installed the-internet with 2 logins.');
     expect(out).not.toContain(placeholder);
-    expect(listLabels('saucedemo', home).sort()).toEqual(['qa-user-1', 'qa-user-2', 'qa-user-3', 'qa-user-4', 'qa-user-5', 'qa-user-6']);
-    expect(listFields('saucedemo', 'qa-user-6', home).sort()).toEqual(['password', 'username']);
-    const store = readFileSync(join(home, 'projects/saucedemo/secrets.sops.yaml'), 'utf8');
+    expect(listLabels('the-internet', home).sort()).toEqual(['qa-user-1', 'qa-user-2']);
+    expect(listFields('the-internet', 'qa-user-2', home).sort()).toEqual(['password', 'username']);
+    const store = readFileSync(join(home, 'projects/the-internet/secrets.sops.yaml'), 'utf8');
     expect(store).not.toContain(placeholder);
-    expect(store).not.toContain('standard_user');
-    const board = JSON.parse(readFileSync(join(home, 'projects/saucedemo/swarm.json'), 'utf8')) as { ready: boolean; website: string; agents: { label: string; rules: string }[] };
+    expect(store).not.toContain('tomsmith');
+    const board = JSON.parse(readFileSync(join(home, 'projects/the-internet/swarm.json'), 'utf8')) as { ready: boolean; website: string; agents: { label: string; rules: string }[] };
     expect(board.ready).toBe(true);
-    expect(board.website).toBe('https://www.saucedemo.com');
-    expect(board.agents).toHaveLength(6);
+    expect(board.website).toBe('https://the-internet.herokuapp.com');
+    expect(board.agents).toHaveLength(2);
     expect(board.agents.every((agent) => agent.rules.includes('Never ask for, type, or repeat a password.'))).toBe(true);
-    const auth = authorisationSchema.parse(readYaml(join(home, 'authorisations/saucedemo-practice.yaml')));
+    const auth = authorisationSchema.parse(readYaml(join(home, 'authorisations/the-internet-practice.yaml')));
     expect(Date.parse(auth.valid_until)).toBeGreaterThan(Date.now());
-    expect(readdirSync(join(home, 'projects/saucedemo/journeys')).sort()).toEqual(['checkout.journey.yaml', 'inventory.journey.yaml']);
+    expect(readdirSync(join(home, 'projects/the-internet/journeys')).sort()).toEqual([
+      'dynamic-loading.journey.yaml',
+      'secure-area.journey.yaml',
+      'status-codes.journey.yaml',
+      'wrong-password.journey.yaml',
+    ]);
   });
 });
 
@@ -174,8 +172,8 @@ describe('what the first live runs taught the reports', () => {
   });
 
   it('names the one account that was refused instead of saying sign-in did not work', () => {
-    const text = summaryMarkdown([phase('qa-user-1', 'pass'), phase('qa-user-6', 'fail', 'url did not match (page said: "Epic sadface: Sorry, this user has been locked out.")')], 'failed');
-    expect(text).toContain('Sign-in failed for qa-user-6 (1 of 2 accounts). The other accounts signed in.');
+    const text = summaryMarkdown([phase('qa-user-1', 'pass'), phase('qa-user-2', 'fail', 'url did not match (page said: "Your account is locked out.")')], 'failed');
+    expect(text).toContain('Sign-in failed for qa-user-2 (1 of 2 accounts). The other accounts signed in.');
     expect(text).toContain('locked out');
     expect(text).not.toContain('Sign-in did not work');
   });
@@ -194,6 +192,6 @@ describe('what the first live runs taught the reports', () => {
     expect(browserLaunchOptions().args).not.toContain('--disable-http2');
     expect(browserLaunchOptions({ http2: false }).args).toContain('--disable-http2');
     expect(project('the-internet').runners.http2).toBe(false);
-    expect(project('saucedemo').runners.http2).toBe(true);
+    expect(project('juice-shop-lab').runners.http2).toBe(true);
   });
 });

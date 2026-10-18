@@ -7,7 +7,7 @@ This is for the parent agent and its sub-agents: a Grok Build session, Grok Bot,
 The owner does these. An agent does not.
 
 1. An authorisation file covers the site: `owner`, `contract`, or `public_practice`.
-2. The project exists with its logins stored. For the practice sites: `node scripts/setup-practice.mjs the-internet` or `saucedemo`.
+2. The project exists with its logins stored. For the practice site: `node scripts/setup-practice.mjs the-internet`.
 3. `hornet-swarm env up --project <id>` has started one healthy runner per label.
 
 Connect to the MCP server: `node packages/mcp-server/dist/main.js` over stdio. Restart it after every `pnpm build`. A server whose code was rebuilt under it answers every tool with "Restart the MCP server" and runs nothing, and it refuses to start when the source is newer than the build. In Claude Code, `.mcp.json` in this repo registers it as `hornet-swarm`, and `.claude/agents/hornet-swarm-tester.md` defines a sub-agent for one label.
@@ -60,7 +60,7 @@ steps:
   - fill: { selector: "#password", credential: "self.password" }
   - click: { selector: "button[type='submit']" }
   - wait: { for: navigation }
-  - fill: { selector: "#q", value: "backpack" }
+  - fill: { selector: "#q", value: "widget" }
   - click: { selector: "role=button[name='Search']" }
   - assert: { type: text_visible, value: "results" }
   - screenshot: { name: "search" }
@@ -85,12 +85,11 @@ steps:
 
 ## Practice sites
 
-The Internet and Sauce Demo are public sites built for test-automation practice. Other people use them too.
+The Internet is a public site built for test-automation practice. Other people use it too.
 
-- Keep the project's limits. A `public_practice` authorisation refuses more than 10 requests a second in total, 5 per runner, 6 runners at once, chaos, and access-control probing. Each runner gets an equal share of the total, so six Sauce Demo labels run at about 1.7 requests a second each.
+- Keep the project's limits. A `public_practice` authorisation refuses more than 10 requests a second in total, 5 per runner, 6 runners at once, chaos, and access-control probing. Each runner gets an equal share of the total.
 - Read `exclusions` in `get_swarm`. They are the owner's written limits, such as never typing a real card number. Follow them as you would the label's rules.
-- Sauce Demo's accounts misbehave on purpose. `problem_user`, `error_user`, and `locked_out_user` are expected to fail somewhere. The useful result is the exact step and what the page did.
-- Never type real personal details into a checkout. The journeys use placeholders.
+- Never type real personal details. The journeys use placeholders.
 
 ## Local labs
 

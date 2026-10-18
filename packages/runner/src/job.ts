@@ -359,7 +359,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
           break;
         }
         const raw = error instanceof Error ? error.message : String(error);
-        // The page's own words tell an agent why, such as "this user has been locked out", so the
+        // The page's own words tell an agent why, such as an account the site refused, so the
         // error quotes them instead of leaving the agent to read a screenshot.
         const clues = await failureClues(page, step, contextTemplate);
         const message = redactor.redact(clues.length > 0 ? raw.replace(/^([^\n]*)/, `$1 (${clues.join('; ')})`) : raw);

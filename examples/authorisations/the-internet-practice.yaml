@@ -3,7 +3,7 @@
 # today plus 90 days, and saves a dated copy of the statement page as the document.
 id: the-internet-practice
 basis: public_practice
-client: The Internet (Sauce Labs, originally Elemental Selenium)
+client: The Internet (originally Elemental Selenium)
 granted_to: Anyone practising test automation
 public_statement:
   url: https://github.com/saucelabs/the-internet

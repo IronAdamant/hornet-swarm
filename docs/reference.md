@@ -57,20 +57,19 @@ Runs older than `results_retention_days` in `~/.hornet-swarm/config.yaml` (30 by
 
 ## Practice sites
 
-Two public sites exist for test-automation practice, and the repo ships projects for both:
+One public site ships as a practice project:
 
 - **The Internet** (`the-internet.herokuapp.com`): one published login, a secure area, a delayed page, and status codes. Two labels share the login.
-- **Sauce Demo** (`www.saucedemo.com`): six published accounts that each misbehave on purpose, one label each. `standard_user` works, `problem_user` and `error_user` break checkout, `performance_glitch_user` is slow, `visual_user` looks different, and `locked_out_user` is refused.
 
 ```bash
 pnpm build
-node scripts/setup-practice.mjs the-internet     # or saucedemo
+node scripts/setup-practice.mjs the-internet
 pnpm hornet-swarm env up --project the-internet
 pnpm hornet-swarm suite --project the-internet
 pnpm hornet-swarm stats --project the-internet
 ```
 
-The script installs a `public_practice` authorisation, the project, its journeys, and a swarm board with a personality and rules for each label, and it stores the published logins in the encrypted store. It reads each site's password from that site's own login page at install time, so no password is kept in this repo. If the page has changed, it asks for the password, or reads `HORNET_PRACTICE_PASSWORD`. It saves a dated copy of the page where each site says it is for practice as the authorisation's document. A `public_practice` authorisation needs that statement, refuses chaos and access-control probing, and caps a run at 10 requests a second in total, 5 per runner, and 6 runners working at once. Other people use these sites too.
+The script installs a `public_practice` authorisation, the project, its journeys, and a swarm board with a personality and rules for each label, and it stores the published login in the encrypted store. It reads the site's password from that site's own login page at install time, so no password is kept in this repo. If the page has changed, it asks for the password, or reads `HORNET_PRACTICE_PASSWORD`. It saves a dated copy of the page where the site says it is for practice as the authorisation's document. A `public_practice` authorisation needs that statement, refuses chaos and access-control probing, and caps a run at 10 requests a second in total, 5 per runner, and 6 runners working at once. Other people use this site too.
 
 The first live run, on 12 October 2026, found that The Internet's HTTP/2 endpoint stalls when several files load at once over one connection, about one page load in three. `curl --http2` reproduces it with no Hornet Swarm involved. Its project sets `runners.http2: false` so the journeys run over HTTP/1.1. Set it to `true` to measure the stall.
 
@@ -165,7 +164,7 @@ A page is checked the way a person would see it.
 - `wait: { for: navigation }` waits for the page to navigate after the last action, including a single-page app that changes the URL with `history.pushState`. A login that renders in place without changing the URL ends the wait once the network has been quiet for half a second.
 - `url_contains` and `text_visible` retry for up to 10 seconds, like `selector_visible`. `access_denied` retries for up to 5 seconds. `selector_absent` waits for the network to go quiet (up to 3 seconds) first, so content that renders late is still seen.
 - `http_status` and `access_denied` read the status of the last page load, whether a `navigate` step or a click caused it.
-- A failed step quotes the page in brackets: its message or toast (`page said: "Sorry, this user has been locked out."`), whether the control was disabled or what it reads (`it reads "Seach"`), the closest words to an expected text (`closest text on the page: "Releated items"`), and other error lines (`page also shows: "Error: missing checkout total"`). It also saves `failed-step-<n>.png` and `failed-step-<n>.txt`.
+- A failed step quotes the page in brackets: its message or toast (`page said: "Your account is locked out."`), whether the control was disabled or what it reads (`it reads "Seach"`), the closest words to an expected text (`closest text on the page: "Releated items"`), and other error lines (`page also shows: "Error: missing checkout total"`). It also saves `failed-step-<n>.png` and `failed-step-<n>.txt`.
 - Each `.txt` beside a screenshot holds the page's visible words, then `Form fields:` with what each field holds and `Disabled buttons:`. Dropdown options are left out of the visible words, so a choice such as "Error 12: Topic not found" is not mistaken for a message; the field line shows the option that was chosen. A page's text alone leaves out field values. Password fields are never read. The parent packet lists these files in `page_text_paths`.
 - `gate_passed` only means every account signed in. A summary for a failed run says so.
 - The MCP server refuses to start when the source is newer than the build, and once the code is rebuilt under it, every tool asks for a restart and runs nothing.
@@ -203,4 +202,4 @@ After each job the files are moved into the run folder, so nothing unredacted st
 
 ## Results on 14 October 2026
 
-Live runs on the two practice sites gave the results each site is built to give. The Internet: both accounts signed in and all four journeys passed. Sauce Demo: `standard_user`, `performance_glitch_user` (8.4 s sign-ins), and `visual_user` passed checkout; `problem_user` failed at step 15 with the page saying "Error: Last Name is required"; `error_user` failed at step 17 because the order never completed; and `locked_out_user` was refused with "Sorry, this user has been locked out." A scan of every saved file, including traces, found no stored login in any encoding.
+A live run on The Internet gave the result that site is built to give. Both accounts signed in and all four journeys passed. A scan of every saved file, including traces, found no stored login in any encoding.

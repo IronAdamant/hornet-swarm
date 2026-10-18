@@ -2,8 +2,7 @@
 // Installs a public practice site as a Hornet Swarm project. Run `pnpm build` first.
 //
 //   node scripts/setup-practice.mjs the-internet
-//   node scripts/setup-practice.mjs saucedemo
-//   node scripts/setup-practice.mjs saucedemo --no-statement   (skip saving the statement page)
+//   node scripts/setup-practice.mjs the-internet --no-statement   (skip saving the statement page)
 //
 // It copies the authorisation, the project, and its journeys into ~/.hornet-swarm, stores the
 // login each site publishes on its own login page in the encrypted store, saves a dated copy of
@@ -46,52 +45,6 @@ const SITES = {
       'qa-user-2': {
         personality: 'An impatient visitor who clicks as soon as something appears, to catch timing problems.',
         rules: `${SHARED_RULES} Keep the run gentle: this is a shared free host.`,
-      },
-    },
-  },
-  saucedemo: {
-    project: 'saucedemo',
-    authorisation: 'saucedemo-practice',
-    // The login page lists "Accepted usernames are:" and "Password for all users:". The page is
-    // rendered by script, so the password is read from the list in its bundle.
-    usernames: {
-      'qa-user-1': 'standard_user',
-      'qa-user-2': 'problem_user',
-      'qa-user-3': 'performance_glitch_user',
-      'qa-user-4': 'error_user',
-      'qa-user-5': 'visual_user',
-      'qa-user-6': 'locked_out_user',
-    },
-    async publishedPassword() {
-      const page = await fetchText('https://www.saucedemo.com/');
-      const bundle = page.match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
-      if (!bundle) return undefined;
-      return (await fetchText(`https://www.saucedemo.com${bundle}`)).match(/\[`standard_user`[^\]]*\],\w+=`([^`]+)`/)?.[1];
-    },
-    agents: {
-      'qa-user-1': {
-        personality: 'A careful first-time shopper. This is the account that should work, so it is the control for the others.',
-        rules: SHARED_RULES,
-      },
-      'qa-user-2': {
-        personality: 'A shopper who notices when pictures or form fields look wrong.',
-        rules: `${SHARED_RULES} This account is built with broken images and a broken checkout form. Say exactly which step breaks.`,
-      },
-      'qa-user-3': {
-        personality: 'A shopper on a slow connection who waits patiently.',
-        rules: `${SHARED_RULES} This account is built to be slow. Report timings. Slowness alone is not a broken page.`,
-      },
-      'qa-user-4': {
-        personality: 'A shopper who presses every button once and expects it to work.',
-        rules: `${SHARED_RULES} This account is built so some actions fail. Name the action and what the page did.`,
-      },
-      'qa-user-5': {
-        personality: 'A shopper with a sharp eye for layout and alignment.',
-        rules: `${SHARED_RULES} This account is built with visual differences. Compare screenshots with qa-user-1.`,
-      },
-      'qa-user-6': {
-        personality: 'A returning customer whose account has been locked.',
-        rules: `${SHARED_RULES} This account is built to be refused at sign-in. A refused sign-in is the expected result.`,
       },
     },
   },

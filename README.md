@@ -7,7 +7,7 @@ It is for sites you own, or sites someone has authorised you in writing to test.
 ## What it does
 
 - **Signs every account in, then runs journeys.** A journey is a short YAML script: search, add to cart, check out, update a profile, book a room. Each account runs it in a fresh browser, so a fault that hits one kind of customer shows up as that customer.
-- **Quotes the page when something fails.** A failed step names what the customer would have seen ("page said: Sorry, this user has been locked out.", "it reads Seach", "closest text on the page: Releated items") and saves a screenshot and the page's words.
+- **Quotes the page when something fails.** A failed step names what the customer would have seen ("page said: Your account is locked out.", "it reads Seach", "closest text on the page: Releated items") and saves a screenshot and the page's words.
 - **Tells the site's faults from its own.** A crashed browser, a deleted account, a rate limit, and a stalled API each get their own verdict, so a report never blames the site for the harness.
 - **Measures reliability over time.** `stats` gives pass rates, median and slowest timings, retries, and failing streaks per journey. Failed journeys keep running in later suites until they pass three times in a row.
 - **Checks accessibility inside the journeys.** An `accessibility` step checks the page against WCAG 2.1 AA with axe-core, including pages behind the login that most scanners never reach. Each problem is named in plain words, with how many places it occurs and an example.
