@@ -30,7 +30,7 @@ function runResult(runId: string, checkoutStatus: 'pass' | 'fail', extra: Record
   return {
     schema_version: '1',
     run_id: runId,
-    project: 'toolshop',
+    project: 'fixture-shop',
     started_at: NOW,
     finished_at: NOW,
     status: checkoutStatus === 'pass' ? 'passed' : 'failed',
@@ -39,7 +39,7 @@ function runResult(runId: string, checkoutStatus: 'pass' | 'fail', extra: Record
     totals: { users: 1, journeys: 1, steps: 5, passed: checkoutStatus === 'pass' ? 5 : 4, failed: checkoutStatus === 'pass' ? 0 : 1, skipped: 0 },
     users: [{ label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 10 }, journeys: [{ id: 'checkout', status: checkoutStatus, duration_ms: 50, steps }] }],
     environment: 'test',
-    authorisation_id: 'toolshop-owner',
+    authorisation_id: 'fixture-owner',
     redaction: 'pass',
   };
 }
@@ -55,7 +55,7 @@ describe('report findings must point at saved evidence', () => {
     const page = await browser.newPage();
     await page.setContent(`<h1>Checkout</h1>
       <label for="pay">Payment method</label>
-      <select id="pay"><option>Bank Transfer</option><option>Cash on Delivery</option><option>Errror 304 - Missing Payment Gateway</option></select>
+      <select id="pay"><option>Bank Transfer</option><option>Pay on pickup</option><option>Errror 12 - Missing payment total</option></select>
       <button disabled>Confirm</button>`);
     snapshot = await pageSnapshotText(page);
     await browser.close();
@@ -76,7 +76,7 @@ describe('report findings must point at saved evidence', () => {
   afterAll(() => rmSync(home, { recursive: true, force: true }));
 
   const finding = (evidence: unknown[], extra: Record<string, unknown> = {}) => ({
-    project: 'toolshop',
+    project: 'fixture-shop',
     findings: [{ id: 'F-01', severity: 'High', title: 'Checkout cannot be confirmed', claim: 'Confirm stays disabled after choosing Bank Transfer.', evidence, ...extra }],
   });
   const failedStep = { kind: 'step', run: failedRun, label: 'qa-user-1', journey: 'checkout', step: 4, status: 'fail' };
@@ -104,8 +104,8 @@ describe('report findings must point at saved evidence', () => {
   });
 
   it('refuses a quote of a dropdown option the page never showed as a message (6550f54)', () => {
-    expect(snapshot).not.toContain('Errror 304');
-    const result = checkFindings(finding([failedStep, { kind: 'quote', run: failedRun, label: 'qa-user-1', journey: 'checkout', step: 4, text: 'Errror 304 - Missing Payment Gateway' }]), { home });
+    expect(snapshot).not.toContain('Errror 12');
+    const result = checkFindings(finding([failedStep, { kind: 'quote', run: failedRun, label: 'qa-user-1', journey: 'checkout', step: 4, text: 'Errror 12 - Missing payment total' }]), { home });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.problems[0]).toContain('saved no page text or error');
   });
@@ -126,7 +126,7 @@ describe('report findings must point at saved evidence', () => {
     );
     expect(result).toEqual({
       ok: false,
-      problems: ['F-01: run_20261015-110000_cccccc is not a saved run of toolshop.', `F-01: ${failedRun} has no file qa-user-1/checkout/trace.zip.`],
+      problems: ['F-01: run_20261015-110000_cccccc is not a saved run of fixture-shop.', `F-01: ${failedRun} has no file qa-user-1/checkout/trace.zip.`],
     });
     expect(checkFindings(finding([{ kind: 'file', run: failedRun, path: '../../age.key' }]), { home }).ok).toBe(false);
     symlinkSync('/etc/passwd', join(home, 'runs', failedRun, 'qa-user-1', 'checkout', 'escape.txt'));

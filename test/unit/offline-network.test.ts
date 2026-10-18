@@ -13,8 +13,10 @@ const root = join(import.meta.dirname, '../..');
 describe('the offline network guard', () => {
   it('refuses a live host before connecting, through fetch, https, and raw sockets', async () => {
     // eslint-disable-next-line hornet-swarm/no-live-hosts-in-tests -- proves the runtime guard refuses it
-    const fetched = await fetch('https://www.saucedemo.com/').catch((error: Error) => error);
-    expect((fetched as Error & { cause?: Error }).cause?.name).toBe('LiveHostError');
+    const fetched = await fetch('https://example.com/').catch((error: Error) => error);
+    const cause = (fetched as Error & { cause?: Error }).cause;
+    expect(cause?.name).toBe('LiveHostError');
+    expect(cause?.message).toContain('example.com');
     expect(() => httpsRequest({ host: 'www.google.com', path: '/' }).end()).toThrow(/A test tried to reach www.google.com/);
     expect(() => connect(443, 'the-internet.herokuapp.com')).toThrow(/A test tried to reach the-internet.herokuapp.com/);
   });
@@ -31,21 +33,21 @@ describe('the offline network guard', () => {
     }
   });
 
-  it('keeps a script a test starts offline: setup-practice without its offline switches cannot reach Sauce Demo', () => {
+  it('keeps a script a test starts offline: setup-practice without its offline switches cannot reach The Internet', () => {
     const home = mkdtempSync(join(tmpdir(), 'hornet-offline-'));
     const env = { ...process.env, AEGIS_HOME: home };
     delete env.HORNET_PRACTICE_PASSWORD;
-    const run = spawnSync(process.execPath, [join(root, 'scripts/setup-practice.mjs'), 'saucedemo'], { cwd: root, env, encoding: 'utf8', input: '' });
-    expect(run.stderr).toContain('A test tried to reach www.saucedemo.com');
+    const run = spawnSync(process.execPath, [join(root, 'scripts/setup-practice.mjs'), 'the-internet'], { cwd: root, env, encoding: 'utf8', input: '' });
+    expect(run.stderr).toContain('A test tried to reach the-internet.herokuapp.com');
     expect(run.status).toBe(5);
-    expect(run.stdout).not.toContain('Installed saucedemo');
+    expect(run.stdout).not.toContain('Installed the-internet');
   });
 
   it('treats only this machine, local containers, and reserved names as offline', () => {
     for (const host of ['127.0.0.1', 'localhost', '[::1]', 'host.docker.internal', 'shop.test', 'off-list.invalid', 'evil.example', 'hornet-swarm-proxy-shop', '172.18.0.2']) {
       expect(isOfflineHost(host), host).toBe(true);
     }
-    for (const host of ['example.com', 'www.saucedemo.com', 'the-internet.herokuapp.com', '8.8.8.8', '172.32.0.1', 'localhost.evil.com']) {
+    for (const host of ['example.com', 'www.google.com', 'the-internet.herokuapp.com', '8.8.8.8', '172.32.0.1', 'localhost.evil.com']) {
       expect(isOfflineHost(host), host).toBe(false);
     }
   });

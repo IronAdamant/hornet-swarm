@@ -54,12 +54,12 @@ tester.run('no-live-hosts-in-tests', rules['no-live-hosts-in-tests'], {
     "const blocked = ['https://www.google.com/'];",
   ],
   invalid: [
-    { code: "await fetch('https://www.saucedemo.com/');", errors: [{ messageId: 'live' }] },
+    { code: "await fetch('https://www.google.com/');", errors: [{ messageId: 'live' }] },
     { code: "await page.goto('https://the-internet.herokuapp.com/login');", errors: [{ messageId: 'live' }] },
     { code: "const site = 'https://example.com'; await fetch(site + '/x');", errors: [{ messageId: 'live' }] },
     { code: "await request({ url: 'https://api.github.com/' });", errors: [{ messageId: 'live' }] },
     { code: "connect({ host: 'smtp.gmail.com', port: 25 });", errors: [{ messageId: 'live' }] },
-    { code: "execSync('hornet-swarm inspect --url https://www.saucedemo.com');", errors: [{ messageId: 'live' }] },
+    { code: "execSync('hornet-swarm inspect --url https://www.google.com');", errors: [{ messageId: 'live' }] },
     { code: "new WebSocket('wss://stream.binance.com/ws');", errors: [{ messageId: 'live' }] },
   ],
 });
