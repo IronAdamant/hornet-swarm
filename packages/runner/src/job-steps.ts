@@ -46,7 +46,7 @@ export async function runStep(
   if ('fill' in step) {
     const fillSelector = renderTemplate(step.fill.selector, template);
     selectors.push(fillSelector);
-    refuseCaptchaFrame(step.fill.frame);
+    await assertFrameFillable(page, step.fill.frame, job);
     if (originAllowed(page.url(), job.passiveOrigins ?? [])) throw new Error('blocked_by_allowlist: passive origin');
     let text = '';
     if (step.fill.value !== undefined) text = renderTemplate(step.fill.value, template);
@@ -200,6 +200,9 @@ export async function runStep(
   if ('storefront_password' in step) {
     const password = secrets.get(resolveSelf(step.storefront_password.credential, job.label));
     if (!password) throw new Error('missing credential handle');
+    if (!sameOrigin(page.url(), job.baseUrl) || originAllowed(page.url(), job.passiveOrigins ?? [])) {
+      throw new Error('blocked_by_allowlist: a storefront password is typed only on the project base origin');
+    }
     selectors.push('form[action*="/password"] input[type="password"]');
     const field = page.locator('form[action*="/password"] input[type="password"]').first();
     await field.fill(password, { timeout: 15_000 });
@@ -207,8 +210,12 @@ export async function runStep(
     return { statusCode: 0 };
   }
   if ('inbox' in step) {
-    refuseCaptchaFrame(step.inbox.frame);
+    await assertFrameFillable(page, step.inbox.frame, job);
+    if (originAllowed(page.url(), job.passiveOrigins ?? [])) throw new Error('blocked_by_allowlist: passive origin');
     const code = readInboxCode(job.inboxDir || process.env.AEGIS_INBOX_DIR || '', step.inbox.mailbox);
+    // The controller never sees this code, so only the runner can mask it, and the trace is dropped.
+    secrets.set(`${INBOX_CODE_HANDLE}_${stepIndex}`, code);
+    redactor.register(INBOX_CODE_HANDLE, code);
     const inboxSelector = renderTemplate(step.inbox.selector, template);
     selectors.push(inboxSelector);
     await locate(page, inboxSelector, step.inbox.frame).fill(code, { timeout: 15_000 });
@@ -217,8 +224,25 @@ export async function runStep(
   return { statusCode: 0 };
 }
 
+export const INBOX_CODE_HANDLE = 'inbox_code';
+
 const CAPTCHA_FRAME = /recaptcha|hcaptcha|turnstile|challenges\.cloudflare|arkoselabs|funcaptcha/i;
 
-function refuseCaptchaFrame(frame: string | undefined): void {
-  if (frame && CAPTCHA_FRAME.test(frame)) throw new Error('a journey does not fill a captcha frame');
+/** A selector can name a captcha frame without saying so, so the frame's own address is checked too. */
+async function assertFrameFillable(page: Page, frame: string | undefined, job: JobRequest): Promise<void> {
+  if (!frame) return;
+  if (CAPTCHA_FRAME.test(frame)) throw new Error('a journey does not fill a captcha frame');
+  const element = await page.locator(frame).first().elementHandle({ timeout: 15_000 });
+  const url = (await element?.contentFrame())?.url() ?? '';
+  if (CAPTCHA_FRAME.test(url)) throw new Error('a journey does not fill a captcha frame');
+  if (!originAllowed(url, job.allowOrigins)) throw new Error('blocked_by_allowlist: frame origin');
+  if (originAllowed(url, job.passiveOrigins ?? [])) throw new Error('blocked_by_allowlist: passive origin');
+}
+
+function sameOrigin(url: string, base: string): boolean {
+  try {
+    return new URL(url).origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
 }
