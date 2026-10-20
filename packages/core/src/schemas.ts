@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { inboxStep, storefrontPasswordStep } from './extra-steps.js';
 import { brandingSchema } from './client-job-schema.js';
 import { redundantEntrySchema, wcag22PageSignalsSchema } from './wcag22-page-signals.js';
 
@@ -218,6 +219,8 @@ const fillStep = z
         value: z.string().optional(),
         credential: z.string().optional(),
         totp: z.string().optional(),
+        /** A frame selector, for a card field inside an embedded payment frame. Never a captcha frame. */
+        frame: z.string().optional(),
       })
       .strict(),
   })
@@ -310,6 +313,8 @@ export const stepSchema = z.union([
   screenshotStep,
   accessibilityStep,
   inspectStep,
+  storefrontPasswordStep,
+  inboxStep,
 ]);
 
 export type Step = z.infer<typeof stepSchema>;

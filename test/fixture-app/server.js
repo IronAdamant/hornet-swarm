@@ -3,7 +3,7 @@ import { authenticator } from 'otplib';
 
 const users = new Map();
 const sessions = new Map();
-const state = { loginPosts: 0, failFlag: false, flakyLeft: 0, layout: 'steady', delayMs: 0, otpFilled: false, pingCount: 0, offlistPages: 0, burstPages: 0, smsPosts: 0, assetHits: 0, busyHits: 0, spaLogins: 0 };
+const state = { loginPosts: 0, failFlag: false, flakyLeft: 0, layout: 'steady', delayMs: 0, otpFilled: false, pingCount: 0, offlistPages: 0, burstPages: 0, smsPosts: 0, assetHits: 0, busyHits: 0, spaLogins: 0, storePassword: '', emailCode: '' };
 
 export function createFixture() {
   const app = express();
@@ -28,6 +28,8 @@ export function createFixture() {
     state.assetHits = 0;
     state.busyHits = 0;
     state.spaLogins = 0;
+    state.storePassword = String(req.body.storePassword ?? '');
+    state.emailCode = String(req.body.emailCode ?? '');
     state.failFlag = Boolean(req.body.failFlag);
     state.flakyLeft = Number(req.body.flakyLeft ?? 0);
     state.layout = req.body.layout ?? 'steady';
@@ -97,6 +99,14 @@ export function createFixture() {
 
   app.get('/captcha', (_req, res) => {
     res.type('html').send(page('Check', '<iframe src="/captcha-frame" title="recaptcha"></iframe><p>verify you are human</p>'));
+  });
+
+  app.get('/hidden-captcha', (_req, res) => {
+    res.type('html').send(page('Check', '<iframe src="/recaptcha/api2/anchor" title="Widget containing checkbox"></iframe>'));
+  });
+
+  app.get('/recaptcha/api2/anchor', (_req, res) => {
+    res.type('html').send('<!doctype html><input name="answer">');
   });
 
   app.get('/captcha-frame', (_req, res) => {
@@ -317,6 +327,47 @@ export function createFixture() {
   app.get('/busy', (_req, res) => {
     state.busyHits += 1;
     res.status(429).set('retry-after', '1').end();
+  });
+
+  app.get('/store-password', (_req, res) => {
+    res.type('html').send(page('Store', '<form method="post" action="/password"><p>Enter store password</p><label>Password <input type="password" name="password"></label><button type="submit">Enter</button></form>'));
+  });
+
+  app.post('/password', (req, res) => {
+    if (req.body.password && req.body.password === state.storePassword) {
+      res.type('html').send(page('Catalogue', '<p data-testid="store-open">store open</p>'));
+      return;
+    }
+    res.status(401).type('html').send(page('Store', '<p>wrong password</p>'));
+  });
+
+  app.get('/pay-frame', (_req, res) => {
+    res.type('html').send('<form><label>Card number <input name="cardnumber" autocomplete="cc-number"></label><label>Expiry <input name="exp" autocomplete="cc-exp"></label><label>CVC <input name="cvc" autocomplete="cc-csc"></label></form>');
+  });
+
+  app.get('/pay', (_req, res) => {
+    res.type('html').send(page('Pay', `<iframe src="/pay-frame" title="card payment"></iframe><button id="pay-now" type="button">Pay</button><p id="pay-result">waiting</p>
+<script>
+document.getElementById('pay-now').addEventListener('click', () => {
+  const doc = document.querySelector('iframe').contentDocument;
+  const number = doc.querySelector('[name=cardnumber]').value;
+  const exp = doc.querySelector('[name=exp]').value;
+  const cvc = doc.querySelector('[name=cvc]').value;
+  document.getElementById('pay-result').textContent = number === '4242424242424242' && exp === '12 / 34' && cvc === '123' ? 'card accepted' : 'card refused';
+});
+</script>`));
+  });
+
+  app.get('/emailed-code', (_req, res) => {
+    res.type('html').send(page('Code', '<p>We emailed you a code</p><form method="post" action="/emailed-code"><label>Code <input name="code" autocomplete="one-time-code" maxlength="6"></label><button type="submit">Continue</button></form>'));
+  });
+
+  app.post('/emailed-code', (req, res) => {
+    if (req.body.code && req.body.code === state.emailCode) {
+      res.type('html').send(page('Account', '<p data-testid="signed-in">signed in</p>'));
+      return;
+    }
+    res.status(401).type('html').send(page('Code', '<p>wrong code</p>'));
   });
 
   app.get('/__admin/stats', (_req, res) => {
