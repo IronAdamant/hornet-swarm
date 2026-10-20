@@ -117,6 +117,17 @@ describe('the scheduled re-test', () => {
     expect(retestDue(home, job, new Date('2026-10-29T00:00:00.000Z')).due).toBe(true);
   });
 
+  it('waits a day after an attempt that left no report, instead of re-running every hour', async () => {
+    const job = loadClientJob(jobFile());
+    suite.next = () => saveRun({ status: 'redaction_failure', redaction: 'fail' });
+    const first = await runRetest({ job, home, ifDue: true, now: new Date('2026-10-20T00:00:00.000Z') });
+    expect(first.ran).toBe(true);
+    const hourLater = await runRetest({ job, home, ifDue: true, now: new Date('2026-10-20T01:00:00.000Z') });
+    expect(hourLater.ran).toBe(false);
+    expect(suite.calls).toHaveLength(1);
+    expect(retestDue(home, job, new Date('2026-10-21T00:00:00.000Z')).due).toBe(true);
+  });
+
   it('skips a job that is not due without starting a run', async () => {
     const job = loadClientJob(jobFile());
     writeClientReport({ job, runId: saveRun({ finishedAt: '2026-10-01T00:00:00.000Z' }).run_id, home });
