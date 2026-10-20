@@ -56,7 +56,7 @@ Automated checks find only some accessibility problems. 51 of the 55 WCAG 2.2 A 
 - **Why it matters to your customers:** Customers who use a screen reader hear nothing, or a file name, where a product photo or a button image is.
 - **How to fix it:** Give each meaningful image an alt text that says what it shows or does. Give decorative images an empty alt (alt="").
 - **Severity:** Medium. Graded by the reviewer: Each product's name is written beside its picture, so customers are not left guessing which product it is.
-- **WCAG 2.2 criteria:** 1.1.1
+- **WCAG 2.2 criteria:** 1.1.1 (A)
 - **Evidence:** `qa-user-1/accessibility-customer/accessibility-my-account.json`, `qa-user-1/accessibility-customer/accessibility-profile.json`, `qa-user-1/accessibility-customer/accessibility-cart.json`, `qa-user-1/accessibility-customer/accessibility-checkout-signed-in.json`, `qa-user-2/accessibility-visitor/accessibility-catalogue.json`, `qa-user-2/accessibility-visitor/accessibility-product-page.json`, `qa-user-2/accessibility-visitor/accessibility-sign-in.json`, `qa-user-2/accessibility-visitor/accessibility-sign-up.json`, `qa-user-2/accessibility-visitor/accessibility-contact.json`
 - **Re-test key:** `a11y:image-alt`
 
@@ -75,7 +75,7 @@ Automated checks find only some accessibility problems. 51 of the 55 WCAG 2.2 A 
 - **Why it matters to your customers:** Customers with low vision, older customers, and anyone on a phone in sunlight struggle to read pale text, including prices and stock levels.
 - **How to fix it:** Darken the text or lighten the background until the contrast is at least 4.5 to 1 (3 to 1 for large text). The saved results give each ratio.
 - **Severity:** Medium. Starting grade from the automated check, which rates it serious.
-- **WCAG 2.2 criteria:** 1.4.3
+- **WCAG 2.2 criteria:** 1.4.3 (AA)
 - **Evidence:** `qa-user-1/accessibility-customer/accessibility-my-account.json`, `qa-user-1/accessibility-customer/accessibility-profile.json`, `qa-user-1/accessibility-customer/accessibility-cart.json`, `qa-user-1/accessibility-customer/accessibility-checkout-signed-in.json`, `qa-user-2/accessibility-visitor/accessibility-catalogue.json`, `qa-user-2/accessibility-visitor/accessibility-product-page.json`, `qa-user-2/accessibility-visitor/accessibility-sign-in.json`, `qa-user-2/accessibility-visitor/accessibility-sign-up.json`, `qa-user-2/accessibility-visitor/accessibility-contact.json`
 - **Re-test key:** `a11y:color-contrast`
 
@@ -88,7 +88,7 @@ Automated checks find only some accessibility problems. 51 of the 55 WCAG 2.2 A 
 - **Why it matters to your customers:** A screen reader announces only "button", so customers cannot tell which one adds to cart, removes an item, or shows a password.
 - **How to fix it:** Give each button visible text, or an aria-label for icon-only buttons, such as aria-label="Increase quantity".
 - **Severity:** Medium. Graded by the reviewer: A screen-reader customer can still add one of something, but cannot knowingly change the quantity.
-- **WCAG 2.2 criteria:** 4.1.2
+- **WCAG 2.2 criteria:** 4.1.2 (A)
 - **Evidence:** `qa-user-2/accessibility-visitor/accessibility-product-page.json`, `qa-user-2/accessibility-visitor/accessibility-sign-in.json`, `qa-user-2/accessibility-visitor/accessibility-sign-up.json`
 - **Re-test key:** `a11y:button-name`
 
@@ -101,7 +101,7 @@ Automated checks find only some accessibility problems. 51 of the 55 WCAG 2.2 A 
 - **Why it matters to your customers:** Screen reader users hear "edit text" with no idea what to type, so forms such as checkout or sign-up become guesswork.
 - **How to fix it:** Connect a visible label to each field with <label for="...">, or give the field an aria-label.
 - **Severity:** Medium. Graded by the reviewer: The fields can still be used, but a screen-reader customer has to guess which one searches or sets the quantity.
-- **WCAG 2.2 criteria:** 4.1.2
+- **WCAG 2.2 criteria:** 4.1.2 (A)
 - **Evidence:** `qa-user-1/accessibility-customer/accessibility-cart.json`, `qa-user-2/accessibility-visitor/accessibility-catalogue.json`, `qa-user-2/accessibility-visitor/accessibility-product-page.json`
 - **Re-test key:** `a11y:label`
 
@@ -111,7 +111,7 @@ Automated checks find only some accessibility problems. 51 of the 55 WCAG 2.2 A 
 - **Why it matters to your customers:** Customers with shaky hands, and anyone on a phone, miss small targets or press the one next to it.
 - **How to fix it:** Make each target at least 24 by 24 CSS pixels, or leave enough space around it that a 24-pixel circle does not overlap a neighbour.
 - **Severity:** Medium. Starting grade from the automated check, which rates it serious.
-- **WCAG 2.2 criteria:** 2.5.8
+- **WCAG 2.2 criteria:** 2.5.8 (AA)
 - **Evidence:** `qa-user-2/accessibility-visitor/accessibility-product-page.json`
 - **Re-test key:** `a11y:target-size`
 
@@ -121,7 +121,7 @@ Automated checks find only some accessibility problems. 51 of the 55 WCAG 2.2 A 
 - **Why it matters to your customers:** Customers using a screen reader cannot tell what a dropdown chooses, such as sort order or country.
 - **How to fix it:** Connect a visible label to each dropdown, or give it an aria-label.
 - **Severity:** Medium. Graded by the reviewer: Sorting is a convenience. Customers can still browse and search without it.
-- **WCAG 2.2 criteria:** 4.1.2
+- **WCAG 2.2 criteria:** 4.1.2 (A)
 - **Evidence:** `qa-user-2/accessibility-visitor/accessibility-catalogue.json`
 - **Re-test key:** `a11y:select-name`
 
@@ -216,6 +216,9 @@ How each criterion was checked, and what was found. "Partly automated" and "Manu
 
 - This report lists issues found against WCAG 2.2 AA in tested pages. It covers only the pages and journeys named in it, as they were on 17 October 2026. Pages that are not listed were not tested, and later changes to the site are not covered.
 - It is not a statement that the site has no other accessibility issues, and it is not legal advice.
+- Automated checks plus a 1-2 hour manual pass cover roughly 50-55% of WCAG 2.2 AA.
+- No screen-reader testing was done.
+- This report is not a compliance certificate.
 - This is not a security test. Nothing was done to look for vulnerabilities or to break into the site, and the results say nothing about how secure it is.
 - Testing was done with the site owner's written authorisation, given by Ada Owner (Owner), record fixture-shop-owner, in force until 2027-01-12.
 - Only test accounts were used. Passwords, codes, and personal details are hidden in every saved file.

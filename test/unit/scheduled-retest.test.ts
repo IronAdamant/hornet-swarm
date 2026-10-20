@@ -62,12 +62,20 @@ beforeEach(() => {
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 describe('the client report service', () => {
-  it('writes the report into the run folder as private Markdown, HTML, and JSON', () => {
+  it('writes the report into the run folder as private Markdown, HTML, PDF, and JSON', () => {
     const run = saveRun({ pages: [{ name: 'home', result: { violations: [IMAGE_ALT] } }] });
     const written = writeClientReport({ job: loadClientJob(jobFile()), runId: run.run_id, home });
     for (const path of Object.values(written.paths)) expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(readFileSync(written.paths.markdown, 'utf8')).toContain('1 issue found against WCAG 2.2 AA in tested pages');
     expect(readFileSync(written.paths.html, 'utf8')).toContain('data:image/svg+xml;base64,');
+    const pdf = readFileSync(written.paths.pdf);
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    const pdfText = pdf.toString('latin1');
+    expect(pdfText).toContain('%%EOF');
+    expect(pdfText).toContain('1.1.1 \\(A\\)');
+    expect(pdfText).toContain('50-55% of WCAG 2.2 AA');
+    expect(pdfText).toContain('No screen-reader testing was done.');
+    expect(pdfText).toContain('This report is not a compliance certificate.');
     expect(written.report.brand.name).toBe('Test Agency Pty Ltd');
     expect(savedJobReports(home, 'fixture-monthly').map((report) => report.run_id)).toEqual([run.run_id]);
   });

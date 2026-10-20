@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parse } from 'yaml';
 import { analysisSchema, clientJobSchema, globalConfigSchema, readRegularFile, Redactor, runResultSchema, writeRedactedFile, type BrandingConfig, type ClientJob } from '@hornet-swarm/core';
-import { BrandingError, buildClientReport, clientReportSchema, diffClientReports, renderClientReport, resolveBrand, retestDiffMarkdown, type ClientReport, type RetestDiff } from '@hornet-swarm/report';
+import { BrandingError, buildClientReport, clientReportSchema, diffClientReports, markdownToPdf, renderClientReport, resolveBrand, retestDiffMarkdown, type ClientReport, type RetestDiff } from '@hornet-swarm/report';
 import { loadAuthorisation, loadProject } from './authorisation.js';
 import { registerProjectSecrets } from './broker.js';
 import { HornetError } from './errors.js';
@@ -65,12 +65,12 @@ function runDirOf(home: string, runId: string): string {
   return join(home, 'runs', runId);
 }
 
-export type WrittenClientReport = { report: ClientReport; markdown: string; paths: { markdown: string; html: string; json: string } };
+export type WrittenClientReport = { report: ClientReport; markdown: string; paths: { markdown: string; html: string; pdf: string; json: string } };
 
 /**
  * Builds the client report for one saved run of a job, and saves it in the run folder as
- * client-report.md, client-report.html, and client-report.json. Every file is sealed, so a
- * password or code that reached the report text stops the write.
+ * client-report.md, client-report.html, client-report.pdf, and client-report.json. Every file is
+ * sealed, so a password or code that reached the report text stops the write.
  */
 export function writeClientReport(input: { job: LoadedJob; runId: string; home: string }): WrittenClientReport {
   const { job, path } = input.job;
@@ -96,9 +96,16 @@ export function writeClientReport(input: { job: LoadedJob; runId: string; home: 
   }
   const redactor = new Redactor();
   registerProjectSecrets(project.id, redactor, input.home);
-  const paths = { markdown: join(runDir, 'client-report.md'), html: join(runDir, 'client-report.html'), json: join(runDir, 'client-report.json') };
-  writeRedactedFile(paths.markdown, redactor.seal(rendered.markdown));
+  const sealedMarkdown = redactor.seal(rendered.markdown);
+  const paths = {
+    markdown: join(runDir, 'client-report.md'),
+    html: join(runDir, 'client-report.html'),
+    pdf: join(runDir, 'client-report.pdf'),
+    json: join(runDir, 'client-report.json'),
+  };
+  writeRedactedFile(paths.markdown, sealedMarkdown);
   writeRedactedFile(paths.html, redactor.seal(rendered.html));
+  writeRedactedFile(paths.pdf, redactor.sealBytes(markdownToPdf(sealedMarkdown)));
   writeRedactedFile(paths.json, redactor.seal(`${JSON.stringify(report, null, 2)}\n`));
   return { report, markdown: rendered.markdown, paths };
 }
