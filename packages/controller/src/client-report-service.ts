@@ -75,9 +75,10 @@ export type WrittenClientReport = { report: ClientReport; markdown: string; path
 export function writeClientReport(input: { job: LoadedJob; runId: string; home: string }): WrittenClientReport {
   const { job, path } = input.job;
   const project = loadProject(job.project, input.home);
-  const authorisation = loadAuthorisation(project.authorisation_id, input.home);
   const runDir = runDirOf(input.home, input.runId);
   const run = readSavedRun(runDir, input.runId);
+  // The record the run was authorised under, not the project's current one, which may have been renewed since.
+  const authorisation = loadAuthorisation(run.authorisation_id, input.home);
   let brand;
   try {
     brand = resolveBrand(anchorLogos(job.branding, dirname(path)), anchorLogos(globalBranding(input.home), input.home), (logo) => readRegularFile(logo));
