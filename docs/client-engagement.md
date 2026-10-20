@@ -83,4 +83,4 @@ After the report is delivered, wipe that job's stored runs:
 pnpm hornet-swarm delete-after-delivery --job <file>
 ```
 
-That removes the job's run folders, including page bodies and evidence. Another job's runs stay. Runs are also dropped after 7 days by default, even when you do not use that command. Stored page responses have email addresses and phone numbers masked. The human pass for WCAG 2.2 AA is `docs/wcag22-manual-checklist.md`. Work through that list yourself. The automated check does not mark those rows as passed.
+That removes the job's run folders, including page bodies and evidence. Another job's runs stay. Runs are also dropped after 7 days by default, even when you do not use that command. Response bodies saved in `network.har` and in the trace's network log have email addresses and phone numbers masked. Screenshots, saved page text, trace page snapshots, and `evidence.zip` can still show them, so treat a run folder as client data until it is deleted. The human pass for WCAG 2.2 AA is `docs/wcag22-manual-checklist.md`. Work through that list yourself. The automated check does not mark those rows as passed.

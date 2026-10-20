@@ -69,6 +69,15 @@ describe('client data handling', () => {
 
   it('masks an email and a phone number in a stored page response and leaves a date', async () => {
     expect(maskPersonalData('due 2026-10-17')).toBe('due 2026-10-17');
+    for (const kept of ['{"total":123456.78,"id":1700000000000}', '192.168.100.200', '2026-10-17 12:30', 'Lat 51.5072178']) {
+      expect(maskPersonalData(kept)).toBe(kept);
+    }
+    expect(maskPersonalData('0412 345 678\n0413 456 789')).toBe('[REDACTED:phone]\n[REDACTED:phone]');
+    expect(maskPersonalData('call +61 2 9999 9999 or 0412345678')).toBe('call [REDACTED:phone] or [REDACTED:phone]');
+    const crafted = `a@${'a.'.repeat(100_000)}`;
+    const started = Date.now();
+    maskPersonalData(crafted);
+    expect(Date.now() - started).toBeLessThan(1_000);
     const dir = mkdtempSync(join(tmpdir(), 'hornet-privacy-'));
     const body = 'Account ada@example.com phone 0412 345 678';
     writeFileSync(
