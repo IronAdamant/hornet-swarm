@@ -166,7 +166,16 @@ const IMAGE_ENTRY = /\.(png|jpe?g|webp)$/i;
  * entry keeps its original bytes, so the trace viewer can still open the file.
  */
 async function redactZip(file: string, redactor: Redactor): Promise<Outcome> {
-  const zip = await JSZip.loadAsync(readRegularFile(file));
+  // A run stopped at its time limit can leave a half-written trace. A zip that cannot be
+  // opened cannot be shown to be free of secrets, so it is dropped rather than failing the run.
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(readRegularFile(file));
+  } catch {
+    unlinkSync(file);
+    writeRedactedFile(`${file}.dropped`, fixedText('trace dropped because it could not be read\n'));
+    return 'rewritten';
+  }
   if (!(await redactLoadedZip(zip, redactor))) return 'kept';
   const next = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   try {

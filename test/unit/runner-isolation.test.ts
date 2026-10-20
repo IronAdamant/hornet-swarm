@@ -34,6 +34,9 @@ describe('runner isolation invariants', () => {
     inspected.host.CapDrop = ['CAP_ALL'];
     inspected.host.PortBindings = {};
     expect(runnerIsolationProblems(inspected, project, label)).toEqual([]);
+    const withFd = view();
+    withFd.env.push('AEGIS_CONTROL_TOKEN_FD=3');
+    expect(runnerIsolationProblems(withFd, project, label)).toEqual([]);
   });
 
   it.each<[string, (target: IsolationView) => void, RegExp]>([
