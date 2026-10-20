@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { Redactor } from '../../packages/core/src/redactor.ts';
 import { listFields, registerProjectSecrets } from '../../packages/controller/src/broker.ts';
 import { startCredentialPage, storeOwnerLogin } from '../../packages/controller/src/credentials.ts';
 import { writeAuthorisedProject } from '../support/authorised-fixture.ts';
+import { buildPackagesIfStale } from '../support/build-packages.ts';
 
 const root = join(import.meta.dirname, '..', '..');
 const cli = join(root, 'packages/cli/dist/main.js');
@@ -19,9 +20,7 @@ describe('short credentials', () => {
   let close: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
-    execFileSync('pnpm', ['--filter', '@hornet-swarm/core', 'build'], { cwd: root, stdio: 'inherit' });
-    execFileSync('pnpm', ['--filter', '@hornet-swarm/controller', 'build'], { cwd: root, stdio: 'inherit' });
-    execFileSync('pnpm', ['--filter', '@hornet-swarm/cli', 'build'], { cwd: root, stdio: 'inherit' });
+    buildPackagesIfStale(['@hornet-swarm/core', '@hornet-swarm/controller', '@hornet-swarm/cli'], 'inherit');
     const page = await startCredentialPage(home, 0);
     port = page.port;
     close = page.close;
