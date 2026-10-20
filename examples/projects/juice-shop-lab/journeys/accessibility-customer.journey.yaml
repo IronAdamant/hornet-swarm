@@ -1,6 +1,6 @@
 version: 1
 id: accessibility-customer
-name: Pages a signed-in customer sees meet WCAG 2.1 AA
+name: Pages a signed-in customer sees, checked against WCAG 2.2 AA
 description: Checks the basket, the address and payment steps, and the profile. Nothing is bought. The feedback form is left out because it asks for a captcha.
 users: [qa-user-1]
 tags: [accessibility]

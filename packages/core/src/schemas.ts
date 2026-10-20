@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { brandingSchema } from './client-job-schema.js';
+import { redundantEntrySchema, wcag22PageSignalsSchema } from './wcag22-page-signals.js';
 
 export const globalConfigSchema = z
   .object({
@@ -7,6 +9,8 @@ export const globalConfigSchema = z
     results_retention_days: z.number().int().positive().default(30),
     ocr_screenshot_check: z.boolean().default(true),
     log_level: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
+    /** The default brand on client reports. A job's own branding overrides it field by field. */
+    branding: brandingSchema.optional(),
   })
   .strict();
 
@@ -376,12 +380,19 @@ export const stepResultSchema = z
             help: z.string(),
             count: z.number().int().nonnegative(),
             example: z.string(),
+            /** The WCAG success criteria axe-core tags the rule with, such as 1.4.3. Older runs have none. */
+            criteria: z.array(z.string()).optional(),
           }),
         ),
         /** Checks axe could not decide alone, such as contrast over an image. A person should look. */
         needs_review: z.number().int().nonnegative(),
+        /** The rules behind needs_review, with their criteria. Older runs have only the count. */
+        review_rules: z.array(z.object({ rule: z.string(), criteria: z.array(z.string()), count: z.number().int().nonnegative() }).strict()).optional(),
+        /** The WCAG 2.2 checks beyond axe-core. Present when the page was checked against WCAG 2.2 AA. */
+        wcag22: wcag22PageSignalsSchema.optional(),
       })
       .optional(),
+    redundant_entry: redundantEntrySchema.optional(),
   })
   .strict();
 

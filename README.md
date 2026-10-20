@@ -10,7 +10,8 @@ It is for sites you own, or sites someone has authorised you in writing to test.
 - **Quotes the page when something fails.** A failed step names what the customer would have seen ("page said: Your account is locked out.", "it reads Seach", "closest text on the page: Releated items") and saves a screenshot and the page's words.
 - **Tells the site's faults from its own.** A crashed browser, a deleted account, a rate limit, and a stalled API each get their own verdict, so a report never blames the site for the harness.
 - **Measures reliability over time.** `stats` gives pass rates, median and slowest timings, retries, and failing streaks per journey. Failed journeys keep running in later suites until they pass three times in a row.
-- **Checks accessibility inside the journeys.** An `accessibility` step checks the page against WCAG 2.1 AA with axe-core, including pages behind the login that most scanners never reach. Each problem is named in plain words, with how many places it occurs and an example.
+- **Checks accessibility inside the journeys.** An `accessibility` step checks the page against WCAG 2.2 AA with axe-core and the harness's own checks for the new 2.2 criteria, including pages behind the login that most scanners never reach. Each problem is named in plain words, with how many places it occurs and an example.
+- **Writes a white-label report a business owner can read, and re-tests monthly.** `client-report` turns a run into a plain-English report under the agency's brand: each issue with where it happens, why it matters to customers, and how to fix it, plus sign-up, log in, cart, and checkout results. It never says a site is compliant or certified, and criteria a person must judge are marked needs manual review. `retest --if-due` runs the job again and lists what is new, fixed, and still open.
 - **Tests recovery with chaos.** Optional delays, lost requests, refreshes, back presses, and double clicks, repeatable by seed, show where a site leaves a customer stuck with no message.
 - **Lets AI agents run the swarm.** Agents see account labels such as `qa-user-3`, never passwords. Each agent plays one account, with its own personality and rules, and leaves notes for the others.
 - **Drafts journeys from a look at the page.** `inspect_page` (or `hornet-swarm inspect`) opens one page as an account and returns its headings, links, buttons, and fields, each with a selector a journey can use. It clicks nothing. An agent drafts the journey from the map, runs it, and fixes it from the failure clues.
@@ -30,8 +31,9 @@ Every report below came from real runs. The labs run on one Mac. All accounts ar
 |---|---|
 | [ParaBank lab](docs/sample-report-parabank-lab.md) | An online bank: a profile update that breaks sign-in for passwords with a symbol, and checks that every balance adds up after transfers and bill payments |
 | [Chaos: ParaBank](docs/chaos-report-parabank-lab.md) | How the bank recovers when requests are lost or slow |
+| [Client report](docs/fixture-sample-client-report.md), [monthly re-test](docs/fixture-sample-retest-diff.md) | The plain-English, white-label report a business owner reads, checked against WCAG 2.2 AA, and the next month's comparison. Generated from fixture runs. |
 | [Juice Shop lab](docs/sample-report-juice-shop-lab.md) | A local shop: sign-up, search, basket, checkout, order history, a review, and a username. The feedback form is left out because it asks for a captcha |
-| [Accessibility: Juice Shop](docs/accessibility-report-juice-shop-lab.md) | The shop front, a product, sign-in, sign-up, and the signed-in basket, checkout, and profile, against WCAG 2.1 AA |
+| [Accessibility: Juice Shop](docs/accessibility-report-juice-shop-lab.md) | The shop front, a product, sign-in, sign-up, and the signed-in basket, checkout, and profile, checked against WCAG 2.1 AA before the 2.2 upgrade |
 | [Security: Juice Shop](docs/security-report-juice-shop-lab.md) | A light pass over the same customer journeys, on the security scale |
 | [Security: ParaBank](docs/security-report-parabank-lab.md) | A security pass run by a separate swarm, on its own severity scale |
 

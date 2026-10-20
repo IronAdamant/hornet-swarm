@@ -112,6 +112,46 @@ Ctrl-C, closing the terminal, and `kill <pid>` release the login a CLI run holds
 
 A macOS Shortcut can run `hornet-swarm kill` if you want a keyboard stop. Hornet Swarm does not register a global hotkey itself.
 
+## Client reports and monthly re-tests
+
+A client report is the plain-English report a business owner reads: a summary, each issue with its severity, where it happens, why it matters to customers, and how to fix it, the results of sign-up, log in, add to cart, and checkout, the WCAG 2.2 A and AA criteria table, a scope and limits statement, and an evidence appendix. It is built from one saved run of a job. [docs/fixture-sample-client-report.md](fixture-sample-client-report.md) and [the re-test comparison](fixture-sample-retest-diff.md) show the form.
+
+A job file names the client, the project, the journeys and which of the four each covers, the branding, and the re-test cadence. `examples/jobs/fixture-shop-monthly.job.yaml` is a worked example:
+
+- `project` and `journeys`: the run uses the project's own authorisation. A job cannot widen it. A journey with `covers: sign_up`, `login`, `cart`, or `checkout` fills that row of the report; with no `login` journey, the sign-in check that starts every run stands in. Other journeys, such as the accessibility ones, are listed after.
+- `users`: the labels to run. All of the project's labels when left out.
+- `not_in_scope`: a journey left out on purpose, with the reason printed in the report.
+- `severity_overrides` and `withdrawn_issues`: a reviewer's grade or withdrawal, by the re-test key shown beside each issue (such as `a11y:image-alt` or `journey:checkout`), with the reason printed beside it. A withdrawn issue is listed as withdrawn, never dropped.
+- `branding`: `use: agency` (the default) or `use: iron_adamant`, with `agency: { name, logo, logo_alt, website, contact_email, contact_phone }`. The global `~/.hornet-swarm/config.yaml` can hold the same block; the job wins. A report with no agency named stops with an error rather than quietly carrying Iron Adamant's name. A logo is a PNG, JPEG, or SVG of at most 512 KB, read from beside the file that names it and embedded in the report.
+- `schedule.cadence`: `weekly`, `fortnightly`, or `monthly` (28 days).
+
+A brand name, business name, or reason that says compliant, certified, or similar is refused when the job is read. Every rendered report and comparison is checked again before it is saved, and a report that would claim a site is compliant, certified, or meets WCAG is not written. Words the report quotes from the site itself, in code spans or quotation marks, are not counted.
+
+- `hornet-swarm client-report --job <file> --run <run id>` writes `client-report.md`, `client-report.html`, and `client-report.json` into the run folder, then compares the run with the job's previous report and writes `retest-diff.md` and `retest-diff.json`. `--against <run id>` picks the run to compare with.
+- `hornet-swarm retest --job <file>` runs the job's journeys through the same authorised suite as any other run, then writes the report and the comparison. `--if-due` runs only when the cadence has passed since the job's last report, so it is safe to call every day. An attempt that left no report, such as one that failed its redaction check, is not tried again for a day. `--confirm-production` is needed for a production-looking target, as for `suite`. A run that failed its redaction check gets neither file.
+
+The comparison lists new issues, fixed issues, issues still open, and journeys that stopped working or work again. An issue counts as fixed only when every page it was on was checked again; otherwise it is listed as not re-checked. A journey that could not be finished this time is neither fixed nor broken.
+
+To run the monthly re-test on a schedule, have launchd call `retest --if-due` once a day, for example at 9 am:
+
+```xml
+<!-- ~/Library/LaunchAgents/com.ironadamant.hornet-swarm.retest.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.ironadamant.hornet-swarm.retest</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/zsh</string><string>-lc</string>
+    <string>cd ~/hornet-swarm &amp;&amp; pnpm hornet-swarm retest --job ~/hornet-swarm-jobs/client.job.yaml --if-due --json</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>/tmp/hornet-swarm-retest.log</string>
+  <key>StandardErrorPath</key><string>/tmp/hornet-swarm-retest.log</string>
+</dict></plist>
+```
+
+Load it with `launchctl load ~/Library/LaunchAgents/com.ironadamant.hornet-swarm.retest.plist`. The runners must be up (`hornet-swarm env up --project <id>`) and the logins stored. Read each report before sending it: a reviewer's grade, a withdrawal, and the criteria marked needs manual review are the parts no check can do.
+
+`node scripts/generate-sample-report.mjs` regenerates the sample report and comparison in `docs/` from the fixture runs in `examples/sample-runs/`, after `pnpm build`.
+
 ## Agents
 
 Open `http://127.0.0.1:7781/setup` to keep the website and up to ten logins. Each card is its own label: card 3 is always `qa-user-3`. A card with a stored login keeps it when its username and password are left blank, so a personality or rule can be changed without typing every password again. Saving changes only the website, the login selectors, the first `url_contains` success check, the labels, and the runner counts in `project.yaml`. Comments and other settings stay. The allowed origins are kept while the website stays on the same origin. Start that page with `hornet-swarm creds serve` if it is not already open. Fill the website first, then the cards in order: username, password, a personality, and rules for that sub-agent. A personality is who the sub-agent plays. Rules are what it must and must not do. Press Ready and confirm with Touch ID. The passwords stay in the encrypted store. The page only answers on `127.0.0.1`, and the form carries a token, so another site open in your browser cannot submit it.
@@ -172,7 +212,7 @@ A page is checked the way a person would see it.
 - `runners.http2: false` makes the browser use HTTP/1.1, for a site whose HTTP/2 is known to stall.
 - `select: { selector, label }` (or `value`, or `index` where 0 is the first option, for lists such as account numbers that change per customer) chooses from a dropdown. It focuses the field, chooses, and leaves it, as a person does, because some forms only record a choice from a field that was touched.
 - `assert: { type: field_value, selector, value }` checks what a form field holds, such as a profile's first name. It may not read the password field. A failure names what the field held.
-- `accessibility: { name }` checks the page as it stands against WCAG 2.1 AA with axe-core, which ships inside the runner image and fetches nothing. `standard` picks `wcag2a`, `wcag2aa`, `wcag21aa` (the default), or `wcag22aa`. `exclude` lists selectors to leave out, such as a third-party chat widget the client does not control. The step records problems and passes. With `fail_on: serious` (or `critical`, `moderate`, `minor`) it fails when a problem is at least that serious, so put it last in a journey that should keep going. Each page's findings go to `accessibility-<name>.json` beside the screenshots, with the markup of up to 20 elements per problem, masked like every other file. The summary lists each checked page once, worst problem first, merging the same page across accounts. A run whose journeys passed but whose pages have accessibility problems says so, instead of "nothing needs fixing". Grading follows `docs/severity.md`.
+- `accessibility: { name }` checks the page as it stands against WCAG 2.2 AA with axe-core (rules tagged `wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, and `wcag22aa`), which ships inside the runner image and fetches nothing. `standard` picks `wcag2a`, `wcag2aa`, `wcag21aa`, or `wcag22aa` (the default). 4.1.1 Parsing is obsolete in WCAG 2.2, so a finding mapped only to it is dropped under `wcag22aa`. At `wcag22aa` the step also runs the harness's own checks for the new 2.2 criteria: a focused control entirely hidden behind a sticky or fixed banner (2.4.11), drag-only controls (2.5.7), where each help link sits on the page (3.2.6), and a password field that blocks paste, turns off autocomplete, or shows a puzzle (3.3.8). Fill steps also note a value typed again on a later page of the same journey (3.3.7), keeping only a hash of it. Findings an automated check cannot decide are kept as needs manual review, never as passed. `exclude` lists selectors to leave out, such as a third-party chat widget the client does not control. The step records problems and passes. With `fail_on: serious` (or `critical`, `moderate`, `minor`) it fails when a problem is at least that serious, so put it last in a journey that should keep going. Each page's findings go to `accessibility-<name>.json` beside the screenshots, with the markup of up to 20 elements per problem, masked like every other file. The summary lists each checked page once, worst problem first, merging the same page across accounts. A run whose journeys passed but whose pages have accessibility problems says so, instead of "nothing needs fixing". Grading follows `docs/severity.md`.
 - `inspect: { name }` saves a map of the page to `inspect-<name>.json` and a screenshot. `inspect_page` uses it, and a journey can too.
 - Templates work in selectors as well as values, such as `tr:has-text('Room {{run.tag}}')` for a row this run created.
 - `auth.prepare` is a list of click selectors. The sign-in check runs them after the sign-in page opens and before it types the login, for a banner or a cookie notice that covers the form. Juice Shop's project uses it. A journey still closes those itself, because each journey is a fresh browser. A role selector uses single quotes, as in `role=button[name='dismiss cookie message']`.

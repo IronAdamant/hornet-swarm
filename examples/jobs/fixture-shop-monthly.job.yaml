@@ -1,0 +1,50 @@
+# A saved client job: what `hornet-swarm retest --job <file>` runs every month, and how its
+# report is branded. This job is a worked example against the offline fixture; "Harbour Lane
+# Digital" is a made-up agency standing in for a reseller, and "Northwind Fixtures" is a made-up client.
+#
+#   pnpm hornet-swarm retest --job examples/jobs/fixture-shop-monthly.job.yaml --if-due
+#
+# The run uses the project's own authorisation. A job cannot widen it.
+version: 1
+id: fixture-shop-monthly
+project: fixture-shop
+client:
+  business_name: Northwind Fixtures
+  site_name: Northwind Fixtures
+  site_url: http://127.0.0.1:4173
+standard: wcag22aa
+branding:
+  use: agency
+  agency:
+    name: Harbour Lane Digital
+    logo: ./example-agency-logo.svg
+    logo_alt: Harbour Lane Digital
+    website: https://harbourlane.example
+    contact_email: hello@harbourlane.example
+users: [qa-user-1, qa-user-2]
+journeys:
+  # Login is reported from the sign-in check every run starts with.
+  - { id: accessibility-visitor }
+  - { id: accessibility-customer }
+  - { id: cart, covers: cart }
+  - { id: checkout, covers: checkout }
+not_in_scope:
+  - covers: sign_up
+    reason: Sign-up creates a new account on every run, so it is left out of the monthly check.
+# The automated grade is a starting point. A reviewer grades by what a customer can still do,
+# following docs/severity.md, and the reason is printed beside the issue.
+severity_overrides:
+  - issue: a11y:image-alt
+    severity: Medium
+    reason: Each product's name is written beside its picture, so customers are not left guessing which product it is.
+  - issue: a11y:button-name
+    severity: Medium
+    reason: A screen-reader customer can still add one of something, but cannot knowingly change the quantity.
+  - issue: a11y:label
+    severity: Medium
+    reason: The fields can still be used, but a screen-reader customer has to guess which one searches or sets the quantity.
+  - issue: a11y:select-name
+    severity: Medium
+    reason: Sorting is a convenience. Customers can still browse and search without it.
+schedule:
+  cadence: monthly

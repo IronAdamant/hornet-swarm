@@ -4,3 +4,15 @@ default_project: example-app
 results_retention_days: 30
 ocr_screenshot_check: true    # OCR screenshots for leaked secrets
 log_level: info
+# Who client reports are from, unless a job says otherwise. The agency brand is the default:
+# a report shows Iron Adamant only when `use: iron_adamant` is set here or in the job.
+# A relative logo path is read from beside this file.
+# branding:
+#   use: agency
+#   agency:
+#     name: Your Agency Pty Ltd
+#     logo: ./agency-logo.png
+#     contact_email: hello@your-agency.example
+#   iron_adamant:
+#     logo: ./iron-adamant-logo.svg
+#     contact_email: aron.amos@ironadamant.com
