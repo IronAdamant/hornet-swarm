@@ -1,10 +1,25 @@
-import { RETEST_INTERVAL_DAYS } from '@hornet-swarm/core';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { RETEST_INTERVAL_DAYS, writePrivateFile } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
 import { savedJobReports, writeClientReport, writeRetestDiff, type LoadedJob, type WrittenClientReport, type WrittenRetestDiff } from './client-report-service.js';
 import { aegisHome } from './home.js';
 import { runSuite } from './suite.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** A scheduler may call --if-due hourly. An attempt that left no report waits this long, so a failing job does not re-run the swarm against the client's site every hour. */
+const FAILED_ATTEMPT_BACKOFF_MS = DAY_MS;
+
+function attemptPath(home: string, jobId: string): string {
+  return join(home, 'retests', `${jobId}.last-attempt`);
+}
+
+function lastAttempt(home: string, jobId: string): number | undefined {
+  const path = attemptPath(home, jobId);
+  if (!existsSync(path)) return undefined;
+  const at = Date.parse(readFileSync(path, 'utf8').trim());
+  return Number.isNaN(at) ? undefined : at;
+}
 
 export type RetestDue = { due: boolean; last_tested_at?: string; next_due_at?: string; reason: string };
 
@@ -12,6 +27,11 @@ export type RetestDue = { due: boolean; last_tested_at?: string; next_due_at?: s
 export function retestDue(home: string, loaded: LoadedJob, now = new Date()): RetestDue {
   const reports = savedJobReports(home, loaded.job.id);
   const last = reports[reports.length - 1];
+  const attempted = lastAttempt(home, loaded.job.id);
+  if (attempted !== undefined && (!last || attempted > Date.parse(last.tested_at)) && now.getTime() < attempted + FAILED_ATTEMPT_BACKOFF_MS) {
+    const retry = new Date(attempted + FAILED_ATTEMPT_BACKOFF_MS).toISOString();
+    return { due: false, next_due_at: retry, reason: `${loaded.job.id} was last attempted ${new Date(attempted).toISOString()} without a new report. It is tried again from ${retry}.` };
+  }
   if (!last) return { due: true, reason: `${loaded.job.id} has no saved report yet.` };
   const days = RETEST_INTERVAL_DAYS[loaded.job.schedule.cadence];
   const next = new Date(Date.parse(last.tested_at) + days * DAY_MS);
@@ -40,6 +60,7 @@ export async function runRetest(input: { job: LoadedJob; home?: string; ifDue?: 
     const due = retestDue(home, input.job, input.now);
     if (!due.due) return { ran: false, due };
   }
+  writePrivateFile(attemptPath(home, job.id), `${(input.now ?? new Date()).toISOString()}\n`);
   const result = await runSuite({
     project: job.project,
     home,

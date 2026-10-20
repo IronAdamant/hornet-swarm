@@ -72,6 +72,14 @@ describe('the client report service', () => {
     expect(savedJobReports(home, 'fixture-monthly').map((report) => report.run_id)).toEqual([run.run_id]);
   });
 
+  it('names the authorisation the run was made under, not the project\'s current one', () => {
+    const run = saveRun({ pages: [{ name: 'home', result: { violations: [IMAGE_ALT] } }] });
+    const projectFile = join(home, 'projects', 'fixture', 'project.yaml');
+    writeFileSync(projectFile, readFileSync(projectFile, 'utf8').replace('authorisation_id: fixture-owner', 'authorisation_id: renewed-owner'));
+    const written = writeClientReport({ job: loadClientJob(jobFile()), runId: run.run_id, home });
+    expect(readFileSync(written.paths.markdown, 'utf8')).toContain('fixture-owner');
+  });
+
   it('refuses a run id that is a path, and a job file that is not valid', () => {
     const job = loadClientJob(jobFile());
     expect(() => writeClientReport({ job, runId: '../outside', home })).toThrow(/not a run id/);
@@ -107,6 +115,17 @@ describe('the scheduled re-test', () => {
     writeClientReport({ job, runId: run.run_id, home });
     expect(retestDue(home, job, new Date('2026-10-20T00:00:00.000Z'))).toMatchObject({ due: false, next_due_at: '2026-10-29T00:00:00.000Z' });
     expect(retestDue(home, job, new Date('2026-10-29T00:00:00.000Z')).due).toBe(true);
+  });
+
+  it('waits a day after an attempt that left no report, instead of re-running every hour', async () => {
+    const job = loadClientJob(jobFile());
+    suite.next = () => saveRun({ status: 'redaction_failure', redaction: 'fail' });
+    const first = await runRetest({ job, home, ifDue: true, now: new Date('2026-10-20T00:00:00.000Z') });
+    expect(first.ran).toBe(true);
+    const hourLater = await runRetest({ job, home, ifDue: true, now: new Date('2026-10-20T01:00:00.000Z') });
+    expect(hourLater.ran).toBe(false);
+    expect(suite.calls).toHaveLength(1);
+    expect(retestDue(home, job, new Date('2026-10-21T00:00:00.000Z')).due).toBe(true);
   });
 
   it('skips a job that is not due without starting a run', async () => {
