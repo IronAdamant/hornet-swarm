@@ -11,7 +11,7 @@ const projectDir = join(home, 'projects', project);
 
 beforeAll(() => {
   rmSync(projectDir, { recursive: true, force: true });
-  mkdirSync(projectDir, { recursive: true });
+  mkdirSync(projectDir, { recursive: true, mode: 0o700 });
   const source = readFileSync(join(home, 'projects/fixture/project.yaml'), 'utf8').replace(/^id: fixture$/m, 'id: board');
   writeFileSync(join(projectDir, 'project.yaml'), source);
 });

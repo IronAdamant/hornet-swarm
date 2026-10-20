@@ -3,7 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { loadAuthorisation, loadProject } from '../../packages/controller/src/authorisation.ts';
 import { injectSecrets, listFields, listLabels, setSecret } from '../../packages/controller/src/broker.ts';
+import { AuthorisedRun, RunnerSession } from '../../packages/controller/src/runner-session.ts';
+import { writeAuthorisedProject } from '../support/authorised-fixture.ts';
 
 const secret = 's3cret"<&broker-value>';
 const username = 'QA1@Example.TEST';
@@ -11,8 +14,9 @@ const username = 'QA1@Example.TEST';
 describe('secret broker', () => {
   it('stores with sops, injects over HTTP, and never returns a secret value', async () => {
     const swarmHome = join(homedir(), '.hornet-swarm');
-    mkdirSync(swarmHome, { recursive: true });
+    mkdirSync(swarmHome, { recursive: true, mode: 0o700 });
     const home = mkdtempSync(join(swarmHome, 'work-broker-'));
+    writeAuthorisedProject(home);
     const stored = setSecret('fixture', 'qa-user-1', 'password', secret, home);
     setSecret('fixture', 'qa-user-1', 'username', username, home);
     expect(JSON.stringify(stored)).not.toContain(secret);
@@ -36,7 +40,11 @@ describe('secret broker', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('no port');
-    const result = await injectSecrets('fixture', 'qa-user-1', `http://127.0.0.1:${address.port}`, home);
+    const { run } = AuthorisedRun.authorise(
+      { project: loadProject('fixture', home), auth: loadAuthorisation('fixture-owner', home), agentId: 'cli-test', home },
+      () => ({ loaded: undefined, journeys: [] }),
+    );
+    const result = await RunnerSession.open(run, 'qa-user-1', async () => `http://127.0.0.1:${address.port}`, (session) => injectSecrets(session));
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(JSON.stringify(result)).not.toContain(username);
@@ -47,5 +55,12 @@ describe('secret broker', () => {
     const pub = readFileSync(join(home, 'age.pub'), 'utf8');
     expect(pub.startsWith('age1')).toBe(true);
     expect(pub).not.toContain('AGE-SECRET-KEY-');
+  });
+
+  it('hands a login only to a runner session of an authorised run', async () => {
+    const forged = { projectId: 'fixture', label: 'qa-user-1', home: '/tmp' } as unknown as RunnerSession;
+    await expect(injectSecrets(forged)).rejects.toThrow('A login is handed only to a runner session of an authorised run.');
+    const fakeRun = { project: { id: 'fixture' }, home: '/tmp' } as unknown as AuthorisedRun;
+    expect(() => RunnerSession.open(fakeRun, 'qa-user-1', async () => 'http://127.0.0.1:1', async () => undefined)).toThrow('A runner session needs an authorised run.');
   });
 });

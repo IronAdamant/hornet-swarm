@@ -53,7 +53,7 @@ describe('credential requests', () => {
       expect(captured).toMatch(/Authentication canceled|Touch ID|not available|not confirmed|ETIMEDOUT/i);
       const evidence = process.env.AEGIS_EVIDENCE_DIR;
       if (evidence) {
-        mkdirSync(evidence, { recursive: true });
+        mkdirSync(evidence, { recursive: true, mode: 0o700 });
         writeFileSync(join(evidence, 'touchid.log'), captured);
       }
     }

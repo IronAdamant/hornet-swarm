@@ -6,11 +6,14 @@ import { describe, expect, it } from 'vitest';
 const root = join(import.meta.dirname, '..', '..');
 
 describe('continuous integration', () => {
-  it('runs build, lint, unit tests, and the redaction gate on Linux, and leaves end-to-end manual', () => {
+  it('runs build, typecheck, lint, unit tests, and the redaction gate on Linux, and leaves end-to-end manual', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     expect(workflow).toMatch(/^on:\n {2}push:\n {2}pull_request:/m);
     expect(workflow).toContain('runs-on: ubuntu-latest');
     expect(workflow).toContain('pnpm build');
+    expect(workflow.indexOf('run: pnpm typecheck')).toBeGreaterThan(workflow.indexOf('run: pnpm build'));
+    expect(workflow).toContain('fetch-depth: 0');
+    expect(workflow).toContain("HORNET_REQUIRE_HISTORY: '1'");
     expect(workflow).toContain('pnpm lint');
     expect(workflow).toContain('pnpm test');
     expect(workflow).toContain('pnpm test:coverage');

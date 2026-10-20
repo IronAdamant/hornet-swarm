@@ -7,13 +7,13 @@ import { hornet, clearSignins, home, localDocumentHash, root, secret } from './h
 beforeAll(() => {
   clearSignins();
   const dir = join(home, 'projects/fixture/journeys');
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   cpSync(join(root, 'examples/journeys/example-app/01-signin-dashboard.journey.yaml'), join(dir, '01-signin-dashboard.journey.yaml'));
   cpSync(join(root, 'examples/journeys/example-app/02-tenant-isolation.journey.yaml'), join(dir, '02-tenant-isolation.journey.yaml'));
   cpSync(join(root, 'test/e2e/journeys/flag.journey.yaml'), join(dir, 'flag.journey.yaml'));
   cpSync(join(root, 'test/e2e/journeys/both-users.journey.yaml'), join(dir, 'both-users.journey.yaml'));
-  mkdirSync(join(home, 'authorisations'), { recursive: true });
-  mkdirSync(join(home, 'projects/unauth'), { recursive: true });
+  mkdirSync(join(home, 'authorisations'), { recursive: true, mode: 0o700 });
+  mkdirSync(join(home, 'projects/unauth'), { recursive: true, mode: 0o700 });
   writeFileSync(join(home, 'authorisations/unauth.yaml'), `id: unauth
 basis: owner
 client: self

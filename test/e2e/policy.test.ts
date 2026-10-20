@@ -209,8 +209,8 @@ function withOperatorWait(yaml: string, seconds: number): string {
 }
 
 function writeMiniProject(id: string, base: string, domains: string[], environments: string[], environment = 'test'): void {
-  mkdirSync(join(home, 'authorisations'), { recursive: true });
-  mkdirSync(join(home, 'projects', id), { recursive: true });
+  mkdirSync(join(home, 'authorisations'), { recursive: true, mode: 0o700 });
+  mkdirSync(join(home, 'projects', id), { recursive: true, mode: 0o700 });
   writeFileSync(join(home, 'authorisations', `${id}.yaml`), `id: ${id}
 basis: owner
 client: self

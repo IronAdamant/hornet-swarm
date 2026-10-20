@@ -116,7 +116,7 @@ describe('agent identity', () => {
 
 /** acquire_test_user reads the project's runner cap, so the leases need a project to belong to. */
 function writeLeaseProject(home: string): void {
-  mkdirSync(join(home, 'projects', 'fixture'), { recursive: true });
+  mkdirSync(join(home, 'projects', 'fixture'), { recursive: true, mode: 0o700 });
   writeFileSync(
     join(home, 'projects', 'fixture', 'project.yaml'),
     `id: fixture

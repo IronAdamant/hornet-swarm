@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { decideAcquire, heartbeatLease, releaseLease, type AcquireDecision, type Lease } from '@hornet-swarm/core';
+import { decideAcquire, exclusivePrivateDir, heartbeatLease, privateDir, releaseLease, writePrivateFile, type AcquireDecision, type Lease } from '@hornet-swarm/core';
 import { writeAudit } from './audit.js';
-import { aegisHome, ensureDir } from './home.js';
+import { aegisHome } from './home.js';
 
 const held = new Set<string>();
 let signalsHooked = false;
@@ -147,15 +147,8 @@ function readLeases(home: string): Lease[] {
 }
 
 function writeLeases(home: string, leases: Lease[]): void {
-  ensureDir(home);
-  writeFileAtomic(join(home, 'leases.json'), `${JSON.stringify(leases)}\n`);
-}
-
-/** Writes beside the target and renames over it, so a crash never leaves half a file. */
-export function writeFileAtomic(file: string, body: string, mode = 0o600): void {
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(temp, body, { mode });
-  renameSync(temp, file);
+  privateDir(home);
+  writePrivateFile(join(home, 'leases.json'), `${JSON.stringify(leases)}\n`);
 }
 
 function withLock<T>(home: string, fn: () => T): T {
@@ -170,7 +163,7 @@ function withLock<T>(home: string, fn: () => T): T {
  * never both remove a lock and both believe they hold it.
  */
 export function withFileLock<T>(home: string, name: string, fn: () => T, timeoutMs = 5_000): T {
-  ensureDir(home);
+  privateDir(home);
   const lock = join(home, `${name}.lock`);
   const takeover = `${lock}.takeover`;
   const started = Date.now();
@@ -203,8 +196,8 @@ function discardLock(lock: string): void {
 
 function claimLock(lock: string): boolean {
   const staged = `${lock}.${process.pid}.${randomBytes(4).toString('hex')}.new`;
-  mkdirSync(staged);
-  writeFileSync(join(staged, 'pid'), `${process.pid}\n`);
+  exclusivePrivateDir(staged);
+  writePrivateFile(join(staged, 'pid'), `${process.pid}\n`);
   try {
     // A folder renames over a missing path, never over an existing one, so only one claimant wins.
     renameSync(staged, lock);
@@ -217,7 +210,7 @@ function claimLock(lock: string): boolean {
 
 function takeOverDeadLock(lock: string, takeover: string): void {
   try {
-    mkdirSync(takeover);
+    exclusivePrivateDir(takeover);
   } catch {
     // Another waiter is taking over. A takeover folder left by a crash is cleared after two seconds.
     try {

@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { assertGroupSocket, groupSharedDir, withSocketUmask } from '@hornet-swarm/core';
 import { admitControlRequest, wipeSecretStore, type HeaderMap } from './control.js';
 import { executeJob, type JobRequest } from './job.js';
 import { browserLaunchOptions } from './launch.js';
@@ -13,20 +14,18 @@ export type ControlServer = {
   abortRequested: () => boolean;
 };
 
-export function startControlServer(options: { socketPath: string; token: string; tokenFile?: string }): Promise<ControlServer> {
+/** The token is read from `tokenFile` on every request. A missing or empty file refuses every request. */
+export function startControlServer(options: { socketPath: string; tokenFile: string }): Promise<ControlServer> {
   const secrets = new Map<string, string>();
   let abortRequested = false;
-  const tokenFile = options.tokenFile;
+  const { tokenFile } = options;
+  if (!tokenFile) throw new Error('The runner needs a control token file.');
   const expectedToken = (): string => {
-    if (tokenFile && existsSync(tokenFile)) {
-      try {
-        const value = readFileSync(tokenFile, 'utf8').trim();
-        if (value) return value;
-      } catch {
-        return '';
-      }
+    try {
+      return readFileSync(tokenFile, 'utf8').trim();
+    } catch {
+      return '';
     }
-    return options.token;
   };
 
   const server = createServer((req, res) => {
@@ -99,13 +98,20 @@ export function startControlServer(options: { socketPath: string; token: string;
     }
   }
 
-  mkdirSync(dirname(options.socketPath), { recursive: true });
+  groupSharedDir(dirname(options.socketPath));
   if (existsSync(options.socketPath)) rmSync(options.socketPath);
 
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options.socketPath, () => {
-      chmodSync(options.socketPath, 0o660);
+    withSocketUmask(() => server.listen(options.socketPath));
+    server.once('listening', () => {
+      try {
+        assertGroupSocket(options.socketPath);
+      } catch (error) {
+        server.close();
+        reject(error);
+        return;
+      }
       resolve({
         socketPath: options.socketPath,
         close: () =>
@@ -177,7 +183,11 @@ function isDirectRun(): boolean {
 if (isDirectRun()) {
   const socketPath = process.env.AEGIS_CONTROL_SOCKET ?? '/tmp/hornet-swarm-control.sock';
   const tokenFile = process.env.AEGIS_CONTROL_TOKEN_FILE;
-  void startControlServer({ socketPath, token: '', ...(tokenFile ? { tokenFile } : {}) }).then((control) => {
+  if (!tokenFile) {
+    process.stderr.write('hornet-swarm-runner needs AEGIS_CONTROL_TOKEN_FILE.\n');
+    process.exit(2);
+  }
+  void startControlServer({ socketPath, tokenFile }).then((control) => {
     process.stderr.write(`hornet-swarm-runner listening on ${control.socketPath}\n`);
   });
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,8 @@ import {
   Redactor,
   accessibilityTags,
   atLeast,
+  chosenDir,
+  fixedText,
   renderTemplate,
   resolveSelf,
   runnerOverload,
@@ -20,6 +22,8 @@ import {
   type Step,
   type StepResult,
   type TemplateContext,
+  UnredactableError,
+  writeRedactedFile,
 } from '@hornet-swarm/core';
 
 export type ChaosAction = { step: number; kind: string; detail: string };
@@ -192,7 +196,7 @@ export type JobReport = {
 type SecretMap = Map<string, string>;
 
 export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted: () => boolean): Promise<JobReport> {
-  mkdirSync(job.outDir, { recursive: true });
+  chosenDir(job.outDir);
   const redactor = new Redactor();
   for (const [handle, value] of secrets) redactor.register(handle, value);
   const contextTemplate: TemplateContext = { vars: job.vars, users: job.users, run: { id: job.runId, label: job.label } };
@@ -401,7 +405,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
     await context.tracing.stop({ path: tracePath });
     await context.close();
     context = undefined;
-    writeFileSync(join(job.outDir, 'console.log'), consoleLogs.map((line) => redactor.redact(line)).join('\n'), 'utf8');
+    saveSealed(join(job.outDir, 'console.log'), consoleLogs.join('\n'), redactor);
   } catch (error) {
     status = status === 'passed' ? 'error' : status;
     const message = redactor.redact(error instanceof Error ? error.message : String(error));
@@ -412,7 +416,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
     closing = true;
     await context?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
-    if (existsSync(harPath)) writeFileSync(harPath, redactor.redact(readFileSync(harPath, 'utf8')));
+    if (existsSync(harPath)) saveSealed(harPath, readFileSync(harPath, 'utf8'), redactor);
     for (const [handle] of secrets) secrets.set(handle, '');
     secrets.clear();
   }
@@ -589,7 +593,7 @@ async function runStep(
     screenshots.push(path);
     // The words beside the picture, and what each form field holds, which a screenshot shows but
     // the page's text leaves out. A later run can say whether either changed.
-    writeFileSync(join(job.outDir, `${step.screenshot.name}.txt`), redactor.redact(await pageSnapshotText(page)), 'utf8');
+    saveSealed(join(job.outDir, `${step.screenshot.name}.txt`), await pageSnapshotText(page), redactor);
     return { statusCode: 0 };
   }
   if ('accessibility' in step) {
@@ -600,7 +604,7 @@ async function runStep(
     const raw = await checkAccessibility(page, accessibilityTags(standard), exclude);
     // The full findings, with each element's markup, go beside the screenshots. The markup can
     // hold what a customer typed, so it is masked like every other saved file.
-    writeFileSync(join(job.outDir, `accessibility-${check.name}.json`), redactor.redact(JSON.stringify({ name: check.name, standard, ...raw }, null, 2)), 'utf8');
+    saveSealed(join(job.outDir, `accessibility-${check.name}.json`), JSON.stringify({ name: check.name, standard, ...raw }, null, 2), redactor);
     const result: AccessibilityResult = {
       name: check.name,
       url: redactor.redact(raw.url),
@@ -633,7 +637,7 @@ async function runStep(
     await page.screenshot({ path, fullPage: true, mask: [page.locator('input[type="password"], [data-hornet-swarm-secret]')] });
     screenshots.push(path);
     const map = await inspectPage(page);
-    writeFileSync(join(job.outDir, `inspect-${name}.json`), redactor.redact(JSON.stringify(map, null, 2)), 'utf8');
+    saveSealed(join(job.outDir, `inspect-${name}.json`), JSON.stringify(map, null, 2), redactor);
     return { statusCode: 0 };
   }
   return { statusCode: 0 };
@@ -957,13 +961,24 @@ export async function pageSnapshotText(page: Page): Promise<string> {
   return `${sections.join('\n\n')}\n`;
 }
 
+/** Text that still holds a secret after masking is not saved; a `.withheld` note takes its place. */
+function saveSealed(path: string, text: string, redactor: Redactor): void {
+  try {
+    writeRedactedFile(path, redactor.seal(text), { parent: 'chosen' });
+  } catch (error) {
+    if (!(error instanceof UnredactableError)) throw error;
+    rmSync(path, { force: true });
+    writeRedactedFile(`${path}.withheld`, fixedText('withheld because masking could not remove a secret\n'), { parent: 'chosen' });
+  }
+}
+
 async function captureFailure(page: Page, job: JobRequest, index: number, secrets: SecretMap, redactor: Redactor, screenshots: string[]): Promise<void> {
   try {
     await maskSecrets(page, secrets);
     const path = join(job.outDir, `failed-step-${index}.png`);
     await page.screenshot({ path, timeout: 5_000, mask: [page.locator('input[type="password"], [data-hornet-swarm-secret]')] });
     screenshots.push(path);
-    writeFileSync(join(job.outDir, `failed-step-${index}.txt`), redactor.redact(await pageSnapshotText(page)), 'utf8');
+    saveSealed(join(job.outDir, `failed-step-${index}.txt`), await pageSnapshotText(page), redactor);
   } catch {
     // A page that has crashed or closed has nothing to capture. The step error still stands.
   }
