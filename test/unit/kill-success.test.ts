@@ -1,9 +1,20 @@
-import { existsSync, mkdtempSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { aegisHome } from '../../packages/controller/src/home.ts';
+import { engageKill } from '../../packages/controller/src/kill.ts';
 import { applyReturnedJob, type JobReport } from '../../packages/controller/src/suite.ts';
+
+describe('engaging the kill switch', () => {
+  it('writes the KILL file even when an older version left the home folder at 0755', () => {
+    const home = mkdtempSync(join(tmpdir(), 'hornet-kill-home-'));
+    chmodSync(home, 0o755);
+    engageKill(home);
+    expect(lstatSync(join(home, 'KILL')).mode & 0o777).toBe(0o600);
+    expect(lstatSync(home).mode & 0o777).toBe(0o755);
+  });
+});
 
 describe('returned job after an in-flight stop', () => {
   it('stops the project when the kill file is present and the job response still returns', async () => {
