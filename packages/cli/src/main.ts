@@ -2,11 +2,13 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { HornetError, acceptBaseline, assertAuthorisationUsable, checkFindings, documentPath, readFindingsFile, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, inspectPage, loadClientJob, measureResources, runRetest, writeAudit, writeClientReport, writeRetestDiff, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
+import { HornetError, acceptBaseline, assertAuthorisationUsable, checkFindings, documentPath, readFindingsFile, loadAuthorisation, sha256File, cleanupRetention, credentialStatus, defaultProjectFromHome, engageKill, envReset, envStatus, envUp, exportEvidence, inspectPage, loadClientJob, measureResources, recordAiUsage, runRetest, writeAudit, writeClientReport, writeRetestDiff, releaseKill, reliabilityMarkdown, reliabilityReport, requestCredentials, runDoctor, runSuite, startCredentialPage, stopRunners, storeOwnerLogin, swarmSnapshot } from '@hornet-swarm/controller';
 import { Command } from 'commander';
+import { registerDeleteAfterDelivery } from './delete-after-delivery.js';
 
 const program = new Command();
 program.name('hornet-swarm').description('Local authorised QA harness').version('0.1.0');
+registerDeleteAfterDelivery(program);
 
 program
   .command('doctor')
@@ -535,6 +537,7 @@ async function runCommand(
       project: opts.project ?? extra.project ?? defaultProjectFromHome(),
       agentId: ownId,
     });
+    recordAiUsage(result.run_id);
     if (opts.json) writeJson(result);
     else {
       process.stdout.write('The parent must validate this run.\n');

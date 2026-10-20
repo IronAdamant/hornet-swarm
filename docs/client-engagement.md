@@ -72,3 +72,15 @@ Write the report as a findings table, worst first. For each finding:
 | Evidence | Run id, screenshot name, network entry |
 
 Finish with what you could not check and why, such as an exclusion, a captcha, or a page the test accounts could not reach. Say plainly what passed.
+
+## 5. Look after what the run stored
+
+Full-disk encryption is required. On this Mac that is FileVault. Turn FileVault on before a client job is stored on this machine. The runs, page bodies, and evidence sit on this disk, and FileVault is what protects them when the machine is off.
+
+After the report is delivered, wipe that job's stored runs:
+
+```bash
+pnpm hornet-swarm delete-after-delivery --job <file>
+```
+
+That removes the job's run folders, including page bodies and evidence. Another job's runs stay. Runs are also dropped after 7 days by default, even when you do not use that command. Response bodies saved in `network.har` and in the trace's network log have email addresses and phone numbers masked. Screenshots, saved page text, trace page snapshots, and `evidence.zip` can still show them, so treat a run folder as client data until it is deleted. The human pass for WCAG 2.2 AA is `docs/wcag22-manual-checklist.md`. Work through that list yourself. The automated check does not mark those rows as passed.
