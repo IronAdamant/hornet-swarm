@@ -72,6 +72,14 @@ describe('the client report service', () => {
     expect(savedJobReports(home, 'fixture-monthly').map((report) => report.run_id)).toEqual([run.run_id]);
   });
 
+  it('names the authorisation the run was made under, not the project\'s current one', () => {
+    const run = saveRun({ pages: [{ name: 'home', result: { violations: [IMAGE_ALT] } }] });
+    const projectFile = join(home, 'projects', 'fixture', 'project.yaml');
+    writeFileSync(projectFile, readFileSync(projectFile, 'utf8').replace('authorisation_id: fixture-owner', 'authorisation_id: renewed-owner'));
+    const written = writeClientReport({ job: loadClientJob(jobFile()), runId: run.run_id, home });
+    expect(readFileSync(written.paths.markdown, 'utf8')).toContain('fixture-owner');
+  });
+
   it('refuses a run id that is a path, and a job file that is not valid', () => {
     const job = loadClientJob(jobFile());
     expect(() => writeClientReport({ job, runId: '../outside', home })).toThrow(/not a run id/);
