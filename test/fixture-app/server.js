@@ -101,6 +101,14 @@ export function createFixture() {
     res.type('html').send(page('Check', '<iframe src="/captcha-frame" title="recaptcha"></iframe><p>verify you are human</p>'));
   });
 
+  app.get('/hidden-captcha', (_req, res) => {
+    res.type('html').send(page('Check', '<iframe src="/recaptcha/api2/anchor" title="Widget containing checkbox"></iframe>'));
+  });
+
+  app.get('/recaptcha/api2/anchor', (_req, res) => {
+    res.type('html').send('<!doctype html><input name="answer">');
+  });
+
   app.get('/captcha-frame', (_req, res) => {
     res.type('html').send('<p>recaptcha</p>');
   });

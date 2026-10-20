@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,6 +107,13 @@ describe('card frames, a storefront password, and an emailed code', () => {
     );
     expect(captcha.status).toBe('failed');
     expect(captcha.steps.at(-1)?.error).toContain('does not fill a captcha frame');
+    const hidden = await executeJob(
+      job([{ navigate: { url: '/hidden-captcha' } }, { fill: { selector: '[name=answer]', frame: 'iframe >> nth=0', value: '1' } }], 'hidden-captcha'),
+      secrets(),
+      () => false,
+    );
+    expect(hidden.status).not.toBe('passed');
+    expect(hidden.steps.some((step) => step.type === 'fill' && step.status === 'pass')).toBe(false);
   });
 
   it('opens a storefront password page with the test password', async () => {
@@ -126,22 +133,44 @@ describe('card frames, a storefront password, and an emailed code', () => {
   });
 
   it('types an emailed code from the test inbox, and stops when the journey has no inbox step', async () => {
-    const signedIn = await executeJob(
+    const codeJob = job(
+      [
+        { navigate: { url: '/emailed-code' } },
+        { inbox: { mailbox: 'customer', selector: 'input[name=code]' } },
+        { screenshot: { name: 'typed' } },
+        { click: { selector: 'button[type=submit]' } },
+        { assert: { type: 'text_visible', value: 'signed in' } },
+      ],
+      'code',
+    );
+    const signedIn = await executeJob(codeJob, secrets(), () => false);
+    expect(signedIn.status, JSON.stringify(signedIn.steps.map((step) => step.error))).toBe('passed');
+    expect(existsSync(join(codeJob.outDir, 'trace.zip'))).toBe(false);
+    expect(existsSync(join(codeJob.outDir, 'trace.zip.dropped'))).toBe(true);
+    for (const entry of readdirSync(codeJob.outDir, { withFileTypes: true }).filter((file) => file.isFile())) {
+      expect(readFileSync(join(codeJob.outDir, entry.name)).toString('latin1'), entry.name).not.toContain(emailCode);
+    }
+    expect(JSON.stringify(signedIn)).not.toContain(emailCode);
+    const stopped = await executeJob(job([{ navigate: { url: '/emailed-code' } }, { assert: { type: 'text_visible', value: 'signed in' } }], 'no-inbox'), secrets(), () => false);
+    expect(stopped.status).toBe('blocked');
+    expect(stopped.blocked_reason).toBe('2fa');
+  });
+
+  it('still stops at a second-code screen that the inbox step does not answer', async () => {
+    const report = await executeJob(
       job(
         [
           { navigate: { url: '/emailed-code' } },
+          { assert: { type: 'text_visible', value: 'We emailed you a code' } },
           { inbox: { mailbox: 'customer', selector: 'input[name=code]' } },
-          { click: { selector: 'button[type=submit]' } },
-          { assert: { type: 'text_visible', value: 'signed in' } },
         ],
-        'code',
+        'unrelated-code',
       ),
       secrets(),
       () => false,
     );
-    expect(signedIn.status, JSON.stringify(signedIn.steps.map((step) => step.error))).toBe('passed');
-    const stopped = await executeJob(job([{ navigate: { url: '/emailed-code' } }, { assert: { type: 'text_visible', value: 'signed in' } }], 'no-inbox'), secrets(), () => false);
-    expect(stopped.status).toBe('blocked');
-    expect(stopped.blocked_reason).toBe('2fa');
+    expect(report.status).toBe('blocked');
+    expect(report.blocked_reason).toBe('2fa');
+    expect(report.steps).toHaveLength(1);
   });
 });
