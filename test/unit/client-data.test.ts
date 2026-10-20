@@ -15,6 +15,7 @@ import { loadClientJob, writeClientReport } from '../../packages/controller/src/
 import { writeAuthorisedProject } from '../support/authorised-fixture.ts';
 import { fixtureRun } from '../support/client-report-fixture.ts';
 import { createFixture } from '../fixture-app/server.js';
+import { buildPackagesIfStale } from '../support/build-packages.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -31,14 +32,8 @@ not_in_scope:
 schedule: { cadence: monthly }
 `;
 
-let built = false;
-
 function ensureBuilt(): void {
-  if (built) return;
-  for (const name of ['@hornet-swarm/core', '@hornet-swarm/report', '@hornet-swarm/controller', '@hornet-swarm/cli']) {
-    execFileSync('pnpm', ['--filter', name, 'build'], { cwd: root, stdio: 'inherit' });
-  }
-  built = true;
+  buildPackagesIfStale(['@hornet-swarm/core', '@hornet-swarm/report', '@hornet-swarm/controller', '@hornet-swarm/cli'], 'inherit');
 }
 
 describe('client data handling', () => {
