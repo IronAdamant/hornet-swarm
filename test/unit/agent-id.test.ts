@@ -1,10 +1,11 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '../../packages/mcp-server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { StdioClientTransport } from '../../packages/mcp-server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js';
+import { buildPackagesIfStale } from '../support/build-packages.ts';
 
 const root = join(import.meta.dirname, '..', '..');
 const mcp = join(root, 'packages/mcp-server/dist/main.js');
@@ -19,10 +20,7 @@ describe('agent identity', () => {
   let secondSession: Client;
 
   beforeAll(async () => {
-    execFileSync('pnpm', ['--filter', '@hornet-swarm/mcp-server', '--filter', '@hornet-swarm/cli', 'build'], {
-      cwd: root,
-      stdio: 'inherit',
-    });
+    buildPackagesIfStale(['@hornet-swarm/mcp-server', '@hornet-swarm/cli'], 'inherit');
     writeLeaseProject(home);
     firstSession = await openSession(home);
     secondSession = await openSession(home);
