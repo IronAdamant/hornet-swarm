@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -31,6 +31,7 @@ import { acceptBaseline, authEndpointPatterns, baselineDir, moveArtifacts, runOu
 import { saveSwarmBoard, swarmSnapshot } from '../../packages/controller/src/swarm.ts';
 import { pollOperatorGate } from '../../packages/runner/src/job.ts';
 import { isolationBreach, summaryMarkdown, type RichUser } from '../../packages/report/src/render.ts';
+import { buildPackagesIfStale } from '../support/build-packages.ts';
 
 const root = join(import.meta.dirname, '..', '..');
 const readYaml = (path: string): unknown => parse(readFileSync(path, 'utf8'));
@@ -423,7 +424,7 @@ describe('the Keychain write', () => {
 
 describe('file locks', () => {
   beforeAll(() => {
-    execFileSync('pnpm', ['--filter', '@hornet-swarm/core', '--filter', '@hornet-swarm/report', '--filter', '@hornet-swarm/controller', 'build'], { cwd: root, stdio: 'ignore' });
+    buildPackagesIfStale(['@hornet-swarm/core', '@hornet-swarm/report', '@hornet-swarm/controller']);
   }, 120_000);
 
   it('takes over a lock left by a dead process', async () => {

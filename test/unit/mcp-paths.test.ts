@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '../../packages/mcp-server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { StdioClientTransport } from '../../packages/mcp-server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js';
+import { buildPackagesIfStale } from '../support/build-packages.ts';
 
 const root = join(import.meta.dirname, '..', '..');
 const mcp = join(root, 'packages/mcp-server/dist/main.js');
@@ -20,7 +20,7 @@ describe('agents name journeys and projects by id only', () => {
   let second: Client;
 
   beforeAll(async () => {
-    execFileSync('pnpm', ['--filter', '@hornet-swarm/mcp-server', 'build'], { cwd: root, stdio: 'ignore' });
+    buildPackagesIfStale(['@hornet-swarm/mcp-server']);
     writeFileSync(outside, 'version: 1\nid: outside\nsecret_marker: do-not-echo\n');
     mkdirSync(join(home, 'projects', 'paths'), { recursive: true, mode: 0o700 });
     writeFileSync(
