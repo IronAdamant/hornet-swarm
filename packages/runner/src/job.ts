@@ -1,14 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
-import { Redactor, chosenDir, runnerOverload, type Step, type TemplateContext } from '@hornet-swarm/core';
+import { Redactor, chosenDir, fixedText, runnerOverload, writeRedactedFile, type Step, type TemplateContext } from '@hornet-swarm/core';
 import { browserLaunchOptions } from './launch.js';
 import { RedundantEntryTracker } from './redundant-entry-tracker.js';
 import { detectChallenge, journeyFillsTotp, classifyBlockedReason } from './job-challenge.js';
 import { applyChaos, createBucket, interruptible, mainFrameNavigation, originAllowed } from './job-net.js';
 import { askOperator, fillVisibleCode, resolveChallenge } from './job-operator.js';
 import { captureFailure, failureClues, finishStep, saveSealed, type StepFindings } from './job-page.js';
-import { runStep } from './job-steps.js';
+import { INBOX_CODE_HANDLE, runStep } from './job-steps.js';
 import { AbortJob, type JobReport, type JobRequest, type SecretMap } from './job-types.js';
 
 export type { ChaosAction, JobReport, JobRequest } from './job-types.js';
@@ -123,8 +123,8 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         status: response.status(),
       });
     });
-    // An inbox step is the journey opting in to a code from the test inbox. It is not a captcha solver.
-    const fillsTotp = journeyFillsTotp(job.steps) || job.steps.some((step) => 'inbox' in step);
+    const journeyTotp = journeyFillsTotp(job.steps);
+    let inboxAnsweredAt = -1;
     const entries = new RedundantEntryTracker();
 
     for (let index = 0; index < job.steps.length; index += 1) {
@@ -157,6 +157,10 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
         if (!('wait' in step) && !('assert' in step) && !('screenshot' in step) && !('accessibility' in step) && !('inspect' in step)) nav.mark = nav.count;
         const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted, chaosEffect.doubleClick, found, entries, index);
+        // An inbox step answers one emailed code: on the page that asks before it, and on the same page
+        // after it until the page moves on. A second-code screen anywhere else still stops the run.
+        if ('inbox' in step) inboxAnsweredAt = nav.count;
+        const fillsTotp = journeyTotp || 'inbox' in (job.steps[index + 1] ?? {}) || inboxAnsweredAt === nav.count;
         // Typed-in values stay on the page until it navigates away. Chaos must not refresh them away.
         if ('fill' in step || 'select' in step) formInProgress = true;
         if ('navigate' in step || nav.count !== navBefore) formInProgress = false;
@@ -231,6 +235,11 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
     await context.tracing.stop({ path: tracePath });
     await context.close();
     context = undefined;
+    // A trace records every typed value. The controller cannot mask an emailed code it never saw.
+    if ([...secrets.keys()].some((handle) => handle.startsWith(INBOX_CODE_HANDLE))) {
+      rmSync(tracePath, { force: true });
+      writeRedactedFile(`${tracePath}.dropped`, fixedText('trace dropped because the journey typed an emailed code\n'), { parent: 'chosen' });
+    }
     saveSealed(join(job.outDir, 'console.log'), consoleLogs.join('\n'), redactor);
   } catch (error) {
     status = status === 'passed' ? 'error' : status;
