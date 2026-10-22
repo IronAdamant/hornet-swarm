@@ -8,6 +8,8 @@ import type { JobRequest, SecretMap } from './job-types.js';
 import { readInboxCode } from './inbox.js';
 import { inspectPage, pageSnapshotText, saveSealed, type StepFindings } from './job-page.js';
 import { ASSERT_TIMEOUT_MS, absolute, deniedByMarker, fixturesDir, interruptible, locate, maskSecrets, originAllowed, pollUntil, waitForNavigationOrSettle, type NavState } from './job-net.js';
+import { runPassiveSecurityCheck } from './passive-security-step.js';
+import type { SecurityObservations } from './security-observations.js';
 
 export async function runStep(
   page: Page,
@@ -25,6 +27,7 @@ export async function runStep(
   found: StepFindings = {},
   entries?: RedundantEntryTracker,
   stepIndex = 0,
+  observations?: SecurityObservations,
 ): Promise<{ statusCode: number; httpStatus?: number }> {
   if ('navigate' in step) {
     const url = absolute(renderTemplate(step.navigate.url, template), job.baseUrl);
@@ -182,6 +185,22 @@ export async function runStep(
     assertions.push(`accessibility ${check.name} (${check.standard ?? DEFAULT_ACCESSIBILITY_STANDARD})`);
     const outcome = await runAccessibilityCheck(page, check, exclude, redactor, (fileName, text) => saveSealed(join(job.outDir, fileName), text, redactor));
     found.accessibility = outcome.result;
+    if (outcome.failure) throw new Error(outcome.failure);
+    return { statusCode: 0 };
+  }
+  if ('passive_security' in step) {
+    const check = step.passive_security;
+    assertions.push(`passive_security ${check.name}`);
+    const outcome = await runPassiveSecurityCheck(
+      page,
+      check,
+      job.passiveSecurityAuthorised === true,
+      job.baseUrl,
+      observations,
+      redactor,
+      (fileName, text) => saveSealed(join(job.outDir, fileName), text, redactor),
+    );
+    found.passiveSecurity = outcome.result;
     if (outcome.failure) throw new Error(outcome.failure);
     return { statusCode: 0 };
   }

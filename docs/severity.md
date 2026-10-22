@@ -22,6 +22,15 @@ In a client report, the reviewer's grade goes in the job file's `severity_overri
 
 The harness's own WCAG 2.2 checks start at: a focused control entirely hidden behind a banner (2.4.11) Medium, a password field that blocks pasting (3.3.8) Medium, and help links in a different order from page to page (3.2.6) Low. Dragging (2.5.7), a password field with autocomplete off or a puzzle (3.3.8), and a value typed twice (3.3.7) are listed for a person to review, not graded, because the check cannot tell whether an alternative exists.
 
+## Passive security findings
+
+A `passive_security` step uses Low and Medium only. It does not use the functional scale above, and it does not grade a site as secure. High is not used: the step cannot show that a customer is locked out or that money is wrong.
+
+- **Medium:** the document was loaded over TLS 1.0, TLS 1.1, or SSL, or a session-named cookie is missing `Secure` on HTTPS or missing `HttpOnly`. The cookie value is not what is exposed here. The flag says the browser will send it, or that page script can read it.
+- **Low:** a missing or weak browser policy on the document response (Content-Security-Policy, `nosniff`, Referrer-Policy, frame protection, HSTS on HTTPS), a non-session cookie missing `Secure` on HTTPS, or `SameSite=None`.
+
+On plain HTTP, a missing HSTS header and a missing `Secure` flag are not findings. The summary says this is not a penetration test.
+
 ## Planted faults
 
 A practice site's deliberate bugs are rated like any other fault. On a client's site, they would be real.

@@ -156,7 +156,7 @@ server.registerTool(
   'run_journey',
   {
     description:
-      'Run one journey. Pass journey_id for a saved journey, or journey_yaml to write your own. A written journey gets the same checks as any other: allowed sites only, no literal passwords, credentials by handle such as qa-user-1.password. It is saved under the project for reuse.',
+      'Run one journey. Pass journey_id for a saved journey, or journey_yaml to write your own. A written journey gets the same checks as any other: allowed sites only, no literal passwords, credentials by handle such as qa-user-1.password. A passive_security step runs only when the authorisation lists passive_security_checks. It is saved under the project for reuse.',
     inputSchema: z.object({
       project: z.string(),
       journey_id: z.string().optional(),
