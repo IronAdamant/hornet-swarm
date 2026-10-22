@@ -190,10 +190,17 @@ export function isAccessControlJourney(journey: Pick<Journey, 'steps' | 'tags'>)
   return journey.steps.some((step) => 'assert' in step && isAccessControlAssertion(step.assert.type, step.assert.value));
 }
 
+/** A journey reads security headers when it has a passive_security step or the tag passive-security. */
+export function isPassiveSecurityJourney(journey: Pick<Journey, 'steps' | 'tags'>): boolean {
+  if (journey.tags.some((tag) => tag.toLowerCase() === 'passive-security')) return true;
+  return journey.steps.some((step) => 'passive_security' in step);
+}
+
 /**
  * The work a run will do must be among the authorisation's activities. A sign-in check needs
  * signin_smoke or functional_e2e. A journey needs functional_e2e, or access_control_checks when it
- * is an access-control check. Chaos is checked by chaosPermitted.
+ * is an access-control check. A passive security step also needs passive_security_checks. Chaos is
+ * checked by chaosPermitted.
  */
 export function activitiesPermitted(auth: Authorisation, work: { signIn: boolean; journeys: ReadonlyArray<Pick<Journey, 'id' | 'steps' | 'tags'>> }): PolicyResult {
   const allowed = new Set<ActivityName>(auth.activities);
@@ -203,6 +210,9 @@ export function activitiesPermitted(auth: Authorisation, work: { signIn: boolean
   for (const journey of work.journeys) {
     const needed: ActivityName = isAccessControlJourney(journey) ? 'access_control_checks' : 'functional_e2e';
     if (!allowed.has(needed)) return { ok: false, reason: `activity_not_authorised:${needed}:${journey.id}` };
+    if (isPassiveSecurityJourney(journey) && !allowed.has('passive_security_checks')) {
+      return { ok: false, reason: `activity_not_authorised:passive_security_checks:${journey.id}` };
+    }
   }
   return { ok: true };
 }

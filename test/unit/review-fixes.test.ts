@@ -103,6 +103,11 @@ describe('authorisation activities are enforced', () => {
     }
     expect(isAccessControlJourney(notFound)).toBe(false);
     expect(isAccessControlJourney(journey([{ assert: { type: 'http_status', value: '401' } }]))).toBe(true);
+    const headers = journey([{ navigate: { url: '/' } }, { passive_security: { name: 'home' } }], { id: 'headers' });
+    expect(activitiesPermitted(auth(['signin_smoke', 'functional_e2e']), { signIn: true, journeys: [headers] }).reason).toBe('activity_not_authorised:passive_security_checks:headers');
+    expect(activitiesPermitted(auth(['signin_smoke', 'functional_e2e', 'passive_security_checks']), { signIn: true, journeys: [headers] }).ok).toBe(true);
+    const taggedSecurity = journey([{ navigate: { url: '/' } }], { id: 'tagged-security', tags: ['passive-security'] });
+    expect(activitiesPermitted(auth(['functional_e2e']), { signIn: false, journeys: [taggedSecurity] }).reason).toBe('activity_not_authorised:passive_security_checks:tagged-security');
   });
 
   it('refuses an access-control journey against a public practice site, whose authorisation cannot list it', () => {

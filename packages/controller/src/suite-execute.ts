@@ -207,6 +207,7 @@ export async function executeIssued(
     deadline,
     operatorWaitMs: project.auth.operator_code_wait_sec * 1000,
     ...(pollUrl ? { operatorPollUrl: pollUrl } : {}),
+    ...(session.run.auth.activities.includes('passive_security_checks') ? { passiveSecurityAuthorised: true } : {}),
   };
   const controller = new AbortController();
   let abortReason: 'kill' | 'duration' | undefined;
