@@ -13,7 +13,7 @@ scope:
   environments: [test]
 activities: [signin_smoke, functional_e2e]
 exclusions:
-  - No chaos, load, or access-control probing. This is a shared free host.
+  - No chaos, load, access-control probing, or passive security-header checks. This is a shared free host.
   - Only the login the site publishes on its own login page.
 valid_from: "2026-10-12"
 valid_until: "2027-01-10"

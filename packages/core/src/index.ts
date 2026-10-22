@@ -6,6 +6,7 @@ export * from './estimates.js';
 export * from './inspect.js';
 export * from './journey.js';
 export * from './lease.js';
+export * from './passive-security.js';
 export * from './policy.js';
 export * from './redactor.js';
 export * from './report-wording-guard.js';

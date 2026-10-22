@@ -1,6 +1,6 @@
 # Security
 
-Hornet Swarm may only be pointed at systems you own, systems you are authorised in writing to test, or public sites that publish that they exist for test-automation practice. A `public_practice` authorisation records where the site says so and refuses chaos, access-control probing, and heavy traffic. The authorisation file is a technical check that records that permission. It is not a substitute for the permission itself.
+Hornet Swarm may only be pointed at systems you own, systems you are authorised in writing to test, or public sites that publish that they exist for test-automation practice. A `public_practice` authorisation records where the site says so and refuses chaos, access-control probing, passive security checks, and heavy traffic. The authorisation file is a technical check that records that permission. It is not a substitute for the permission itself. In Australia, unauthorised access to restricted data is an offence under the Criminal Code Act 1995 (Cth). Do not point a security step at a host the written authorisation does not cover.
 
 Do not put real customer passwords in the store. Use accounts that were created for testing. Hornet Swarm encrypts those values with age, keeps the private key in the macOS Keychain, and sends them into a runner only while a job is running. Agents, logs, screenshots, traces, and reports are supposed to show labels such as `qa-user-1`, not the password.
 
@@ -8,7 +8,7 @@ Redaction looks for each stored value as typed, lowercased where that applies, a
 
 If a saved result still contains a secret, Hornet Swarm marks the run as a redaction failure and removes that file. Do not share the folder until you have checked it.
 
-An owner or contract authorisation must keep its signed document. A run stops when that file is missing or its sha256 has changed. The authorisation's `activities` are enforced: a journey needs `functional_e2e`, and an access check needs `access_control_checks`. `exclusions` cannot be checked by software. They are shown to every agent, and you remain responsible for them.
+An owner or contract authorisation must keep its signed document. A run stops when that file is missing or its sha256 has changed. The authorisation's `activities` are enforced: a journey needs `functional_e2e`, an access check needs `access_control_checks`, and a `passive_security` step also needs `passive_security_checks`. The controller sets that permission on the job only from the activity list, and the runner refuses the step when it is absent. The step reads headers and cookie flags from the document response the journey already caused. It does not send a payload. `exclusions` cannot be checked by software. They are shown to every agent, and you remain responsible for them.
 
 The age key is stored in the Keychain through `security`'s standard input, so it never appears in a process list. Passive third parties are never navigated to or typed into, even by a link or a script on the page.
 

@@ -29,6 +29,11 @@ export type JobRequest = {
   operatorWaitMs?: number;
   /** Directory of test-inbox mailboxes. A journey reads one only when it has an inbox step. */
   inboxDir?: string;
+  /**
+   * Set by the controller only when the authorisation lists passive_security_checks.
+   * A passive_security step refuses to run when this is not true.
+   */
+  passiveSecurityAuthorised?: boolean;
 };
 
 export type JobReport = {

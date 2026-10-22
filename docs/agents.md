@@ -72,7 +72,7 @@ steps:
 - A label with no stored login whose journeys all have `requires_phase1: false` runs as a guest. The summary names it as a guest, not a failed sign-in.
 - `self.username` and `self.password` mean the label running the journey. One journey can serve every label.
 - Each journey runs in a fresh browser, so it signs in itself.
-- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label`, `value`, or `index`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`, `accessibility` (checks the page against WCAG 2.2 AA and records problems, with criteria a check cannot decide kept as needs manual review; `fail_on: serious` makes it fail), and `inspect` (saves a map of the page).
+- Steps: `navigate`, `click`, `fill`, `select` (a dropdown, by `label`, `value`, or `index`), `wait` (`navigation`, `selector`, `timeout`), `assert`, `upload`, `screenshot`, `accessibility` (checks the page against WCAG 2.2 AA and records problems, with criteria a check cannot decide kept as needs manual review; `fail_on: serious` makes it fail), `passive_security` (reads headers and cookie flags on the document this journey already loaded; it sends nothing; it runs only when the authorisation lists `passive_security_checks`), and `inspect` (saves a map of the page).
 - Assertions: `url_contains`, `text_visible`, `selector_visible`, `selector_absent`, `http_status`, `access_denied`, and `field_value` (with a `selector`, for what a form field holds). `url_contains`, `text_visible`, `selector_visible`, and `field_value` wait up to 10 seconds.
 - Templates: `{{run.id}}` (a fresh made-up email per run, such as `nova.{{run.id}}@example.com`), `{{run.tag}}` (its short last part, for a username length limit), `{{run.label}}`, `{{self.vars.city}}` (the running label's own value from the project), and `{{date.+30}}`.
 - Assert what a working site does. A planted or real bug then shows up as a failed step with the page's own words.
@@ -82,6 +82,7 @@ steps:
 - `validate_journey` checks a journey without running it. A journey that navigates off the allowed site, fills a passive third party, or contains a literal password is refused. A navigate URL is checked after its `{{vars}}` are filled in, and `//host/` counts as a site.
 - Name journeys by id, such as `signin-dashboard`. A file path is refused.
 - A journey with an `access_denied` assertion, an expected 401 or 403, or the tag `access-control` is an access check. It runs only when the authorisation lists `access_control_checks`. A public practice site never lists that activity. `lab-owner` lists it for the local labs. ParaBank's `admin-page-readonly` journey uses the tag and must not press Initialize, Clean, or JMS.
+- A `passive_security` step, or the tag `passive-security`, runs only when the authorisation lists `passive_security_checks` as well as the journey's other activity. A public practice site cannot list it. The step does not try payloads, and it is not a penetration test. Do not add one unless the written authorisation covers that observation.
 - `requires_phase1: false` lets a journey run when the label's sign-in check failed. Use it only for pages that need no login.
 - An `upload` step attaches a file the runner image ships: `sample.txt`, `sample.png`, or `sample.pdf`.
 
@@ -89,7 +90,7 @@ steps:
 
 The Internet is a public site built for test-automation practice. Other people use it too.
 
-- Keep the project's limits. A `public_practice` authorisation refuses more than 10 requests a second in total, 5 per runner, 6 runners at once, chaos, and access-control probing. Each runner gets an equal share of the total.
+- Keep the project's limits. A `public_practice` authorisation refuses more than 10 requests a second in total, 5 per runner, 6 runners at once, chaos, access-control probing, and passive security checks. Each runner gets an equal share of the total.
 - Read `exclusions` in `get_swarm`. They are the owner's written limits, such as never typing a real card number. Follow them as you would the label's rules.
 - Never type real personal details. The journeys use placeholders.
 
