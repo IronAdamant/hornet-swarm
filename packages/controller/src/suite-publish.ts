@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { analysisSchema, privateDir, Redactor, runResultSchema, UnredactableError, writeRedactedFile, type Analysis, type RunResult, type StepResult } from '@hornet-swarm/core';
-import { analysisMarkdown, htmlReport, junitXml, quarantineFile, scanTree, summaryMarkdown, type RichStep, type RichUser } from '@hornet-swarm/report';
+import { join, relative, resolve, sep } from 'node:path';
+import { analysisSchema, privateDir, readRegularFile, Redactor, runResultSchema, UnredactableError, writeRedactedFile, type Analysis, type RunResult, type StepResult } from '@hornet-swarm/core';
+import { analysisMarkdown, htmlReport, IaFindingsError, iaFindingsFromRun, junitXml, quarantineFile, renderIaFindings, scanTree, summaryMarkdown, type RichStep, type RichUser } from '@hornet-swarm/report';
 import { writeAudit } from './audit.js';
 import { loadProject } from './authorisation.js';
 import { registerProjectSecrets } from './broker.js';
@@ -99,6 +99,7 @@ export function writeRunReports(
   summary: string,
   redactor: Redactor,
   artifacts?: { screenshots: string[]; traces: string[] },
+  iaContext?: { baseUrl?: string; subjectName?: string },
 ): string[] {
   const reports: [string, () => string][] = [
     ['run.json', () => `${JSON.stringify(result, null, 2)}\n`],
@@ -118,7 +119,70 @@ export function writeRunReports(
       withheld.push(file);
     }
   }
+  withheld.push(...writeIaFindings(runDir, result, redactor, iaContext));
   return withheld;
+}
+
+/**
+ * Internal findings file and the report rendered from it. A failed redaction check writes neither.
+ * These files are groundwork. They are not the client report, and the run marks them internal.
+ */
+function writeIaFindings(runDir: string, result: RunResult, redactor: Redactor, iaContext?: { baseUrl?: string; subjectName?: string }): string[] {
+  if (result.redaction === 'fail') return [];
+  let written: { json: string; markdown: string; html: string };
+  try {
+    const doc = iaFindingsFromRun(result, { ...iaContext, axeFiles: readSavedAxeFiles(runDir) });
+    const rendered = renderIaFindings(doc);
+    written = { json: `${JSON.stringify(doc, null, 2)}\n`, markdown: rendered.markdown, html: rendered.html };
+  } catch (error) {
+    if (error instanceof IaFindingsError) return [];
+    throw error;
+  }
+  const withheld: string[] = [];
+  for (const [name, text] of [
+    ['ia-findings.json', written.json],
+    ['ia-report.md', written.markdown],
+    ['ia-report.html', written.html],
+  ] as const) {
+    const file = join(runDir, name);
+    try {
+      writeRedactedFile(file, redactor.seal(text));
+    } catch (error) {
+      if (!(error instanceof UnredactableError)) throw error;
+      withheld.push(file);
+    }
+  }
+  return withheld;
+}
+
+function readSavedAxeFiles(runDir: string): { path: string; body: unknown }[] {
+  const found: { path: string; body: unknown }[] = [];
+  const root = resolve(runDir);
+  const walk = (dir: string) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.startsWith('accessibility-') || !entry.name.endsWith('.json')) continue;
+      try {
+        const text = readRegularFile(full).toString('utf8');
+        found.push({ path: relative(root, full).split(sep).join('/'), body: JSON.parse(text) as unknown });
+      } catch {
+        continue;
+      }
+    }
+  };
+  walk(root);
+  return found;
 }
 
 export function collectArtifacts(runDir: string): { screenshots: string[]; texts: string[]; traces: string[] } {

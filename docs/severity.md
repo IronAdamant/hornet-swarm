@@ -22,6 +22,10 @@ In a client report, the reviewer's grade goes in the job file's `severity_overri
 
 The harness's own WCAG 2.2 checks start at: a focused control entirely hidden behind a banner (2.4.11) Medium, a password field that blocks pasting (3.3.8) Medium, and help links in a different order from page to page (3.2.6) Low. Dragging (2.5.7), a password field with autocomplete off or a puzzle (3.3.8), and a value typed twice (3.3.7) are listed for a person to review, not graded, because the check cannot tell whether an alternative exists.
 
+## Internal findings file
+
+`ia-findings.json` is not a client report. It maps axe-core impact onto its own four-step scale: critical stays critical, serious is high, moderate is medium, and minor is low. Client reports still use the High, Medium, and Low grades above. A finding under 0.5 confidence is `needs_review` and is not scored.
+
 ## Planted faults
 
 A practice site's deliberate bugs are rated like any other fault. On a client's site, they would be real.

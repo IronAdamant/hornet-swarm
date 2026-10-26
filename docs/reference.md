@@ -53,6 +53,8 @@ pnpm hornet-swarm suite --project fixture \
 
 Reports land in `~/.hornet-swarm/runs/<run id>/`. `summary.md` is the short version for a person. `analysis.json` is the detailed version for an agent. Its `suspected_cause` and `repro_steps` name the first real problem, step by step. Its `confidence` says how directly that evidence names the cause: high for a known stop such as a kill or a captcha, fairly high for one failed assertion, lower for a crash or several unrelated failures, and lowest for a check that passed only on a retry.
 
+Each run also writes an internal findings file, `ia-findings.json` (schema ia-findings/0.1), and renders `ia-report.md` and `ia-report.html` from it. The JSON is the source for those two files. A normal run marks the file `internal`. It is groundwork for Iron Adamant and is not a client report. `report.html`, `summary.md`, and `hornet-swarm client-report` are unchanged.
+
 Runs older than `results_retention_days` in `~/.hornet-swarm/config.yaml` (7 by default) are removed when the next run starts. Full-disk encryption is required. On this Mac that is FileVault. Turn FileVault on before a client job is stored on this machine.
 
 ## Practice sites

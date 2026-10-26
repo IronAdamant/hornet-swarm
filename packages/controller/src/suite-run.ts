@@ -253,7 +253,10 @@ export async function runSuite(request: SuiteRequest): Promise<RunResult & { par
   const redactor = new Redactor();
   registerProjectSecrets(project.id, redactor, home);
   for (const code of totpCodes) redactor.register('totp_code', code);
-  const withheld = writeRunReports(runDir, result, analysis, summary, redactor, artifacts);
+  const withheld = writeRunReports(runDir, result, analysis, summary, redactor, artifacts, {
+    baseUrl: project.targets.base_url,
+    subjectName: project.name,
+  });
   withheld.push(...(await redactTree(runDir, redactor)));
   const hits = [...withheld, ...(await scanTree(runDir, redactor))];
   if (hits.length > 0) {
