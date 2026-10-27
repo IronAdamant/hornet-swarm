@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from 'playwright';
-import { PAGE_MAP_LIMITS, UnredactableError, fixedText, renderTemplate, writeRedactedFile, type AccessibilityResult, type PageMap, type RedundantEntry, type Redactor, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
+import { PAGE_MAP_LIMITS, UnredactableError, fixedText, renderTemplate, writeRedactedFile, type AccessibilityResult, type PageMap, type PassiveSecurityResult, type RedundantEntry, type Redactor, type Step, type StepResult, type TemplateContext } from '@hornet-swarm/core';
 import type { JobReport, JobRequest, SecretMap } from './job-types.js';
 import { locate, maskSecrets } from './job-net.js';
 
@@ -150,7 +150,7 @@ export async function inspectPage(page: Page): Promise<PageMap> {
 }
 
 /** What a step found besides pass or fail, carried into its result. */
-export type StepFindings = { accessibility?: AccessibilityResult; redundantEntry?: RedundantEntry };
+export type StepFindings = { accessibility?: AccessibilityResult; passiveSecurity?: PassiveSecurityResult; redundantEntry?: RedundantEntry };
 
 export function finishStep(
   index: number,
@@ -185,6 +185,7 @@ export function finishStep(
     ...(network.length > 0 ? { network_errors: network.map((entry) => ({ ...entry, url: redactor.redact(entry.url) })) } : {}),
     ...(httpStatus ? { http_status: httpStatus } : {}),
     ...(found.accessibility ? { accessibility: found.accessibility } : {}),
+    ...(found.passiveSecurity ? { passive_security: found.passiveSecurity } : {}),
     ...(found.redundantEntry ? { redundant_entry: found.redundantEntry } : {}),
     console_logs: consoleLogs.map((line) => redactor.redact(line)),
     selectors: selectors.map((selector) => redactor.redact(selector)),

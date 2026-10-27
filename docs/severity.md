@@ -26,6 +26,15 @@ The harness's own WCAG 2.2 checks start at: a focused control entirely hidden be
 
 `ia-findings.json` is not a client report. It maps axe-core impact onto its own four-step scale: critical stays critical, serious is high, moderate is medium, and minor is low. Client reports still use the High, Medium, and Low grades above. A finding under 0.5 confidence is `needs_review` and is not scored.
 
+## Passive security findings
+
+A `passive_security` step uses Low and Medium only. It does not use the functional scale above, and it does not grade a site as secure. High is not used: the step cannot show that a customer is locked out or that money is wrong.
+
+- **Medium:** the document was loaded over TLS 1.0, TLS 1.1, or SSL, or a session-named cookie is missing `Secure` on HTTPS or missing `HttpOnly`. The cookie value is not what is exposed here. The flag says the browser will send it, or that page script can read it.
+- **Low:** a missing or weak browser policy on the document response (Content-Security-Policy, `nosniff`, Referrer-Policy, frame protection, HSTS on HTTPS), a non-session cookie missing `Secure` on HTTPS, or `SameSite=None`.
+
+On plain HTTP, a missing HSTS header and a missing `Secure` flag are not findings. The summary says this is not a penetration test.
+
 ## Planted faults
 
 A practice site's deliberate bugs are rated like any other fault. On a client's site, they would be real.

@@ -34,11 +34,12 @@ describe('public practice authorisations', () => {
     expect(authorisation('the-internet-practice').basis).toBe('public_practice');
   });
 
-  it('needs the published statement, and refuses chaos, access-control probing, and production', () => {
+  it('needs the published statement, and refuses chaos, access-control probing, passive security checks, and production', () => {
     const base = readYaml(join(root, 'examples/authorisations/the-internet-practice.yaml')) as Record<string, unknown>;
     expect(authorisationSchema.safeParse({ ...base, public_statement: undefined }).success).toBe(false);
     expect(authorisationSchema.safeParse({ ...base, activities: ['functional_e2e', 'chaos'] }).success).toBe(false);
     expect(authorisationSchema.safeParse({ ...base, activities: ['access_control_checks'] }).success).toBe(false);
+    expect(authorisationSchema.safeParse({ ...base, activities: ['passive_security_checks'] }).success).toBe(false);
     expect(authorisationSchema.safeParse({ ...base, scope: { domains: ['the-internet.herokuapp.com'], environments: ['test', 'production'] } }).success).toBe(false);
   });
 

@@ -9,6 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - Each run writes an internal `ia-findings.json` (schema ia-findings/0.1) and renders `ia-report.md` and `ia-report.html` from that file. The file is marked `internal`. It is not a client report, and the existing client report is unchanged.
+- A `passive_security` journey step reads security headers on the document response the journey already received, and the flags of cookies the browser stored for that site. Cookie values are not recorded, and the step sends no extra request. It runs only when the authorisation lists `passive_security_checks`. A public practice authorisation cannot list that activity. The runner refuses the step when the activity was not granted. Findings go to `passive-security-<name>.json` and the run summary. They are not part of the client report. This is not a penetration test.
+
+### Changed
+
+- A saved step may include an optional `passive_security` object. Older runs still parse. A run that used the new step will not parse on an older harness, because the step schema is strict.
 
 ## [0.1.0] - 2026-10-20
 
