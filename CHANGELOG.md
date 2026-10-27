@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Each run writes an internal `ia-findings.json` (schema ia-findings/0.1) and renders `ia-report.md` and `ia-report.html` from that file. The file is marked `internal`. It is not a client report, and the existing client report is unchanged.
+
 ## [0.1.0] - 2026-10-20
 
 First tagged release. It covers everything up to and including PRs #2 to #8.

@@ -1,0 +1,374 @@
+{
+  "schema_version": "ia-findings/0.1",
+  "report": {
+    "id": "IA-R-20261018-brindlebeck-demo",
+    "title": "Sign-up, checkout and accessibility check: Brindlebeck Tool Co. (fictional demo shop)",
+    "subject": {
+      "name": "Brindlebeck Tool Co. (fictional demo shop)",
+      "base_url": "http://localhost:8880",
+      "kind": "fictional_demo"
+    },
+    "standard": {
+      "name": "WCAG",
+      "version": "2.1",
+      "level": "AA",
+      "tool_tags": [
+        "wcag2a",
+        "wcag2aa",
+        "wcag21a",
+        "wcag21aa"
+      ]
+    },
+    "method": "Automated checks (axe-core) plus a scripted journey run",
+    "run": {
+      "started_at": "2026-10-18T06:09:48.444Z",
+      "finished_at": "2026-10-18T06:10:07.302Z",
+      "timezone": "Australia/Sydney",
+      "viewport": "1280x800",
+      "tools": [
+        {
+          "name": "playwright",
+          "version": "1.64.1"
+        },
+        {
+          "name": "axeCore",
+          "version": "4.14.0"
+        },
+        {
+          "name": "axeCorePlaywright",
+          "version": "4.14.0"
+        },
+        {
+          "name": "node",
+          "version": "v20.19.2"
+        },
+        {
+          "name": "chromium",
+          "version": "156.0.8078.4"
+        }
+      ]
+    },
+    "scope": {
+      "in": [
+        "Shop home (signed out)",
+        "My account: login and sign-up forms (signed out)",
+        "My account dashboard (signed in)",
+        "Search results",
+        "Product page",
+        "Cart",
+        "Checkout (details entered)",
+        "Order received",
+        "My account: orders"
+      ],
+      "out": [
+        "Manual keyboard pass (not done in this run)",
+        "Mobile viewports"
+      ],
+      "data_note": "Fictional shop and sample data only."
+    },
+    "status": "internal"
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "kind": "issue",
+      "title": "Header menu list contains a nested list directly",
+      "severity": "medium",
+      "location": {
+        "page": "Shop home (signed out)",
+        "url": "http://localhost:8880/",
+        "journey_step": 1,
+        "element": {
+          "selector": ".is-responsive.items-justified-right.wp-block-navigation__container",
+          "snippet": "<ul class=\"wp-block-navigation__container is-responsive items-justified-right wp-block-navigation\">"
+        },
+        "also_on": [
+          "My account: login and sign-up forms (signed out)",
+          "My account dashboard (signed in)",
+          "Search results",
+          "Product page",
+          "Cart",
+          "Order received",
+          "My account: orders"
+        ]
+      },
+      "affects": [
+        {
+          "who": "Screen reader users",
+          "how": "The header menu list holds another list directly, so the menu structure and item count can be announced wrongly."
+        }
+      ],
+      "wcag": [
+        {
+          "sc": "1.3.1",
+          "name": "Info and Relationships",
+          "level": "A"
+        }
+      ],
+      "confidence": {
+        "score": 0.8,
+        "basis": "axe-core rule violation on a named element, same result on 8 page(s)",
+        "evidence_state": "verified_in_evidence"
+      },
+      "recommendation": "Wrap the nested list in an li element, or render the page list as list items of the parent list.",
+      "source": {
+        "method": "automated",
+        "tool": "axe-core 4.14.0",
+        "rule_id": "list"
+      },
+      "occurrences": 8,
+      "evidence": [
+        {
+          "type": "tool_output",
+          "ref": "results.json#/axe/Shop home (signed out)/violations",
+          "quote": "Fix all of the following:   List element has direct children that are not allowed: ul"
+        }
+      ]
+    },
+    {
+      "id": "F-002",
+      "kind": "needs_review",
+      "title": "ARIA reference may point at a missing element",
+      "severity": "none",
+      "location": {
+        "page": "Product page",
+        "url": "http://localhost:8880/product/screwdriver-set/",
+        "journey_step": 5,
+        "element": {
+          "selector": ".woocommerce-product-gallery__trigger",
+          "snippet": "<a href=\"#\" role=\"button\" class=\"woocommerce-product-gallery__trigger\" aria-haspopup=\"dialog\" aria-controls=\"photoswipe-fullscreen-dialog\" aria-label=\"View full-screen image gallery\">"
+        },
+        "also_on": [
+          "Checkout (details entered)"
+        ]
+      },
+      "affects": [
+        {
+          "who": "Screen reader users",
+          "how": "An ARIA reference points at an element that may not exist, so related help or a linked dialog may not be announced."
+        }
+      ],
+      "wcag": [
+        {
+          "sc": "4.1.2",
+          "name": "Name, Role, Value",
+          "level": "A"
+        }
+      ],
+      "confidence": {
+        "score": 0.4,
+        "basis": "axe-core could not decide (needs review); no manual check yet",
+        "evidence_state": "verified_in_evidence"
+      },
+      "recommendation": "Make sure the referenced id exists in the page whenever the attribute is present.",
+      "source": {
+        "method": "automated",
+        "tool": "axe-core 4.14.0",
+        "rule_id": "aria-valid-attr-value"
+      },
+      "occurrences": 2,
+      "evidence": [
+        {
+          "type": "tool_output",
+          "ref": "results.json#/axe/Product page/incomplete",
+          "quote": "Fix all of the following:   Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"photoswipe-fullscreen-dialog\""
+        }
+      ]
+    },
+    {
+      "id": "F-003",
+      "kind": "needs_review",
+      "title": "Quantity buttons: visible symbol may not match the button name",
+      "severity": "none",
+      "location": {
+        "page": "Cart",
+        "url": "http://localhost:8880/cart/",
+        "journey_step": 7,
+        "element": {
+          "selector": ".wc-block-components-quantity-selector__button--minus",
+          "snippet": "<button aria-label=\"Reduce quantity of Screwdriver Set (4 piece)\" class=\"wc-block-components-quantity-selector__button wc-block-components-quantity-selector__button--minus\" disabled=\"\">\\u2212</button>"
+        },
+        "also_on": []
+      },
+      "affects": [
+        {
+          "who": "Speech input users",
+          "how": "They say what they see. If the visible symbol is not part of the button name, the voice command may not match."
+        }
+      ],
+      "wcag": [
+        {
+          "sc": "2.5.3",
+          "name": "Label in Name",
+          "level": "A"
+        }
+      ],
+      "confidence": {
+        "score": 0.4,
+        "basis": "axe-core could not decide (needs review); no manual check yet",
+        "evidence_state": "verified_in_evidence"
+      },
+      "recommendation": "Check with a speech input tool. If needed, make the accessible name start with the visible text.",
+      "source": {
+        "method": "automated",
+        "tool": "axe-core 4.14.0",
+        "rule_id": "label-content-name-mismatch"
+      },
+      "occurrences": 2,
+      "evidence": [
+        {
+          "type": "tool_output",
+          "ref": "results.json#/axe/Cart/incomplete",
+          "quote": "Fix any of the following:   Unable to determine if the visible text is part of the accessible name"
+        }
+      ]
+    },
+    {
+      "id": "F-004",
+      "kind": "observation",
+      "title": "Privacy policy link returns 404",
+      "severity": "low",
+      "location": {
+        "page": "My account",
+        "url": "http://localhost:8880/my-account/",
+        "element": {
+          "description": "Privacy policy link",
+          "selector": "a[href=\"http://localhost:8880/?page_id=3\"]"
+        }
+      },
+      "affects": [
+        {
+          "who": "All shoppers",
+          "how": "They cannot read the privacy policy before signing up or paying."
+        }
+      ],
+      "confidence": {
+        "score": 0.9,
+        "basis": "HTTP status recorded by the test run",
+        "evidence_state": "verified_in_evidence"
+      },
+      "expected": "The link opens the privacy policy.",
+      "actual": "HTTP 404",
+      "recommendation": "Publish the privacy policy page, or point the link at the right page.",
+      "source": {
+        "method": "journey"
+      },
+      "evidence": [
+        {
+          "type": "http",
+          "ref": "results.json#/facts/myAccountLinks/privacyPolicyLink"
+        }
+      ]
+    },
+    {
+      "id": "F-005",
+      "kind": "observation",
+      "title": "Checkout terms sentence has no links",
+      "severity": "low",
+      "location": {
+        "page": "Checkout",
+        "url": "http://localhost:8880/checkout/",
+        "element": {
+          "description": "Terms sentence above the place order button"
+        }
+      },
+      "affects": [
+        {
+          "who": "All shoppers",
+          "how": "They are asked to agree to terms they cannot open from the checkout."
+        }
+      ],
+      "confidence": {
+        "score": 0.9,
+        "basis": "Link count recorded by the test run",
+        "evidence_state": "verified_in_evidence"
+      },
+      "actual": "Text: \"By proceeding with your purchase you agree to our Terms and Conditions and Privacy Policy\". Links in it: 0.",
+      "recommendation": "Link \"Terms and Conditions\" and \"Privacy Policy\" to their pages.",
+      "source": {
+        "method": "journey"
+      },
+      "evidence": [
+        {
+          "type": "tool_output",
+          "ref": "results.json#/facts/checkoutTerms",
+          "quote": "By proceeding with your purchase you agree to our Terms and Conditions and Privacy Policy"
+        }
+      ]
+    },
+    {
+      "id": "F-006",
+      "kind": "what_worked",
+      "title": "All 12 journey steps passed (sign-up, login, search, cart, checkout, order)",
+      "severity": "none",
+      "location": {
+        "page": "Whole journey",
+        "url": "http://localhost:8880"
+      },
+      "affects": [
+        {
+          "who": "All shoppers",
+          "how": "The core buying journey works end to end."
+        }
+      ],
+      "confidence": {
+        "score": 0.9,
+        "basis": "Each step has a pass check and a screenshot",
+        "evidence_state": "verified_in_evidence"
+      },
+      "source": {
+        "method": "journey"
+      },
+      "evidence": [
+        {
+          "type": "screenshot",
+          "ref": "shots/step01.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step02.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step03.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step04.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step05.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step06.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step07.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step08.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step09.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step10.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step11.png"
+        },
+        {
+          "type": "screenshot",
+          "ref": "shots/step12.png"
+        }
+      ]
+    }
+  ]
+}

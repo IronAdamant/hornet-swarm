@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironadamant.com/schemas/ia-findings-0.1.json",
+  "title": "Iron Adamant findings file, version 0.1 (DRAFT)",
+  "description": "One file per checking run. The human report is rendered from this file; agents read it directly.",
+  "type": "object",
+  "required": ["schema_version", "report", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "ia-findings/0.1" },
+    "report": {
+      "type": "object",
+      "required": ["id", "title", "subject", "standard", "method", "run", "scope", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^IA-R-[0-9]{8}-[a-z0-9-]+$" },
+        "title": { "type": "string" },
+        "subject": {
+          "type": "object",
+          "required": ["name", "base_url", "kind"],
+          "properties": {
+            "name": { "type": "string" },
+            "base_url": { "type": "string" },
+            "kind": { "enum": ["client", "fictional_demo", "own_site"] }
+          }
+        },
+        "standard": {
+          "type": "object",
+          "required": ["name", "version", "level"],
+          "properties": {
+            "name": { "const": "WCAG" },
+            "version": { "type": "string" },
+            "level": { "enum": ["A", "AA"] },
+            "tool_tags": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "method": { "type": "string" },
+        "run": {
+          "type": "object",
+          "required": ["started_at", "timezone", "tools"],
+          "properties": {
+            "started_at": { "type": "string", "format": "date-time" },
+            "finished_at": { "type": "string", "format": "date-time" },
+            "timezone": { "type": "string" },
+            "viewport": { "type": "string" },
+            "tools": { "type": "array", "items": { "type": "object", "required": ["name", "version"] } }
+          }
+        },
+        "scope": {
+          "type": "object",
+          "required": ["in", "out"],
+          "properties": {
+            "in": { "type": "array", "items": { "type": "string" } },
+            "out": { "type": "array", "items": { "type": "string" } },
+            "data_note": { "type": "string" }
+          }
+        },
+        "status": { "enum": ["draft", "internal", "client_ready"] },
+        "review": {
+          "type": "object",
+          "required": ["reviewed_by", "reviewed_at"],
+          "properties": {
+            "reviewed_by": { "type": "array", "items": { "type": "string" } },
+            "reviewed_at": { "type": "string" },
+            "disagreements": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["id", "kind", "title", "severity", "location", "affects", "confidence", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^F-[0-9]{3}$" },
+        "kind": { "enum": ["issue", "needs_review", "observation", "what_worked"] },
+        "title": { "type": "string", "maxLength": 120 },
+        "severity": { "enum": ["critical", "high", "medium", "low", "none"] },
+        "location": {
+          "type": "object",
+          "required": ["page", "url"],
+          "properties": {
+            "page": { "type": "string" },
+            "url": { "type": "string" },
+            "journey_step": { "type": "integer" },
+            "element": {
+              "type": "object",
+              "properties": {
+                "selector": { "type": "string" },
+                "snippet": { "type": "string", "description": "ASCII-escaped markup" },
+                "description": { "type": "string" }
+              }
+            },
+            "also_on": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "affects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["who", "how"],
+            "properties": { "who": { "type": "string" }, "how": { "type": "string" } }
+          }
+        },
+        "wcag": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sc", "name", "level"],
+            "properties": { "sc": { "type": "string" }, "name": { "type": "string" }, "level": { "enum": ["A", "AA", "AAA"] } }
+          }
+        },
+        "confidence": {
+          "type": "object",
+          "required": ["score", "basis", "evidence_state"],
+          "properties": {
+            "score": { "type": "number", "minimum": 0, "maximum": 1 },
+            "basis": { "type": "string" },
+            "evidence_state": { "enum": ["verified_in_evidence", "tester_note_only"] }
+          }
+        },
+        "steps_to_reproduce": { "type": "array", "items": { "type": "string" } },
+        "expected": { "type": "string" },
+        "actual": { "type": "string" },
+        "recommendation": { "type": "string" },
+        "source": {
+          "type": "object",
+          "properties": { "method": { "enum": ["automated", "manual", "journey"] }, "tool": { "type": "string" }, "rule_id": { "type": "string" } }
+        },
+        "occurrences": { "type": "integer", "minimum": 1 },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["type", "ref"],
+            "properties": {
+              "type": { "enum": ["screenshot", "tool_output", "log", "quote", "http"] },
+              "ref": { "type": "string", "description": "path inside the evidence bundle, optionally with a JSON pointer after #" },
+              "quote": { "type": "string" },
+              "captured_at": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

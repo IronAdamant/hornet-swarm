@@ -17,3 +17,20 @@ export { diffClientReports, retestDiffMarkdown } from './retest-diff.js';
 export type { RetestDiff } from './retest-diff.js';
 export { plainAxeRule, plainHarnessCheck } from './plain-language-rules.js';
 export { journeyResults, plainJourneyFailure } from './client-report-journeys.js';
+export {
+  AXE_IMPACT_TO_SEVERITY,
+  BANNED_PROSE_WORDS,
+  CLIENT_READY_METHOD,
+  CONFIDENCE_RUBRIC,
+  IaFindingsError,
+  RUN_METHOD,
+  applyReviewerBump,
+  asciiEscape,
+  assertRenderedAscii,
+  formatFindingsWhen,
+  renderIaFindings,
+  validateIaFindings,
+} from './ia-findings.js';
+export type { IaFinding, IaFindingsFile, IaSeverity, IaStatus, IaSubjectKind, IaValidation } from './ia-findings.js';
+export { DECLARED_AXE_VERSION, iaFindingsFromRun } from './ia-findings-from-run.js';
+export type { IaRecordedFact, IaRunContext } from './ia-findings-from-run.js';
