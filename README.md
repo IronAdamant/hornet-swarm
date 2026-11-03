@@ -11,6 +11,7 @@ It is for sites you own, or sites someone has authorised you in writing to test.
 - **Tells the site's faults from its own.** A crashed browser, a deleted account, a rate limit, and a stalled API each get their own verdict, so a report never blames the site for the harness.
 - **Measures reliability over time.** `stats` gives pass rates, median and slowest timings, retries, and failing streaks per journey. Failed journeys keep running in later suites until they pass three times in a row.
 - **Checks accessibility inside the journeys.** An `accessibility` step checks the page against WCAG 2.2 AA with axe-core and the harness's own checks for the new 2.2 criteria, including pages behind the login that most scanners never reach. Each problem is named in plain words, with how many places it occurs and an example.
+- **Records header and cookie checks, when the authorisation says so.** A `header_cookie_check` step reads the headers of the final page response the journey already received, and the flags on cookies the browser stored for that page. It does not record cookie values, and it sends no extra request. It notes a page served over plain HTTP, a missing Content-Security-Policy, `X-Content-Type-Options`, Referrer-Policy, or frame protection, a missing HSTS header on HTTPS, TLS 1.0, TLS 1.1, or SSL, a session cookie missing HttpOnly, and a cookie on HTTPS missing the HTTPS-only flag. Redirect responses are not graded. The authorisation must list `header_cookie_checks`. A public practice site cannot.
 - **Writes a white-label report a business owner can read, and re-tests monthly.** `client-report` turns a run into a plain-English report under the agency's brand: each issue with where it happens, why it matters to customers, and how to fix it, plus sign-up, log in, cart, and checkout results. It never says a site is compliant or certified, and criteria a person must judge are marked needs manual review. `retest --if-due` runs the job again and lists what is new, fixed, and still open.
 - **Tests recovery with chaos.** Optional delays, lost requests, refreshes, back presses, and double clicks, repeatable by seed, show where a site leaves a customer stuck with no message.
 - **Lets AI agents run the swarm.** Agents see account labels such as `qa-user-3`, never passwords. Each agent plays one account, with its own personality and rules, and leaves notes for the others.
@@ -18,14 +19,14 @@ It is for sites you own, or sites someone has authorised you in writing to test.
 
 ## Built to be safe on someone else's site
 
-- **Nothing runs without written permission.** Every project names an authorisation file: the domains, dates, activities, and signed document. A run refuses any other host, an expired record, or a changed document.
+- **Nothing runs without written permission.** Every project names an authorisation file: the domains, dates, activities, and signed document. A run refuses any other host, an expired record, or a changed document. A `header_cookie_check` step also refuses to run unless that file lists `header_cookie_checks`. The runner will not read headers or cookie flags for a run that was not granted the activity.
 - **Logins stay out of reach.** Passwords live in an encrypted store (sops and age, with the key in the macOS Keychain). Agents get labels only. Saved runs are scanned and masked, and a leak check covers screenshots too.
 - **Polite by default.** Requests are paced per browser and in total, sign-in attempts are capped, and a public practice site gets lower limits and no chaos.
 - **One switch stops everything.** Any agent can engage the kill switch. Only the owner can release it.
 
 ## Sample reports
 
-Every report below came from real runs. The labs run on one Mac. All accounts are made up. Findings use one severity scale, [docs/severity.md](docs/severity.md).
+Every report below came from real runs. The labs run on one Mac. All accounts are made up. Findings use one severity scale, [docs/severity.md](docs/severity.md). The two lab write-ups were read from saved customer journeys. Those runs did not send extra requests. The header and cookie check is separate, and it runs only when an authorisation lists `header_cookie_checks`.
 
 | Report | What it shows |
 |---|---|

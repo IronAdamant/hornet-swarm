@@ -9,6 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - Each run writes an internal `ia-findings.json` (schema ia-findings/0.1) and renders `ia-report.md` and `ia-report.html` from that file. The file is marked `internal`. It is not a client report, and the existing client report is unchanged.
+- A `header_cookie_check` journey step reads response headers on the final page the journey already received, and the flags of cookies the browser stored for that page. Cookie values are not recorded, and the step sends no extra request. A page served over plain HTTP is recorded. Redirect responses are not graded. It runs only when the authorisation lists `header_cookie_checks`. A public practice authorisation cannot list that activity. The runner refuses the step when the activity was not granted. Findings go to `header-cookie-check-<name>.json` and the run summary. They are not part of the client report.
+
+### Changed
+
+- A saved step may include an optional `header_cookie_check` object. Older runs still parse. A run that used the new step will not parse on an older harness, because the step schema is strict.
 
 ## [0.1.0] - 2026-10-20
 

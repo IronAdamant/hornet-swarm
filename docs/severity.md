@@ -26,6 +26,15 @@ The harness's own WCAG 2.2 checks start at: a focused control entirely hidden be
 
 `ia-findings.json` is not a client report. It maps axe-core impact onto its own four-step scale: critical stays critical, serious is high, moderate is medium, and minor is low. Client reports still use the High, Medium, and Low grades above. A finding under 0.5 confidence is `needs_review` and is not scored.
 
+## Header and cookie check findings
+
+A `header_cookie_check` step uses Low and Medium only. It does not use the functional scale above, and it does not grade a site as meeting a standard. High is not used: the step cannot show that a customer is locked out or that money is wrong.
+
+- **Medium:** the page was served over plain HTTP, the document was loaded over TLS 1.0, TLS 1.1, or SSL, or a session-named cookie on HTTPS is missing the HTTPS-only flag or missing `HttpOnly`. The cookie value is not recorded. The flag says the browser will send the cookie, or that page script can read it.
+- **Low:** a missing or weak browser policy on the document response (Content-Security-Policy, `nosniff`, Referrer-Policy, frame protection, HSTS on HTTPS), a non-session cookie on HTTPS missing the HTTPS-only flag, `SameSite=None`, or a redirect with no final page to check.
+
+On plain HTTP, a missing HSTS header and a missing HTTPS-only flag are not separate findings. The plain HTTP finding is the one that is recorded. A loopback page served over plain HTTP is recorded the same way.
+
 ## Planted faults
 
 A practice site's deliberate bugs are rated like any other fault. On a client's site, they would be real.
