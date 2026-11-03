@@ -185,7 +185,7 @@ export function finishStep(
     ...(network.length > 0 ? { network_errors: network.map((entry) => ({ ...entry, url: redactor.redact(entry.url) })) } : {}),
     ...(httpStatus ? { http_status: httpStatus } : {}),
     ...(found.accessibility ? { accessibility: found.accessibility } : {}),
-    ...(found.passiveSecurity ? { passive_security: found.passiveSecurity } : {}),
+    ...(found.passiveSecurity ? { header_cookie_check: found.passiveSecurity } : {}),
     ...(found.redundantEntry ? { redundant_entry: found.redundantEntry } : {}),
     console_logs: consoleLogs.map((line) => redactor.redact(line)),
     selectors: selectors.map((selector) => redactor.redact(selector)),

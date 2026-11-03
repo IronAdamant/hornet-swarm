@@ -33,7 +33,7 @@ const ACCEPTED_REFERRER = new Set([
 const SESSION_COOKIE_NAME = /(^|[^a-z0-9])(jsessionid|phpsessid|sessionid|session|sessid|sid|auth|jwt)([^a-z0-9]|$)/i;
 
 export const PASSIVE_SECURITY_LIMITS =
-  'Reads headers on the last document response this journey already received, and the flags of cookies the browser stored for that site. Cookie values are not recorded. Query strings are not recorded. No extra request is sent. This is not a penetration test.';
+  'Reads headers on the final page response this journey already received, and the flags of cookies the browser stored for that page. Cookie values are not recorded. Query strings are not recorded. No extra request is sent. Redirect responses are not graded.';
 
 export const securitySeveritySchema = z.enum(['Low', 'Medium']);
 export type SecuritySeverity = z.infer<typeof securitySeveritySchema>;
@@ -82,7 +82,7 @@ export type PassiveSecurityResult = z.infer<typeof securityResultSchema>;
  */
 export const passiveSecurityStep = z
   .object({
-    passive_security: z
+    header_cookie_check: z
       .object({
         name: z.string().regex(/^[a-z0-9-]+$/, 'use lower-case letters, digits, and hyphens'),
         fail_on: z.enum(['low', 'medium']).optional(),
@@ -106,6 +106,8 @@ export type PassiveSecurityInput = {
   pageUrl: string;
   document?: DocumentObservation;
   cookies: readonly CookieFlags[];
+  /** The last main-frame response was a redirect, and no later page was observed. */
+  redirectOnly?: boolean;
 };
 
 const SEVERITY_RANK: Record<SecuritySeverity, number> = { Low: 1, Medium: 2 };
@@ -136,11 +138,17 @@ export function assessPassiveSecurity(input: PassiveSecurityInput): PassiveSecur
       document_headers: {},
       cookies: [],
       findings: [
-        {
-          id: 'no-document',
-          severity: 'Low',
-          summary: 'No document response on an authorised origin was observed before this step. Navigate to a page on the authorised site first.',
-        },
+        input.redirectOnly
+          ? {
+              id: 'redirect-only',
+              severity: 'Low',
+              summary: 'The last main-frame response was a redirect, so the final page was not checked. Header and cookie checks read the final page, not a redirect.',
+            }
+          : {
+              id: 'no-document',
+              severity: 'Low',
+              summary: 'No final page response on an allowed host was observed before this step. Open a page on an allowed host first.',
+            },
       ],
       limits: PASSIVE_SECURITY_LIMITS,
     };
@@ -148,6 +156,13 @@ export function assessPassiveSecurity(input: PassiveSecurityInput): PassiveSecur
   const headers = document.headers;
   const https = document.protocol === 'https';
   const findings: SecurityFinding[] = [];
+  if (!https) {
+    findings.push({
+      id: 'plain-http',
+      severity: 'Medium',
+      summary: 'The page was served over plain HTTP.',
+    });
+  }
   if (https && document.tlsProtocol && weakTls(document.tlsProtocol)) {
     findings.push({
       id: 'weak-tls',
@@ -194,9 +209,9 @@ export function assessPassiveSecurity(input: PassiveSecurityInput): PassiveSecur
   for (const cookie of cookies) {
     if (https && !cookie.secure) {
       findings.push({
-        id: 'cookie-not-secure',
+        id: 'cookie-missing-https-flag',
         severity: sessionCookieName(cookie.name) ? 'Medium' : 'Low',
-        summary: `Cookie ${cookie.name} was stored without the Secure flag on an HTTPS page.`,
+        summary: `Cookie ${cookie.name} was stored on an HTTPS page without the HTTPS-only flag.`,
       });
     }
     if (sessionCookieName(cookie.name) && !cookie.httpOnly) {
@@ -237,7 +252,7 @@ export function securityStepFailure(findings: readonly SecurityFinding[], failOn
     .slice(0, 5)
     .map((finding) => finding.id)
     .join(', ');
-  return `security: ${serious.length} ${serious.length === 1 ? 'finding' : 'findings'} at or above ${failOn} (${listed})`;
+  return `header-cookie: ${serious.length} ${serious.length === 1 ? 'finding' : 'findings'} at or above ${failOn} (${listed})`;
 }
 
 function trimHeader(value: string): string {

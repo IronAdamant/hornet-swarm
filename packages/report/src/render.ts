@@ -181,25 +181,25 @@ function hasAccessibilityProblems(users: RichUser[]): boolean {
   return users.some((user) => user.journeys.some((journey) => journey.steps.some((step) => (step.accessibility?.violations.length ?? 0) > 0)));
 }
 
-function hasSecurityFindings(users: RichUser[]): boolean {
-  return users.some((user) => user.journeys.some((journey) => journey.steps.some((step) => (step.passive_security?.findings.length ?? 0) > 0)));
+function hasHeaderCookieFindings(users: RichUser[]): boolean {
+  return users.some((user) => user.journeys.some((journey) => journey.steps.some((step) => (step.header_cookie_check?.findings.length ?? 0) > 0)));
 }
 
-/** One line per passive security step. A clean step still says what was looked at. */
-export function securityFindings(users: RichUser[]): string[] {
+/** One line per header and cookie check. A clean step still says what was looked at. */
+export function headerCookieFindings(users: RichUser[]): string[] {
   const lines: string[] = [];
   for (const user of users) {
     for (const journey of user.journeys) {
       for (const step of journey.steps) {
-        const result = step.passive_security;
+        const result = step.header_cookie_check;
         if (!result) continue;
         const count = result.findings.length;
         const names = result.findings.map((finding) => finding.id).join(', ');
         const detail =
           count === 0
-            ? 'no header or cookie-flag findings on the document response this journey already received'
-            : `${count} ${count === 1 ? 'finding' : 'findings'} (${names}) on the document response this journey already received`;
-        lines.push(`Passive security · ${user.label} · ${journey.id} · ${result.name}: ${detail}. This is not a penetration test.`);
+            ? 'no header or cookie-flag findings on the final page response this journey already received'
+            : `${count} ${count === 1 ? 'finding' : 'findings'} (${names}) on the final page response this journey already received`;
+        lines.push(`Header and cookie check · ${user.label} · ${journey.id} · ${result.name}: ${detail}.`);
       }
     }
   }
@@ -298,8 +298,8 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
     const guestLead = asGuests ? 'The checks passed, run as guests with no sign-in' : 'Sign-in worked and the checks that followed passed';
     paragraph = hasAccessibilityProblems(users)
       ? `${guestLead}, but the accessibility check found problems. Each checked page is listed below, worst problem first.`
-      : hasSecurityFindings(users)
-        ? `${guestLead}, and a passive security check recorded header or cookie-flag findings. They are listed below. This check is not a penetration test.`
+      : hasHeaderCookieFindings(users)
+        ? `${guestLead}, and a header and cookie check recorded findings. They are listed below.`
         : asGuests
           ? 'The checks passed, run as guests with no sign-in. Nothing needs fixing. This is low.'
           : 'Sign-in worked and the checks that followed passed. Nothing needs fixing. This is low.';
@@ -325,10 +325,10 @@ export function summaryMarkdown(users: RichUser[], status: RunResult['status'], 
   for (const failure of chaos ? chaosFailureGroups(users) : failures) findings.push(`Failed: ${failure}`);
   for (const note of writeErrorsOnPassingSteps(users)) findings.push(`Note: ${note}`);
   for (const line of accessibilityFindings(users)) findings.push(line);
-  for (const line of securityFindings(users)) findings.push(line);
+  for (const line of headerCookieFindings(users)) findings.push(line);
   const first = diagnose(users, status);
   if (status !== 'passed' && failures.length === 0) findings.push(`First problem: ${first.suspected}`);
-  if (status === 'passed' && !flaky && !hasAccessibilityProblems(users) && !hasSecurityFindings(users)) findings.push('Nothing needs a change.');
+  if (status === 'passed' && !flaky && !hasAccessibilityProblems(users) && !hasHeaderCookieFindings(users)) findings.push('Nothing needs a change.');
   // Under chaos, compare with a normal run: a check that passes normally but failed here is a
   // place where the site did not recover from a lost request, a delay, a refresh, or a double click.
   const chaosNote = chaos
@@ -503,7 +503,7 @@ export function buildAnalysis(input: {
           ...(step.network_errors ? { network_errors: step.network_errors } : {}),
           ...(step.http_status ? { http_status: step.http_status } : {}),
           ...(step.accessibility ? { accessibility: step.accessibility } : {}),
-          ...(step.passive_security ? { passive_security: step.passive_security } : {}),
+          ...(step.header_cookie_check ? { header_cookie_check: step.header_cookie_check } : {}),
           ...(step.redundant_entry ? { redundant_entry: step.redundant_entry } : {}),
           timings: { started_at: step.started_at, finished_at: step.finished_at, duration_ms: step.duration_ms },
           selectors: step.selectors ?? (step.selector ? [step.selector] : []),
@@ -567,9 +567,9 @@ export function analysisMarkdown(analysis: Analysis): string {
           const found = step.accessibility.violations.map((violation) => `${violation.rule} ${violation.impact} x${violation.count}`).join(', ');
           lines.push(`  Accessibility: ${step.accessibility.standard} at ${step.accessibility.url}: ${found || 'no problems'}; ${step.accessibility.needs_review} to review`);
         }
-        if (step.passive_security) {
-          const found = step.passive_security.findings.map((finding) => `${finding.id} ${finding.severity}`).join(', ');
-          lines.push(`  Passive security: ${step.passive_security.transport} at ${step.passive_security.url}: ${found || 'no header or cookie-flag findings'}. Not a penetration test.`);
+        if (step.header_cookie_check) {
+          const found = step.header_cookie_check.findings.map((finding) => `${finding.id} ${finding.severity}`).join(', ');
+          lines.push(`  Header and cookie check: ${step.header_cookie_check.transport} at ${step.header_cookie_check.url}: ${found || 'no header or cookie-flag findings'}.`);
         }
       }
     }

@@ -34,34 +34,40 @@ export async function runPassiveSecurityCheck(
   page: Page,
   check: { name: string; fail_on?: 'low' | 'medium' },
   authorised: boolean,
-  baseUrl: string,
   observations: SecurityObservations | undefined,
   redactor: Redactor,
   save: (fileName: string, text: string) => void,
 ): Promise<{ result: PassiveSecurityResult; failure?: string }> {
-  if (!authorised || !observations) throw new Error('passive_security_not_authorised');
+  if (!authorised || !observations) throw new Error('header_cookie_check_not_permitted');
   await observations.flush();
   const document = observations.latestDocument();
-  const pageUrl = pageAddress(page.url());
-  if (!document) throw new Error('security: no document response on an authorised origin yet');
-  const jar = await page.context().cookies(baseUrl);
-  const assessed = assessPassiveSecurity({
-    name: check.name,
-    pageUrl,
-    document,
-    cookies: cookieFlags(
-      jar.map((cookie) => ({
-        name: cookie.name,
-        httpOnly: cookie.httpOnly,
-        secure: cookie.secure,
-        sameSite: cookie.sameSite,
-        expires: cookie.expires,
-      })),
-    ),
-  });
+  const pageUrl = document?.url ?? observations.redirectUrl() ?? pageAddress(page.url());
+  const assessed = document
+    ? assessPassiveSecurity({
+        name: check.name,
+        pageUrl,
+        document,
+        cookies: cookieFlags(await cookieJar(page, document.url)),
+      })
+    : observations.endedOnRedirect()
+      ? assessPassiveSecurity({ name: check.name, pageUrl, cookies: [], redirectOnly: true })
+      : undefined;
+  if (!assessed) throw new Error('header-cookie: no page response on an allowed host yet');
   const result = securityResultSchema.parse(JSON.parse(redactor.redact(JSON.stringify(assessed))));
-  save(`passive-security-${check.name}.json`, JSON.stringify(result, null, 2));
+  save(`header-cookie-check-${check.name}.json`, JSON.stringify(result, null, 2));
   return { result, failure: securityStepFailure(result.findings, check.fail_on) };
+}
+
+/** Flags for the page that was checked. The value is not copied. */
+async function cookieJar(page: Page, url: string): Promise<JarCookie[]> {
+  const jar = await page.context().cookies(url);
+  return jar.map((cookie) => ({
+    name: cookie.name,
+    httpOnly: cookie.httpOnly,
+    secure: cookie.secure,
+    sameSite: cookie.sameSite,
+    expires: cookie.expires,
+  }));
 }
 
 function pageAddress(raw: string): string {

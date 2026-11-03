@@ -47,7 +47,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
   const bucket = createBucket(job.rps, job.burst ?? job.rps);
   const stopWaiting = () => closing || isAborted();
   const observations: SecurityObservations | undefined =
-    job.passiveSecurityAuthorised === true && job.steps.some((step) => 'passive_security' in step)
+    job.passiveSecurityAuthorised === true && job.steps.some((step) => 'header_cookie_check' in step)
       ? createSecurityObservations(job.allowOrigins, job.passiveOrigins ?? [])
       : undefined;
 
@@ -161,7 +161,7 @@ export async function executeJob(job: JobRequest, secrets: SecretMap, isAborted:
         );
         const navBefore = nav.count;
         if (job.minStepDelayMs > 0) await interruptible(job.minStepDelayMs, isAborted);
-        if (!('wait' in step) && !('assert' in step) && !('screenshot' in step) && !('accessibility' in step) && !('inspect' in step) && !('passive_security' in step)) nav.mark = nav.count;
+        if (!('wait' in step) && !('assert' in step) && !('screenshot' in step) && !('accessibility' in step) && !('inspect' in step) && !('header_cookie_check' in step)) nav.mark = nav.count;
         const outcome = await runStep(page, step, secrets, job, contextTemplate, redactor, selectors, assertions, screenshots, nav, isAborted, chaosEffect.doubleClick, found, entries, index, observations);
         // An inbox step answers one emailed code: on the page that asks before it, and on the same page
         // after it until the page moves on. A second-code screen anywhere else still stops the run.

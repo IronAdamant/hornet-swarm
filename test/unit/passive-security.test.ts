@@ -5,19 +5,24 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   assessPassiveSecurity,
+  PASSIVE_SECURITY_LIMITS,
   securityStepFailure,
   selectSecurityHeaders,
   sessionCookieName,
   type CookieFlags,
   type SecurityFinding,
 } from '../../packages/core/src/passive-security.ts';
-import { securityFindings, summaryMarkdown } from '../../packages/report/src/render.ts';
+import type { Redactor } from '../../packages/core/src/redactor.ts';
+import { bannedWordsIn } from '../../packages/report/src/ia-findings.ts';
+import { analysisMarkdown, buildAnalysis, headerCookieFindings, summaryMarkdown } from '../../packages/report/src/render.ts';
+import type { RunResult } from '../../packages/core/src/schemas.ts';
 import { executeJob, type JobRequest } from '../../packages/runner/src/job.ts';
-import { cookieFlags } from '../../packages/runner/src/passive-security-step.ts';
+import { cookieFlags, runPassiveSecurityCheck } from '../../packages/runner/src/passive-security-step.ts';
 import { createSecurityObservations } from '../../packages/runner/src/security-observations.ts';
-import type { Response } from 'playwright';
+import type { Page, Response } from 'playwright';
 
 const COOKIE_SECRET = 'hornet-cookie-secret-value';
+const LOCKED_COOKIE = 'hornet-locked-cookie-value';
 const NONCE = 'supersecretnoncevalue';
 
 const chrome = [
@@ -35,7 +40,7 @@ function document(protocol: 'http' | 'https', headers: Record<string, string>, t
   return { url: `${protocol}://127.0.0.1/home`, protocol, status: 200, headers, ...(tlsProtocol ? { tlsProtocol } : {}) };
 }
 
-describe('passive security header and cookie assessment', () => {
+describe('header and cookie assessment', () => {
   it('keeps only allowlisted headers and strips a CSP nonce', () => {
     const headers = selectSecurityHeaders({
       'content-security-policy': `script-src 'nonce-${NONCE}'`,
@@ -81,16 +86,16 @@ describe('passive security header and cookie assessment', () => {
       'missing-nosniff:Low',
       'missing-referrer-policy:Low',
       'missing-frame-protection:Low',
-      'cookie-not-secure:Low',
+      'cookie-missing-https-flag:Low',
       'cookie-samesite-none:Low',
-      'cookie-not-secure:Medium',
+      'cookie-missing-https-flag:Medium',
       'cookie-not-httponly:Medium',
     ]);
     expect(securityStepFailure(bare.findings, 'medium')).toContain('weak-tls');
     expect(securityStepFailure(bare.findings, 'low')).toContain('at or above low');
   });
 
-  it('does not treat HTTP as a missing HSTS or Secure flag, and ignores a zero max-age', () => {
+  it('records plain HTTP and does not treat it as a missing HSTS or HTTPS-only flag, and ignores a zero max-age', () => {
     const http = assessPassiveSecurity({
       name: 'home',
       pageUrl: 'http://127.0.0.1/home',
@@ -102,8 +107,10 @@ describe('passive security header and cookie assessment', () => {
       }),
       cookies: [cookie('session', { httpOnly: true })],
     });
-    expect(http.findings).toEqual([]);
+    expect(http.findings).toEqual([{ id: 'plain-http', severity: 'Medium', summary: 'The page was served over plain HTTP.' }]);
     expect(http.tls_note).toBe('not_applicable');
+    expect(http.findings.map((finding) => finding.id)).not.toContain('missing-hsts');
+    expect(http.findings.map((finding) => finding.id)).not.toContain('cookie-missing-https-flag');
     const disabled = assessPassiveSecurity({
       name: 'home',
       pageUrl: 'https://127.0.0.1/home',
@@ -130,6 +137,10 @@ describe('passive security header and cookie assessment', () => {
     const empty = assessPassiveSecurity({ name: 'home', pageUrl: 'http://127.0.0.1/home', cookies: [cookie('session')] });
     expect(empty.findings.map((finding) => finding.id)).toEqual(['no-document']);
     expect(empty.cookies).toEqual([]);
+    const hop = assessPassiveSecurity({ name: 'home', pageUrl: 'http://127.0.0.1/old', cookies: [cookie('session')], redirectOnly: true });
+    expect(hop.findings.map((finding) => finding.id)).toEqual(['redirect-only']);
+    expect(hop.cookies).toEqual([]);
+    expect(hop.document_headers).toEqual({});
   });
 
   it('copies cookie flags and drops the value', () => {
@@ -155,12 +166,12 @@ describe('what a run summary says about the check', () => {
         duration_ms: 1,
         steps: [{
           index: 1,
-          type: 'passive_security',
+          type: 'header_cookie_check',
           status: 'pass' as const,
           duration_ms: 1,
           started_at: '',
           finished_at: '',
-          passive_security: {
+          header_cookie_check: {
             name: 'home',
             url: 'http://127.0.0.1/home',
             transport: 'http' as const,
@@ -168,7 +179,7 @@ describe('what a run summary says about the check', () => {
             document_headers: {},
             cookies: [],
             findings,
-            limits: 'This is not a penetration test.',
+            limits: PASSIVE_SECURITY_LIMITS,
           },
         }],
       }],
@@ -176,20 +187,85 @@ describe('what a run summary says about the check', () => {
   }
 
   it('lists findings and does not call a passing journey a clean bill of health', () => {
-    const text = summaryMarkdown(checked([finding]), 'passed');
-    expect(text).toContain('Passive security · qa-user-1 · home · home: 1 finding (missing-csp)');
-    expect(text).toContain('This is not a penetration test.');
-    expect(text).toContain('not a penetration test');
+    const users = checked([finding]);
+    const text = summaryMarkdown(users, 'passed');
+    expect(text).toContain('Header and cookie check · qa-user-1 · home · home: 1 finding (missing-csp)');
     expect(text).not.toContain('Nothing needs a change.');
-    expect(securityFindings(checked([]))[0]).toContain('no header or cookie-flag findings');
+    expect(headerCookieFindings(checked([]))[0]).toContain('no header or cookie-flag findings');
     expect(summaryMarkdown(checked([]), 'passed')).toContain('Nothing needs a change.');
+    const result: RunResult = {
+      schema_version: '1',
+      run_id: 'run_header_cookie',
+      project: 'fixture',
+      started_at: '2026-10-10T10:00:00+11:00',
+      finished_at: '2026-10-10T10:00:02+11:00',
+      status: 'passed',
+      gate: 'all',
+      gate_passed: true,
+      totals: { users: 1, journeys: 1, steps: 1, passed: 1, failed: 0, skipped: 0 },
+      users: [{ label: 'qa-user-1', phase1: { status: 'pass', duration_ms: 1 }, journeys: [{ id: 'home', status: 'pass', duration_ms: 1, steps: [] }] }],
+      environment: 'test',
+      authorisation_id: 'fixture-owner',
+      redaction: 'pass',
+    };
+    const markdown = analysisMarkdown(buildAnalysis({
+      result,
+      users,
+      chaos: null,
+      suspected: 'A header was missing.',
+      confidence: 0.8,
+      repro: ['Open the home page.'],
+      regressions: [],
+      next: ['Add the missing header.'],
+    }));
+    expect(markdown).toContain('Header and cookie check: http at http://127.0.0.1/home: missing-csp Low.');
+    expect(proseBanned(`${text}\n${markdown}\n${PASSIVE_SECURITY_LIMITS}`)).toEqual([]);
+  });
+
+  it('keeps banned words out of the copy a client or operator reads', () => {
+    const root = join(import.meta.dirname, '../..');
+    const files = [
+      'README.md',
+      'CHANGELOG.md',
+      'SECURITY.md',
+      'docs/agents.md',
+      'docs/client-engagement.md',
+      'docs/reference.md',
+      'docs/severity.md',
+      'examples/authorisations/the-internet-practice.yaml',
+      'packages/mcp-server/src/main.ts',
+    ];
+    const prose = files
+      .map((file) => readFileSync(join(root, file), 'utf8').split('\n').filter((line) => /header_cookie|header-cookie|header and cookie|HTTPS-only|plain HTTP/.test(line)).join('\n'))
+      .join('\n');
+    const graded = assessPassiveSecurity({
+      name: 'home',
+      pageUrl: 'https://127.0.0.1/home',
+      document: document('https', {}, 'TLS 1.0'),
+      cookies: [cookie('session'), cookie('prefs', { sameSite: 'None' })],
+    });
+    const http = assessPassiveSecurity({
+      name: 'home',
+      pageUrl: 'http://127.0.0.1/home',
+      document: document('http', {}),
+      cookies: [cookie('session')],
+    });
+    const said = [prose, PASSIVE_SECURITY_LIMITS, ...graded.findings.map((item) => item.summary), ...http.findings.map((item) => item.summary), securityStepFailure(graded.findings, 'low') ?? ''].join('\n');
+    expect(prose.length).toBeGreaterThan(0);
+    expect(proseBanned(said)).toEqual([]);
   });
 });
 
-function fakeResponse(url: string, headers: Record<string, string>, navigation = true): Response {
+/** Header names stay. Other banned words in our own sentences do not. */
+function proseBanned(text: string): string[] {
+  const stripped = text.replace(/content-security-policy/gi, ' ').replace(/strict-transport-security/gi, ' ');
+  return bannedWordsIn(stripped);
+}
+
+function fakeResponse(url: string, headers: Record<string, string>, navigation = true, status = 200): Response {
   return {
     url: () => url,
-    status: () => 200,
+    status: () => status,
     headers: () => headers,
     securityDetails: async () => ({ protocol: 'TLS 1.2', issuer: 'local', subjectName: '127.0.0.1', validFrom: 0, validTo: 1 }),
     request: () => ({
@@ -216,6 +292,76 @@ describe('which responses are observed', () => {
     await secure.flush();
     expect(secure.latestDocument()?.tlsProtocol).toBe('TLS 1.2');
   });
+
+  it('grades the final page and does not grade a redirect hop', async () => {
+    const followed = createSecurityObservations(['http://127.0.0.1']);
+    followed.note(fakeResponse('http://127.0.0.1/old', { 'x-frame-options': 'DENY' }, true, 302));
+    followed.note(fakeResponse('http://127.0.0.1/home', { 'x-content-type-options': 'nosniff' }, true, 200));
+    expect(followed.endedOnRedirect()).toBe(false);
+    expect(followed.latestDocument()).toMatchObject({ url: 'http://127.0.0.1/home', status: 200, headers: { 'x-content-type-options': 'nosniff' } });
+
+    const stopped = createSecurityObservations(['http://127.0.0.1']);
+    stopped.note(fakeResponse('http://127.0.0.1/home', { 'x-content-type-options': 'nosniff' }, true, 200));
+    stopped.note(fakeResponse('http://127.0.0.1/old?token=secret', {}, true, 301));
+    expect(stopped.latestDocument()).toBeUndefined();
+    expect(stopped.endedOnRedirect()).toBe(true);
+    expect(stopped.redirectUrl()).toBe('http://127.0.0.1/old');
+
+    for (const status of [300, 302, 303, 307, 308]) {
+      const hop = createSecurityObservations(['http://127.0.0.1']);
+      hop.note(fakeResponse('http://127.0.0.1/go', { 'x-frame-options': 'DENY' }, true, status));
+      hop.note(fakeResponse('http://elsewhere.test/landed', { 'content-security-policy': "default-src 'self'" }, true, 200));
+      expect(hop.latestDocument(), String(status)).toBeUndefined();
+      expect(hop.endedOnRedirect(), String(status)).toBe(true);
+    }
+
+    const missing = createSecurityObservations(['http://127.0.0.1']);
+    missing.note(fakeResponse('http://127.0.0.1/gone', { 'x-content-type-options': 'nosniff' }, true, 404));
+    expect(missing.latestDocument()).toMatchObject({ url: 'http://127.0.0.1/gone', status: 404 });
+    expect(missing.endedOnRedirect()).toBe(false);
+  });
+
+  it('reads cookies for the checked page and records a redirect with no header gaps', async () => {
+    const seen = createSecurityObservations(['http://checked.example']);
+    seen.note(fakeResponse('http://checked.example/app/home?token=secret', { 'x-content-type-options': 'nosniff' }));
+    const asked: string[] = [];
+    const page = {
+      url: () => 'http://base.example/',
+      context: () => ({
+        cookies: async (url: string) => {
+          asked.push(url);
+          return [{ name: 'session', value: COOKIE_SECRET, httpOnly: true, secure: true, sameSite: 'Lax' as const, expires: -1 }];
+        },
+      }),
+    } as unknown as Page;
+    const saved: string[] = [];
+    const outcome = await runPassiveSecurityCheck(page, { name: 'home' }, true, seen, { redact: (text: string) => text } as unknown as Redactor, (fileName, text) => {
+      saved.push(fileName, text);
+    });
+    expect(asked).toEqual(['http://checked.example/app/home']);
+    expect(outcome.result.url).toBe('http://checked.example/app/home');
+    expect(JSON.stringify(outcome.result)).not.toContain(COOKIE_SECRET);
+    expect(JSON.stringify(outcome.result)).not.toContain('token=secret');
+    expect(saved[0]).toBe('header-cookie-check-home.json');
+
+    const hop = createSecurityObservations(['http://127.0.0.1']);
+    hop.note(fakeResponse('http://127.0.0.1/old', { 'x-frame-options': 'DENY' }, true, 302));
+    const hopAsked: string[] = [];
+    const hopPage = {
+      url: () => 'http://127.0.0.1/old',
+      context: () => ({
+        cookies: async (url: string) => {
+          hopAsked.push(url);
+          return [];
+        },
+      }),
+    } as unknown as Page;
+    const redirected = await runPassiveSecurityCheck(hopPage, { name: 'hop' }, true, hop, { redact: (text: string) => text } as unknown as Redactor, () => undefined);
+    expect(hopAsked).toEqual([]);
+    expect(redirected.result.findings.map((item) => item.id)).toEqual(['redirect-only']);
+    expect(redirected.result.document_headers).toEqual({});
+    expect(redirected.result.findings.map((item) => item.id)).not.toContain('missing-csp');
+  });
 });
 
 let server: Server;
@@ -226,6 +372,11 @@ beforeAll(async () => {
   if (chrome) process.env.AEGIS_BROWSER = chrome;
   server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
+    if (path === '/hop') {
+      res.writeHead(302, { Location: '/locked' });
+      res.end();
+      return;
+    }
     res.setHeader('content-type', 'text/html; charset=utf-8');
     if (path === '/locked') {
       res.setHeader('content-security-policy', "default-src 'self'; frame-ancestors 'self'");
@@ -233,6 +384,7 @@ beforeAll(async () => {
       res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
       res.setHeader('x-frame-options', 'SAMEORIGIN');
       res.setHeader('permissions-policy', 'camera=()');
+      res.setHeader('set-cookie', `lockedonly=${LOCKED_COOKIE}; Path=/locked; HttpOnly; SameSite=Lax`);
     } else if (path === '/nonce') {
       res.setHeader('content-security-policy', `script-src 'nonce-${NONCE}'`);
       res.setHeader('x-content-type-options', 'nosniff');
@@ -258,7 +410,7 @@ afterAll(async () => {
 
 function job(steps: JobRequest['steps'], authorised: boolean): JobRequest {
   return {
-    runId: 'run_passive_security',
+    runId: 'run_header_cookie',
     label: 'qa-user-1',
     journeyId: 'headers',
     baseUrl: `http://127.0.0.1:${port}`,
@@ -270,59 +422,71 @@ function job(steps: JobRequest['steps'], authorised: boolean): JobRequest {
     burst: 50,
     accessDeniedMarkers: [],
     chaosActions: [],
-    outDir: mkdtempSync(join(tmpdir(), 'hornet-passive-security-')),
+    outDir: mkdtempSync(join(tmpdir(), 'hornet-header-cookie-')),
     vars: {},
     users: {},
     ...(authorised ? { passiveSecurityAuthorised: true } : {}),
   };
 }
 
-describe('the passive security step in the runner', () => {
-  it('records header gaps and cookie flags, and never the cookie value', async () => {
+describe('the header and cookie step in the runner', () => {
+  it('records header gaps and cookie flags for the page that was checked, and never the cookie value', async () => {
     const request = job(
       [
         { navigate: { url: '/bare' } },
-        { passive_security: { name: 'bare' } },
+        { header_cookie_check: { name: 'bare' } },
         { navigate: { url: '/locked' } },
-        { passive_security: { name: 'locked' } },
+        { header_cookie_check: { name: 'locked' } },
         { navigate: { url: '/nonce' } },
-        { passive_security: { name: 'nonce' } },
+        { header_cookie_check: { name: 'nonce' } },
+        { navigate: { url: '/hop' } },
+        { header_cookie_check: { name: 'hop' } },
       ],
       true,
     );
     const report = await executeJob(request, new Map(), () => false);
     expect(report.status, JSON.stringify(report.steps.map((step) => step.error))).toBe('passed');
-    const bare = report.steps[1]?.passive_security;
-    expect(bare?.findings.map((finding) => finding.id)).toEqual(['missing-csp', 'missing-referrer-policy', 'missing-frame-protection']);
+    const bare = report.steps[1]?.header_cookie_check;
+    expect(bare?.findings.map((finding) => finding.id)).toEqual(['plain-http', 'missing-csp', 'missing-referrer-policy', 'missing-frame-protection']);
     expect(bare?.cookies.find((entry) => entry.name === 'session')).toMatchObject({ httpOnly: true, secure: false, sameSite: 'Lax' });
     expect(bare?.cookies.find((entry) => entry.name === 'prefs')).toMatchObject({ httpOnly: false });
+    expect(bare?.cookies.map((entry) => entry.name)).not.toContain('lockedonly');
     expect(bare?.transport).toBe('http');
     expect(bare?.tls_note).toBe('not_applicable');
-    const saved = readFileSync(join(request.outDir, 'passive-security-bare.json'), 'utf8');
+    const saved = readFileSync(join(request.outDir, 'header-cookie-check-bare.json'), 'utf8');
     expect(saved).not.toContain(COOKIE_SECRET);
     expect(JSON.stringify(report)).not.toContain(COOKIE_SECRET);
-    expect(report.steps[3]?.passive_security?.findings).toEqual([]);
-    expect(report.steps[3]?.passive_security?.document_headers['permissions-policy']).toBe('camera=()');
-    const nonce = readFileSync(join(request.outDir, 'passive-security-nonce.json'), 'utf8');
+    const locked = report.steps[3]?.header_cookie_check;
+    expect(locked?.findings.map((finding) => finding.id)).toEqual(['plain-http']);
+    expect(locked?.url).toBe(`http://127.0.0.1:${port}/locked`);
+    expect(locked?.document_headers['permissions-policy']).toBe('camera=()');
+    expect(locked?.cookies.map((entry) => entry.name)).toContain('lockedonly');
+    expect(JSON.stringify(locked)).not.toContain(LOCKED_COOKIE);
+    const nonce = readFileSync(join(request.outDir, 'header-cookie-check-nonce.json'), 'utf8');
     expect(nonce).not.toContain(NONCE);
     expect(nonce).toContain('nonce-[redacted]');
+    const hop = report.steps[7]?.header_cookie_check;
+    expect(hop?.url).toBe(`http://127.0.0.1:${port}/locked`);
+    expect(hop?.findings.map((finding) => finding.id)).toEqual(['plain-http']);
+    expect(hop?.document_headers['content-security-policy']).toContain('frame-ancestors');
+    expect(hop?.cookies.map((entry) => entry.name)).toContain('lockedonly');
   }, 60_000);
 
-  it('fails the step when fail_on is reached, and refuses the step when the run is not authorised', async () => {
-    const failing = job([{ navigate: { url: '/bare' } }, { passive_security: { name: 'bare', fail_on: 'low' } }], true);
+  it('fails the step when fail_on is reached, and refuses the step when the run was not granted', async () => {
+    const failing = job([{ navigate: { url: '/bare' } }, { header_cookie_check: { name: 'bare', fail_on: 'low' } }], true);
     const failed = await executeJob(failing, new Map(), () => false);
     expect(failed.status).toBe('failed');
-    expect(failed.steps[1]?.error).toContain('security: 3 findings at or above low');
-    expect(failed.steps[1]?.passive_security?.findings.length).toBe(3);
+    expect(failed.steps[1]?.error).toContain('header-cookie: 4 findings at or above low');
+    expect(failed.steps[1]?.header_cookie_check?.findings.length).toBe(4);
 
-    const refused = job([{ navigate: { url: '/locked' } }, { passive_security: { name: 'locked' } }], false);
+    const refused = job([{ navigate: { url: '/locked' } }, { header_cookie_check: { name: 'locked' } }], false);
     const blocked = await executeJob(refused, new Map(), () => false);
     expect(blocked.status).toBe('failed');
-    expect(blocked.steps[1]?.error).toContain('passive_security_not_authorised');
-    expect(existsSync(join(refused.outDir, 'passive-security-locked.json'))).toBe(false);
+    expect(blocked.steps[1]?.error).toContain('header_cookie_check_not_permitted');
+    expect(existsSync(join(refused.outDir, 'header-cookie-check-locked.json'))).toBe(false);
 
-    const early = job([{ passive_security: { name: 'early' } }], true);
+    const early = job([{ header_cookie_check: { name: 'early' } }], true);
     const missing = await executeJob(early, new Map(), () => false);
-    expect(missing.steps[0]?.error).toContain('no document response on an authorised origin yet');
+    expect(missing.steps[0]?.error).toContain('header-cookie: no page response on an allowed host yet');
   }, 60_000);
 });

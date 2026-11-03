@@ -188,14 +188,13 @@ export async function runStep(
     if (outcome.failure) throw new Error(outcome.failure);
     return { statusCode: 0 };
   }
-  if ('passive_security' in step) {
-    const check = step.passive_security;
-    assertions.push(`passive_security ${check.name}`);
+  if ('header_cookie_check' in step) {
+    const check = step.header_cookie_check;
+    assertions.push(`header_cookie_check ${check.name}`);
     const outcome = await runPassiveSecurityCheck(
       page,
       check,
       job.passiveSecurityAuthorised === true,
-      job.baseUrl,
       observations,
       redactor,
       (fileName, text) => saveSealed(join(job.outDir, fileName), text, redactor),

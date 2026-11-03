@@ -139,7 +139,7 @@ export const activitySchema = z.enum([
   'signin_smoke',
   'access_control_checks',
   'chaos',
-  'passive_security_checks',
+  'header_cookie_checks',
 ]);
 
 export const authorisationSchema = z
@@ -199,7 +199,7 @@ export const authorisationSchema = z
     if (!auth.public_statement) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['public_statement'], message: 'public_practice needs the url and words where the site says it is for practice' });
     }
-    for (const activity of ['chaos', 'access_control_checks', 'passive_security_checks'] as const) {
+    for (const activity of ['chaos', 'access_control_checks', 'header_cookie_checks'] as const) {
       if (auth.activities.includes(activity)) {
         context.addIssue({ code: z.ZodIssueCode.custom, path: ['activities'], message: `${activity} is not allowed against a public practice site` });
       }
@@ -402,7 +402,7 @@ export const stepResultSchema = z
         wcag22: wcag22PageSignalsSchema.optional(),
       })
       .optional(),
-    passive_security: securityResultSchema.optional(),
+    header_cookie_check: securityResultSchema.optional(),
     redundant_entry: redundantEntrySchema.optional(),
   })
   .strict();
